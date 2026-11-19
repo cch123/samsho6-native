@@ -70,20 +70,21 @@ int CombatAudio::playResidentJingle(int tone,int volumeCode) {
     if(tone<0)return 0;
     return playEffect(bank_.residentVoice(unsigned(tone)),volumeCode);
 }
-int CombatAudio::playVoice(int character,int tone) {
-    if(tone<0)return 0;
+int CombatAudio::playVoice(int character,int tone,unsigned voiceVariant) {
+    if(tone<0||voiceVariant>1)return 0;
     if(character==50)return playResidentJingle(tone,15);
     const CombatSoundSample* sample=nullptr;
     unsigned channel=2;
     if(character==49) {
         // 21358c remaps the spoken name to the selected fighter's
-        // penultimate BVOICE1 entry in the default Japanese voice set.
+        // last two BVOICE1 entries. Option 43d055 also selects which
+        // complete NAL bank supplies the other lines (including the title).
         if((tone>=2&&tone<44)||(tone>=89&&tone<94)||tone==100) {
             character=tone==100?42:tone>=89?tone-45:tone-2;
             if(unsigned(character)!=players_[0]&&unsigned(character)!=players_[1])return 0;
-            tone=int(bank_.voiceCount(unsigned(character)))-2;
+            tone=int(bank_.voiceCount(unsigned(character)))-2+int(voiceVariant);
         } else {
-            sample=bank_.narrator(unsigned(tone<44?tone:tone-42));
+            sample=bank_.narrator(unsigned(tone<44?tone:tone-42),voiceVariant);
             channel=4;
         }
     }

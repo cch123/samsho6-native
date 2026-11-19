@@ -228,10 +228,7 @@ bool inputGuardAllowed(const SelectionActor& a,const InputSystemConfig& config) 
     }
     return config.system!=8&&!(a.flags244&2)&&!(a.flags23c&0x10);
 }
-bool ActionSelection::opponentThreat(const SelectionActor& a,const SelectionActor& opponent,const SelectionThreat& context) const {
-    if(a.flags23c&0x10)return false;
-    if(opponent.stateTable()==1&&context.distance<240)return true;
-    for(const auto& kind:context.opponentObjectKinds)if(kind&&(*kind==2||*kind==5))return true;
+bool auxiliaryThreatActive(const SelectionActor& opponent) {
     //1a3798 dispatches to the character's separate auxiliary object. A
     //body action number cannot substitute for these auxiliary states.
     const auto state=opponent.auxiliaryState128;
@@ -244,6 +241,13 @@ bool ActionSelection::opponentThreat(const SelectionActor& a,const SelectionActo
     case 32:if(state==7||state==8)return true;break;
     case 34:if(state==13||state==16||state==17)return true;break;
     }
+    return false;
+}
+bool ActionSelection::opponentThreat(const SelectionActor& a,const SelectionActor& opponent,const SelectionThreat& context) const {
+    if(a.flags23c&0x10)return false;
+    if(opponent.stateTable()==1&&context.distance<240)return true;
+    for(const auto& kind:context.opponentObjectKinds)if(kind&&(*kind==2||*kind==5))return true;
+    if(auxiliaryThreatActive(opponent))return true;
     if(opponent.stateTable()!=1)return false;
     for(unsigned offset=0;offset<threatActions_.size();offset+=4) {
         const auto character=threatActions_[offset];

@@ -16,18 +16,6 @@ uint32_t spawnHaohmaruFlask(AuxiliaryObjects& objects,TaggedTaskPools& pools,std
     return handle;
 }
 
-void reflectHaohmaruProjectile(AuxiliaryObjects& objects,AuxiliaryObject& target,unsigned newTeam) {
-    // 155780 leaves the original caster, task and resource slot attached.
-    // Only the collision team changes. Restarting at record 0 reinstalls
-    // velocity on the new facing without replaying the launch displacement.
-    objects.stop(target);
-    objects.request(target,target[0x24/4],false,true);
-    target[0x104/4]|=0x80;
-    target[0xec/4]=target[0xf0/4]=0;
-    target[0x38/4]^=0x80000;
-    target[0x10/4]=newTeam;
-}
-
 void updateHaohmaruFlask(AuxiliaryObjects& objects,TaggedTaskPools& pools,uint32_t task) {
     auto& t=pools.tasks.at(task-1);
     auto& o=pools.objects.at(t[7]-1);

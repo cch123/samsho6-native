@@ -44,6 +44,7 @@ class InputPermissions {
 public:
     explicit InputPermissions(const std::filesystem::path& assets);
     bool condition(unsigned id,PermissionActor&,const PermissionActor& opponent,const InputSystemConfig&,PermissionContext&) const;
+    int characterFrontRange(unsigned character) const {return targetRanges_.at(character)[2];} // 168cb8(1)
     static bool objectAvailable(unsigned key,const PermissionContext&);
     static bool actorAllowed(const PermissionActor&); //179e38
     bool category(unsigned id,const PermissionActor&) const; //179e68

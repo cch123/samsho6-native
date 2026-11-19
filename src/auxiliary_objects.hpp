@@ -36,6 +36,7 @@ public:
                              uint32_t flags,const AuxiliaryObject& parent,unsigned action);
     void spawnMikiri(TaggedTaskPools&,std::span<uint32_t>,unsigned player,uint32_t flags,
                      const AuxiliaryObject& parent,unsigned action);
+    void reflectProjectile(AuxiliaryObject&,unsigned newTeam);
     static void pauseWhirlwind(AuxiliaryObject&,int first,int second); // 15169c/11db00
     //140a78, kind7: the battle's64-slot registry and resident common slot2.
     //Only facing is inherited; actor-specific position/motion is not copied.

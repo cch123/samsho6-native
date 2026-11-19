@@ -119,7 +119,11 @@ def case(args):
             # the standing-column timing when the defender was hit in the air.
             blocked=e['defense']
             p.write(o+0x104,p.read(o+0x104,4)|(0x2080000 if blocked else 0x2040000),4)
-            if blocked:src.run(0x14d5a0,src.other,o,blocked,e['strength'])
+            if blocked:
+                src.run(0x14d5a0,src.other,o,blocked,e['strength'])
+                # 155564 also tests the attacker's descriptor; the blocked
+                # opener queues its dedicated ACT 307 from the recoil state.
+                if p.run(0x169700,[a])[0]:src.run(0x14d070,a,e['strength'],0)
             else:src.run(0x151578,src.other,o,e['target_state'],e['secondary'])
         v=src.frame(held)
         got=[int(now[core])|int(now[core+1])<<16,*map(int,now[core+2:core+4]),int(now[cb+11]),
@@ -132,6 +136,8 @@ def case(args):
         if j>12 and record==[0,0,int(mode=='bare')]:break
     route='BBC' if mode.startswith('cancel') else 'AABBCCC' if mode.startswith('finisher-') else mode
     attack_states=list(dict.fromkeys(s for _,(t,s,_) in observed if t==1 and 39<=s<=54))
+    if mode in ('guard','crouching-guard'):
+        assert any(t==0 and 25<=s<=30 and act==307 for _,(t,s,act) in observed)
     if route in ROUTES:assert attack_states==STATES[route],(args,attack_states)
     elif mode in ('bare','air-start'):assert not attack_states and any(x[2] in (201,209) for _,x in observed)
     elif mode in ('guard','crouching-guard','whiff','jump-over','crouch-start'):assert attack_states==[39],(args,attack_states)

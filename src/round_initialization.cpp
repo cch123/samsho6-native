@@ -1,6 +1,8 @@
 #include "round_initialization.hpp"
+#include "cpu_execution.hpp"
 #include "mamahaha.hpp"
 #include "konru.hpp"
+#include "chample.hpp"
 #include "fighter_roster.hpp"
 #include <algorithm>
 #include <stdexcept>
@@ -11,9 +13,7 @@ void resetActorControl(StateEntryActor& a,GameRandom& random) {
     //This draw occurs even for human players. Skipping it shifts every
     //later draw made by the shared battle random generator.
     a.controlCC=uint32_t(random.bounded(2));a.control88=0;a.control8c=0xffffffff;
-    a.controlC4=0;a.controlTimers0c[0]=0;
-    a.controlMotion38.fill(0);a.controlMotion38[3]=a.controlMotion38[4]=0xffffffff;
-    a.controlD8=a.controlE4=a.controlE8=0xffffffff;
+    resetCpuSequence(a);
     a.controlTimers0c[9]=0;
     const auto mode=a.controlModeC8;
     const bool delayed=mode-38<32||mode-4<7||mode-15<5||mode-21<4||mode-26<4||mode-31<4;
@@ -76,6 +76,11 @@ void RoundInitialization::begin(GroundStateRuntime& ground,PlayerObject& body,St
     switch(a.character) {
     case 1:a.auxiliaryObject04=spawnMamahaha(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);break;
     case 2:a.auxiliaryObject04=spawnKonru(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);break;
+    case 24:
+        a.auxiliaryObject04=spawnChample(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);
+        // 149184 -> 1a3340 runs only for the first-round introduction.
+        if(first)commandChamplePresentation(context.tasks.objects.at(a.auxiliaryObject04-1),33);
+        break;
     default:a.auxiliaryObject04=0;break;
     }
     for(unsigned i=0;i<3;++i) {

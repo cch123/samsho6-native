@@ -9,7 +9,8 @@ namespace {
 void spawn(ScheduledOpening& effects,BattleRoundState& battle,unsigned descriptor,int x,int y,float scale=1) {
     effects.startContact(descriptor,float(x),float(y),scale,battle.entry.tasks,battle.effectResidency,battle.random);
 }
-AuxiliaryObject* commonElement(AuxiliaryObjects& objects,BattleRoundState& battle,unsigned victim,bool mirror,unsigned action) {
+AuxiliaryObject* commonElement(AuxiliaryObjects& objects,BattleRoundState& battle,unsigned victim,bool mirror,int action) {
+    if(action<0)return nullptr; // Some damage colors have no attached ACT.
     AuxiliaryObject facing{};facing[0x38/4]=mirror?0x80000:0;
     const auto handle=objects.createCommonEffect(battle.entry.tasks,battle.objectTasks,&facing,0x1396,0);
     if(!handle)return nullptr;
@@ -30,8 +31,9 @@ unsigned hitColumn(unsigned type,GameRandom& random) {
 struct ElementClips {int impact,attached,release;};
 // Three independent columns at 4e8758. Only ice (JDG remainder 5)
 // leaves a new set of fragments when the attached reaction retires.
-constexpr std::array<ElementClips,6> elements{{
-    {-1,-1,-1},{4,5,-1},{16,17,-1},{7,8,-1},{19,20,-1},{10,11,12}
+constexpr std::array<ElementClips,9> elements{{
+    {-1,-1,-1},{4,5,-1},{16,17,-1},{7,8,-1},{19,20,-1},{10,11,12},
+    {-1,-1,-1},{-1,-1,-1},{4,5,-1}
 }};
 }
 void spawnElementHurt(AuxiliaryObjects& objects,BattleRoundState& battle,unsigned victim,

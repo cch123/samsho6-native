@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the Japanese selection, ten VS stages and victory music as separate original SPU channels."""
+"""Extract the Japanese title, selection, ten VS stages and victory music as separate original SPU channels."""
 import argparse
 from hashlib import sha256
 from pathlib import Path
@@ -7,6 +7,8 @@ from extract_combat_sound_bank import ELF_SHA, ISO, ROOT
 from inspect_iso import Iso
 
 CHANNELS = {
+    '/BGM1/BGM01_L.VB': '59cdab697e40dc5b5284396987387a716ba8cca0dbe45de7bc78f6c268a003bf',
+    '/BGM1/BGM01_R.VB': '2a49c6e7e69a2a6b50b6de42bd03d83216c23a50fcf27e33d72acb6a9bc09485',
     '/BGM1/BGM02_L.VB': '915e4acbd0e8fa05a2b0131c5b6964caa28d6879f32e437445bef06a99a2da44',
     '/BGM1/BGM02_R.VB': '0781e7f5e3e753f8759f0a402511b56047ac2e57254d3b4787aed897954b5429',
     '/BGM1/BGM05_L.VB': '863e4c502f2f04e870c05f03ae267e774155be6c15e57ed70a6581c3dfd27276',
@@ -47,6 +49,8 @@ def main():
         name=Path(disc_path).name
         raw=source.read(disc_path)
         if sha256(raw).hexdigest()!=expected:raise ValueError(f'Unexpected music stream {name}')
+        if name.startswith('BGM01') and source.read('/BGM3/'+name)!=raw:
+            raise ValueError(f'Soundtrack variants differ for {name}')
         (args.assets/name.lower()).write_bytes(raw)
         print(name,len(raw),expected)
 if __name__=='__main__':main()

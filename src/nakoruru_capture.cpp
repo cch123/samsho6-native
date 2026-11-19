@@ -44,8 +44,12 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
     // as Nakoruru row 4. Its final request selects backward fall 69.
     const bool iceBreak=a.callbacks260[0]==0x1edfa0;
     const bool hanzo=a.pendingCharacter254==3;
+    // Mina (1fb970) has victim rows 1..4 at 4e3a80. Rows 2 and 4 are the same
+    // single weapon-loss row form as Nakoruru row 4, ending in falls 63/69.
+    const bool mina=a.pendingCharacter254==24;
     const int slot=iceBreak?4:a.stateIndex()-80;
-    const bool weaponLoss=hanzo?slot==5:slot==4;
+    if(mina&&a.callbacks260[0]==0x1fb970&&slot!=2&&slot!=4)throw UnportedFighterState(a.character,2,a.stateIndex());
+    const bool weaponLoss=mina?true:hanzo?slot==5:slot==4;
     auto& registry=a.registry28c;
     if(hanzo&&slot!=16&&a.callbacks260[0]==0x165cc0) {
         advanceHanzoThrowPhase(body,a,context,frame);return;
@@ -72,14 +76,16 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
         GroundStateRuntime::captureBody(sourceBody,source);
         return;
     }
-    if(slot<0||(slot>(hanzo?7:4)&&slot!=16))throw UnportedFighterState(a.character,2,a.stateIndex());
+    if(!mina&&(slot<0||(slot>(hanzo?7:4)&&slot!=16)))throw UnportedFighterState(a.character,2,a.stateIndex());
     const bool paired=hanzo?!weaponLoss:slot==0||slot==16;
     auto requestFallback=[&] {
         a.pendingTable=2;a.pendingIndex=74;a.request18c=1;
     };
     auto loseWeapon=[&] {
         const auto parent=body.childParentWords();
-        if(frame.opponentSystem==1)
+        // 168750: 14fa18 accepts systems 1 and 7 (custom 6 descriptors are not
+        // admitted here); the older ports only ever met system 1.
+        if(frame.opponentSystem==1||(mina&&frame.opponentSystem==7))
             world.objects.dropSpecial(context.tasks,world.objectTasks,*frame.random,context.player,a.character,a.flags23c,parent);
         else
             world.objects.drop(context.tasks,world.objectTasks,*frame.random,context.player,a.character,a.flags23c,parent);
@@ -111,7 +117,9 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
     }
 
     if(child) {
-        if(!weaponLoss&&!((*child)[0x104/4]&0x100000)) {
+        // 168f48 decides facing; for Mina only rows 1 and 2 skip it.
+        const bool noFacing=mina?slot==1||slot==2:weaponLoss;
+        if(!noFacing&&!((*child)[0x104/4]&0x100000)) {
             auto& flags=(*child)[0x38/4];
             const float x=body.timeline.motion().x,from=std::bit_cast<float>((*child)[0x40/4]);
             if(x<from)flags|=0x80000;else if(x>from)flags&=~0x80000u;
@@ -119,13 +127,13 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
             body.timeline.setObjectFlags((clock.objectFlags&~0x80000u)|(~flags&0x80000u),clock.flags104,clock.flags108);
         }
         (*child)[0x104/4]|=0x100000;
-    } else if(!weaponLoss&&!(source.flags23c&0x10000000))oppositeFacing(body,sourceBody);
+    } else if(!(mina?slot==1||slot==2:weaponLoss)&&!(source.flags23c&0x10000000))oppositeFacing(body,sourceBody);
     source.flags23c|=0x10000000u;
     source.flags244&=~0x1000u;
     registry[0]=0;registry[1]=registry[2]=0xffffffff;
     registry[3]=source.effectiveFlags()&4?2:unsigned(bool(source.effectiveFlags()&2));
     registry[7]=registry[8]=registry[9]=0;
-    registry[12]=hanzo?hanzoCaptureAddress(slot):iceBreak?0x4e2a40:0x4e29b0+20*(slot==16?5:slot);
+    registry[12]=mina?(slot==2?0x4e3a94:0x4e3ad0):hanzo?hanzoCaptureAddress(slot):iceBreak?0x4e2a40:0x4e29b0+20*(slot==16?5:slot);
     // 168318 runs after registration: a KO invalidates the paired row
     // after facing and the attacker's lock have already been committed.
     if(paired&&(source.stateTable()==2||source.fieldA30<=0||(source.flags23c&0x80))) {
@@ -144,7 +152,7 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
     a.callbacks260[3]=registry[3];
     if(weaponLoss) {
         loseWeapon();
-        a.pendingTable=2;a.pendingIndex=hanzo?62:iceBreak?69:71;a.request18c=1;a.flags248|=0x20;
+        a.pendingTable=2;a.pendingIndex=mina?(slot==2?63:69):hanzo?62:iceBreak?69:71;a.request18c=1;a.flags248|=0x20;
         return;
     }
     const int unarmed=!(a.flags23c&0x1000);

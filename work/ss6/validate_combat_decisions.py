@@ -39,6 +39,12 @@ def main():
                            (0x3c0,'field3c0'),(0x39c,'field39c'),(0x398,'field398'),(0x10c,'system')]:
             p.write(target+offset,f[key],4)
         p.write(target+0x194,f['table'],2);p.write(target+0x196,f['state'],2);p.write(target+0x19a,f['stateFlags'],1)
+        if f['flags23c']&0x200000:
+            # The match supplies effective state to the selector. Give the main
+            # and alternate states different values to exercise that contract.
+            p.write(target+0x1a4,f['table'],2);p.write(target+0x1a6,f['state'],2)
+            p.write(target+0x1aa,f['stateFlags'],1);p.write(target+0x194,1,4);p.write(target+0x19a,0,1)
+            f['state']=signed(p.run(0x1500d0,[target])[0],16)
         # The game's dynamic system-6 descriptor lookup is executed, not
         # replaced by a stub. Vary its real selected slot and player index.
         slot=len(lines)%8;owner=len(lines)%2
@@ -70,6 +76,12 @@ def main():
                 a20=rng.choice([0,1,2]),c8=rng.choice([0,36,37]),field3c0=rng.choice([0,1,-1]),
                 field39c=rng.choice([0,0,1,-1]),field398=rng.choice([0,0,1,-1]),
                 system=rng.randrange(9),descriptor=rng.choice([0,40,255]))
+    ordinary_cases=len(lines)
+    for state in range(12):
+        for controller in (0,1):
+            for down in (0,1):
+                defense(flags23c=0x201000,table=0,state=state,stateFlags=128,
+                        a20=controller,c8=35,field398=down,field39c=1-down)
     defense_cases=len(lines)
     for kind in [0,1,2,5,9]:
         for index in range(-1,8):
@@ -137,15 +149,12 @@ def main():
     rows=result.stdout.splitlines();assert len(rows)==len(expected)
     for row,want,label in zip(rows,expected,labels):
         got=list(map(int,row.split()));assert got==want,(label,got,want)
-    # Missing descriptor and alternate-state inputs must never silently use
-    # the ordinary branch in a caller that has not ported those producers.
-    for line in ['defense 0 0 4096 0 0 6 0 0 0 0 0 0 6 -1',
-                 'defense 0 0 2097152 0 0 0 0 0 0 0 0 0 0 0']:
-        r=subprocess.run([str(binary),str(ASSETS)],input=line+'\n',capture_output=True,text=True)
-        assert r.returncode!=0
+    # A custom spirit's selected guard descriptor is required in this branch.
+    r=subprocess.run([str(binary),str(ASSETS)],input='defense 0 0 4096 0 0 6 0 0 0 0 0 0 6 -1\n',capture_output=True,text=True)
+    assert r.returncode!=0 and 'descriptor' in r.stderr
     report=dict(all_passed=True,elf_sha256=SOURCE_HASH,native_probe_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
         defense_cases=defense_cases,state_matrix_cases=matrix_cases,table2_cases=table2_cases,system_cases=system_cases,
-        random_cases=2048,consumption_cases=mark_cases,decision_composition_cases=decision_cases,consumption_table_routes=12,
+        random_cases=2048,alternate_state_cases=defense_cases-ordinary_cases,consumption_cases=mark_cases,decision_composition_cases=decision_cases,consumption_table_routes=12,
         registry_sequences=registry_cases,registry_submissions=registry_submissions,total_cases=len(lines),defense_returns=returns,
         original_functions=['0x155850','0x154a88','0x154ac0','0x153440','0x153450'],
         scope='Whole defense selector on ordinary actor state snapshots, system-6 descriptor lookup, consumption helpers and collision-object registration lifecycle. No downstream damage, gauge, reaction, hitstop or effect execution.')

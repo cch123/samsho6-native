@@ -1,5 +1,6 @@
 #include "fighter_depth.hpp"
 #include "scalar_float.hpp"
+#include "fighter_roster.hpp"
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
@@ -30,7 +31,8 @@ constexpr DepthRule depthRules[]{
     {1,571,572,0},{1,681,681,0},{1,682,682,16},{1,693,704,0},
     {3,592,593,0},{3,617,622,0},{3,623,624,5},{3,625,628,7},{3,629,634,3},
     {3,648,649,0},{3,650,651,6},{3,652,653,3},{3,664,665,0},
-    {3,666,667,14},{3,668,669,9},{3,670,671,3}
+    {3,666,667,14},{3,668,669,9},{3,670,671,3},
+    {24,662,666,0}
 };
 bool behindOnRecord(unsigned mode,unsigned record) {
     switch(mode) {
@@ -68,7 +70,7 @@ void applyHaohmaruDepthOverride(const std::array<unsigned,2>& actions,uint32_t& 
 void updateFighterDepths(BattleRoundState& battle,const std::array<RoundPlayerRef,2>& players) {
     const auto& p1=players[0].actor;
     const auto& p2=players[1].actor;
-    if(p1.character>3||p2.character>3)
+    if(!playableFighter(p1.character)||!playableFighter(p2.character))
         throw std::runtime_error("Draw priority requires character-specific action tables");
     bool p1InFront=(p1.stateTable()==1&&battle.entry.attackMarker12d2300)||
                    p1.state194==0x290000||p1.state194==0x340000||p2.state194==0x230000;

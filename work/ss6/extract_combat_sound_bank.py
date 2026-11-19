@@ -58,7 +58,7 @@ def main():
     # 128180 installs menu banks 51/52 in the player slots. The face-off
     # announces each chosen fighter from the final two BVOICE1 lines.
     iso=Iso(args.iso)
-    for name,index,stride in [('BVOICE2',i,0x250) for i in (1,2,3,51,52)]+[('BVOICE1',i,0x110) for i in (*range(1,40),42)]:
+    for name,index,stride in [('BVOICE2',i,0x250) for i in (1,2,3,24,51,52)]+[('BVOICE1',i,0x110) for i in (*range(1,40),42)]:
         group=extract(iso,[(name,index,stride)])[len(MAGIC):]
         stem='vs_sounds' if name=='BVOICE2' else 'vs_voice'
         (args.output.parent/f'{stem}_{index:02}.bin').write_bytes(group)

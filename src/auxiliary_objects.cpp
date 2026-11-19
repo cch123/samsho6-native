@@ -252,6 +252,18 @@ void AuxiliaryObjects::updateWhirlwind(TaggedTaskPools& p,uint32_t task) {
     // strike on the projectile takes precedence over its outgoing hit mark.
     stop(o);t[0]=0x147540;request(o,ending,false,true);o[0x108/4]|=0x2000;
 }
+void AuxiliaryObjects::reflectProjectile(AuxiliaryObject& target,unsigned newTeam) {
+    // 155780 restarts the flight on the new facing except for descriptor
+    // 168, which retains its in-progress ACT and motion through reflection.
+    if(target[0xd0/4]!=168) {
+        stop(target);
+        request(target,target[0x24/4],false,true);
+        target[0x104/4]|=0x80;
+        target[0xec/4]=target[0xf0/4]=0;
+    }
+    target[0x38/4]^=0x80000;
+    target[0x10/4]=newTeam;
+}
 void AuxiliaryObjects::pauseWhirlwind(AuxiliaryObject& o,int first,int second) {
     // The projectile freezes independently of the owner. Keep e0 (shake
     // phase) intact when two stops are queued before the next movement pass.

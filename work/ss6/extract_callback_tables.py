@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[2]
 def main():
  raw=(ROOT/'work/ss6/extracted/SLPS_255.59').read_bytes();assert hashlib.sha256(raw).hexdigest()==SOURCE_HASH
  elf=Elf(raw);tables=[]
- for name,address,size in [('attack_handlers',0x4e8fe8,51*4),('special_parameters',0x4e6618,51*32*4),
+ for name,address,size in [('attack_handlers',0x4e8fe8,51*4),('special_parameters',0x4e6618,53*32*4),
                            ('character_parameters',0x50d948,51*28),('constants',0x5ea9d0,8)]:
   data=raw[elf.offset(address):elf.offset(address)+size];filename=f'callback_{name}.bin'
   for folder in ['work/ss6/extracted/resources','outputs/ss6-feasibility/native-viewer/assets']:(ROOT/folder/filename).write_bytes(data)

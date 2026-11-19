@@ -100,6 +100,7 @@ class Probe:
                 elif fn == 0x16: self.put(rd, r[rt] >> (r[rs]&63)) #DSRLV, libc float formatting
                 elif fn == 0x38: self.put(rd,r[rt]<<sa)
                 elif fn == 0x3a: self.put(rd,r[rt]>>sa)
+                elif fn == 0x3b: self.put(rd,signed(r[rt],64)>>sa)
                 elif fn == 0x3c: self.put(rd,r[rt]<<(sa+32))
                 elif fn == 0x3e: self.put(rd,r[rt]>>(sa+32))
                 elif fn == 0x3f: self.put(rd,signed(r[rt],64)>>(sa+32))
@@ -113,6 +114,7 @@ class Probe:
                     if r[rt] == 0: self.put(rd, r[rs])
                 elif fn == 0x0b:
                     if r[rt] != 0: self.put(rd, r[rs])
+                elif fn == 0x0f: pass  # SYNC orders memory access; this probe is a single synchronous EE.
                 elif fn == 0x10: self.put(rd, self.hi)
                 elif fn == 0x11: self.hi = r[rs]  #MTHI:121b80 keeps its CHR pointer in HI.
                 elif fn == 0x12: self.put(rd, self.lo)
@@ -172,11 +174,12 @@ class Probe:
             elif op == 0x0d: self.put(rt,r[rs]|(word&65535))
             elif op == 0x0e: self.put(rt,r[rs]^(word&65535))
             elif op == 0x0f: self.put(rt,(word&65535)<<16,word=True)
-            elif op == 0x1c and ((fn==8 and sa==9) or (fn==9 and sa==0x12) or (fn==0x29 and sa==0x13)):
+            elif op == 0x1c and ((fn==8 and sa==9) or (fn==9 and sa==0x12) or (fn==0x29 and sa in (0x12,0x13))):
                 a=r[rs]|(self.registers_high[rs]<<64);b=r[rt]|(self.registers_high[rt]<<64)
                 if fn==8: #PSUBB: wrapping subtraction within each byte, no borrow across lanes.
                     value=sum((((a>>(i*8))-(b>>(i*8)))&255)<<(i*8) for i in range(16))
                 elif fn==9:value=a&b #PAND
+                elif sa==0x12:value=a|b #POR: also clears the full GS packet word with two zero inputs.
                 else:value=(~(a|b))&((1<<128)-1) #PNOR
                 if rd:
                     self.put(rd,value&MASK64);self.registers_high[rd]=value>>64
@@ -190,6 +193,12 @@ class Probe:
                 if rd:
                     self.put(rd,low)
                     self.registers_high[rd]=high
+            # The menu scroll keeps its offset and unlock mode in the EE's
+            # second HI/LO pair across the integer divide that wraps the rows.
+            elif op == 0x1c and fn == 0x10: self.put(rd,self.hi1)  # MFHI1
+            elif op == 0x1c and fn == 0x11: self.hi1=r[rs]       # MTHI1
+            elif op == 0x1c and fn == 0x12: self.put(rd,self.lo1)  # MFLO1
+            elif op == 0x1c and fn == 0x13: self.lo1=r[rs]       # MTLO1
             elif op == 0x1c and fn in (0x18,0x19):  # MULT1/MULTU1
                 product = signed(r[rs],32)*signed(r[rt],32) if fn==0x18 else (r[rs]&0xffffffff)*(r[rt]&0xffffffff)
                 self.lo1, self.hi1 = signed(product,32)&MASK64, signed(product>>32,32)&MASK64
@@ -317,20 +326,21 @@ class Probe:
             elif op in (0x28,0x29,0x2b,0x3f):
                 size = {0x28:1,0x29:2,0x2b:4,0x3f:8}[op]
                 self.write((r[rs]+imm)&MASK64,r[rt],size)
-            elif op in (0x1a,0x1b,0x2c,0x2d):
+            elif op in (0x1a,0x1b,0x2c,0x2d,0x22,0x26,0x2a,0x2e):
                 # Little-endian LDL/LDR and SDL/SDR merge bytes. Original
                 # event records are 108 bytes, so alternating copies are not
                 # eight-byte aligned; treating these as ordinary LD is wrong.
                 address = (r[rs]+imm)&MASK64
-                base, offset = address&~7, address&7
-                left = op in (0x1a,0x2c)
-                byte_count = offset+1 if left else 8-offset
+                width=8 if op in (0x1a,0x1b,0x2c,0x2d) else 4
+                base, offset = address&~(width-1), address&(width-1)
+                left = op in (0x1a,0x2c,0x22,0x2a)
+                byte_count = offset+1 if left else width-offset
                 memory_start = base if left else address
-                register_start = 8-byte_count if left else 0
-                if op in (0x1a,0x1b):
+                register_start = width-byte_count if left else 0
+                if op in (0x1a,0x1b,0x22,0x26):
                     shift = register_start*8
                     mask = ((1<<(byte_count*8))-1)<<shift
-                    self.put(rt,(r[rt]&~mask)|(self.read(memory_start,byte_count)<<shift))
+                    self.put(rt,(r[rt]&~mask)|(self.read(memory_start,byte_count)<<shift),word=width==4)
                 else:
                     self.write(memory_start,r[rt]>>(register_start*8),byte_count)
             else: raise NotImplementedError(f'{pc:#x}: opcode {word:#010x}')

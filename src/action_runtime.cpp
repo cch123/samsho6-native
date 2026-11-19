@@ -57,9 +57,13 @@ ActionClip::ActionClip(const Bytes& aid,const Bytes& act,unsigned id,bool mutedI
     // Hanzo's capture and disappearance animations hold records until
     // their actor callbacks explicitly resume them.
     const bool hanzoAction=resource==3&&(id<=165||(id>=185&&id<=445)||(id>=489&&id<=507)||(id>=529&&id<=754));
-    const bool capturePose=(id>=1299&&id<=1304)||(id>=1307&&id<=1308)||(id>=1310&&id<=1322)||(id>=1325&&id<=1326);
-    if (!capturePose && !hanzoAction && !nakoruruAttack && !rimururuAction && id>29 && !(id>=34&&id<=37) && !(id>=44&&id<=77) && !(id>=84&&id<=87) && !(id>=92&&id<=95) && !(id>=100&&id<=103) && !(id>=126&&id<=164) &&
-        !(id>=185&&id<=240) && !(id>=242&&id<=257) && !(id>=264&&id<=266) && !(id>=278&&id<=293) && !(id>=308&&id<=319) &&
+    // Mina's bank-24 body moves follow the same actor-held record rules as
+    // Hanzo's: her script interpreter and callbacks resume held records.
+    const bool minaAction=resource==24&&(id<=166||(id>=185&&id<=445)||(id>=489&&id<=509)||(id>=517&&id<=720));
+    // 1499/1500 and 1502/1503 are the shared victim poses of Mina's table-B rows 1 and 3.
+    const bool capturePose=(id>=1299&&id<=1304)||(id>=1307&&id<=1308)||(id>=1310&&id<=1322)||(id>=1325&&id<=1326)||id==1499||id==1500||id==1502||id==1503;
+    if (!capturePose && !hanzoAction && !minaAction && !nakoruruAttack && !rimururuAction && id>29 && !(id>=34&&id<=37) && !(id>=44&&id<=77) && !(id>=84&&id<=87) && !(id>=92&&id<=95) && !(id>=100&&id<=103) && !(id>=126&&id<=164) &&
+        !(id>=185&&id<=240) && !(id>=242&&id<=257) && !(id>=264&&id<=266) && !(id>=278&&id<=305) && !(id>=307&&id<=319) &&
         !(id>=338&&id<=373) && !(id>=378&&id<=387) &&
         !(id>=390&&id<=393) && !(id>=396&&id<=419) && !(id>=430&&id<=441) && !(id>=492&&id<=506) && !(id>=529&&id<=531) && id!=539 && !(id>=549&&id<=554) &&
         !(id>=568&&id<=570) && !(id>=584&&id<=586) && id!=592 && id!=598 && id!=599 && id!=612 && id!=613 && id!=625 && !(id>=1294&&id<=1297) && !(id>=1280&&id<=1285) && id!=1793)
@@ -91,15 +95,16 @@ ActionClip::ActionClip(const Bytes& aid,const Bytes& act,unsigned id,bool mutedI
         record.soundCommand = half(act,offset+0x38);
         if (record.soundCommand && !mutedInspection)
             throw std::runtime_error("Sound-bearing ACT requires an enabled sound-command consumer or muted inspection");
-        if (record.motion.kind!=0 && record.motion.kind!=1 && record.motion.kind!=2 && record.motion.kind!=5 && record.motion.kind!=9 && record.motion.kind!=10 && record.motion.kind!=11 && record.motion.kind!=12 && record.motion.kind!=13 && record.motion.kind!=14 && record.motion.kind!=16 && record.motion.kind!=19)
+        if (record.motion.kind!=0 && record.motion.kind!=1 && record.motion.kind!=2 && record.motion.kind!=5 && record.motion.kind!=9 && record.motion.kind!=10 && record.motion.kind!=11 && record.motion.kind!=12 && record.motion.kind!=13 && record.motion.kind!=14 && record.motion.kind!=15 && record.motion.kind!=16 && record.motion.kind!=19)
             throw std::runtime_error("Motion command outside the action integration subset");
         for(unsigned i=0;i<3;++i)record.effectCommand[i]=half(act,offset + 0x2e + i*2);
-        // The body and attachment have independent clocks. The actor phase
-        // owns the zero-ID script marker and the explicit ACT 593 attachment.
+        // The body and its attached ACT have independent clocks. A zero ID
+        // instead asks the actor to consult its current move script.
         if((record.headerFlags&0x400)&&((uint16_t(record.effectCommand[0])&0x1800)<0x1000)&&
            (uint16_t(record.effectCommand[0])&0x7ff)&&!((id==592||id==625)&&record.effectCommand[0]==593)&&
+           !(resource==0&&id==502&&record.effectCommand[0]==508)&&
            !(id==164&&record.effectCommand[0]==0x836)&&
-           !hanzoAction&&!(nakoruruAttack&&(record.effectCommand[0]==794||record.effectCommand[0]==0x813))&&
+           !hanzoAction&&!minaAction&&!(nakoruruAttack&&(record.effectCommand[0]==794||record.effectCommand[0]==0x813))&&
            !(rimururuAction&&(record.effectCommand[0]==769||record.effectCommand[0]==774||
                               record.effectCommand[0]==775||(record.effectCommand[0]>=587&&record.effectCommand[0]<=589))))
             throw std::runtime_error("Nonzero attached ACT effect requires object-phase support");
@@ -112,7 +117,7 @@ ActionClip::ActionClip(const Bytes& aid,const Bytes& act,unsigned id,bool mutedI
         // completes the actor callback with the low end-control byte cleared.
         const bool zeroEnd=record.endKind==0&&((resource==1&&(id==162||id==163))||(resource==3&&id==732));
         const bool nakoruruHold=id==154||id==155||capturePose||id==386||id==387||nakoruruAttack||(resource==1&&(id==150||id==151||id==239||id==495||id==497));
-        if (record.duration<0 || (record.duration==0 && !hanzoAction && !nakoruruHold && !rimururuAction && !(record.headerFlags&0x4000) && id!=492 && !(id>=232&&id<=235) && id!=225 && id!=226 && id!=229 && id!=238 && id!=430 && id!=431 && id!=266 && id!=342 && id!=343 && id!=392 && id!=393 && !(id>=209&&id<=218) && !(id>=549&&id<=551) && !(id>=568&&id<=570) && !(id>=529&&id<=531) && id!=1284 && id!=1285 && id!=130 && !(id>=133&&id<=135) && id!=140 && id!=26 && id!=27 && id!=36) ||
+        if (record.duration<0 || (record.duration==0 && !hanzoAction && !minaAction && !nakoruruHold && !rimururuAction && !(record.headerFlags&0x4000) && id!=492 && !(id>=232&&id<=235) && id!=225 && id!=226 && id!=229 && id!=238 && id!=430 && id!=431 && id!=266 && id!=342 && id!=343 && id!=392 && id!=393 && !(id>=209&&id<=218) && !(id>=549&&id<=551) && !(id>=568&&id<=570) && !(id>=529&&id<=531) && id!=1284 && id!=1285 && id!=130 && !(id>=133&&id<=135) && id!=140 && id!=26 && id!=27 && id!=36) ||
             (last && !(record.headerFlags&0x8000) && !zeroEnd  && record.endKind!=1 && record.endKind!=2) ||
             (last && (record.headerFlags&0x8000) && record.endKind<0))
             throw std::runtime_error("Unsupported duration or completion command in ACT "+std::to_string(id));

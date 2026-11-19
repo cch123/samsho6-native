@@ -29,6 +29,8 @@ struct ConsoleVersusMenu {
     void enter(int winner,std::array<unsigned,2> characters,bool recordScore=true);
     // Up to two common-bank sounds, in controller order; -1 means no request.
     std::array<int,2> tick();
+    const auto& padCommands() const {return commands_;}
+    void beginSet(int confirmingSeat);
     void inheritRematch(const ConsoleVersusMenu& previous);
 private:
     void record(int winner,std::array<unsigned,2> characters);

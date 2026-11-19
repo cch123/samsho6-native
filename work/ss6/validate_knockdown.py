@@ -6,7 +6,7 @@ from mips_probe import signed
 BINARY=ROOT/'work/ss6/build-native/ss6-knockdown-probe'
 FIELDS=[0x24,0x28,0x2c,0xc0,0x3c,0x38,0x104,0x108,0xc4,0xfe,*range(0x4c,0x64,4),0x40,0x44]
 
-def main(fall_state=64,probe=BINARY):
+def main(fall_state=64,probe=BINARY,scenarios=None):
  p,a,o,b=fixture();commands=[];expected=[];instructions=0;traces=[];dusts=0;float_logs=0
  callbacks={0:0,0x1715b0:1,0x171640:2,0x170cd8:4,0x1706c0:5,0x170758:6,0x170de8:7,0x170ef8:8}
  def original(fn,args=()):
@@ -72,6 +72,10 @@ def main(fall_state=64,probe=BINARY):
   actual=[list(map(int,line.split())) for line in result.stdout.splitlines()];assert len(actual)==len(expected)
   for i,(x,y) in enumerate(zip(actual,expected)):
    assert x==y,(i,commands[max(0,i-5):i+1],[(n,xx,yy) for n,(xx,yy) in enumerate(zip(x,y)) if xx!=yy])
+ if scenarios is not None:
+  report=scenarios(command,snapshot)
+  compare_states()
+  return dict(**report,snapshots=len(expected),original_instructions=instructions,landing_effects=dusts)
  for armed,mirror,delta in itertools.product([0,1],[0,1],[128,256,512]):
   command('reset');command('flags',0x10000000|mirror*0x80000,0x340,0,armed*0x1000,0x8000,0,0)
   command('motion',4096,12345,256,8192,-16384,-512,320,-2)

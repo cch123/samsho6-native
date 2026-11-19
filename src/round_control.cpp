@@ -107,7 +107,7 @@ void RoundControl::combat(BattleRoundState& b,const std::array<RoundPlayerRef,2>
     //13a850 is an actual constant-zero function in this executable.
     //140788 only recognizes exact zero, and only when time is enabled and
     //battle+8 is not exactly1. A timeout returns BEFORE announcer/items.
-    if(b.timeOption13c!=3&&b.field08!=1&&b.timers.values[0]==0){b.requestedState=5;return;}
+    if(b.timeExpired()){b.requestedState=5;return;}
     if(b.gameMode!=3)throw std::runtime_error("Combat control requires local versus mode");
     for(const auto& p:players)if(p.actor.flags23c&0x80)b.requestedState=5;
     combatStageEvent(b,players,events);

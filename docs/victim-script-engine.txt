@@ -1,0 +1,668 @@
+Common victim-side "table B" script engine (165780 .. 168960)
+==============================================================
+
+Scope: static reverse engineering of the pinned ELF work/ss6/extracted/SLPS_255.59
+(MIPS R5900 LE) with analyze_elf.py, delay slots accounted for. Nothing below has
+been compared against a Probe trace; nothing is runtime-verified. Tags:
+  [R] read directly from the disassembly / data;
+  INFERRED  meaning assigned from usage or from other docs;
+  UNVERIFIED  not confirmed.
+The table-A (attacker move-script) engine is docs/script-engine.txt. Character-24
+callers are docs/mina-callbacks.txt section 5. Existing hand ports:
+src/nakoruru_capture.cpp (updateFighterCapture), src/hanzo_capture.cpp.
+
+Conventions
+  cb        callback argument {cb[0], cb[1], cb[2]}. In this engine cb[0] = VICTIM
+            actor ("V"), cb[1] = ATTACKER actor ("A"), cb[2] = V.callbacks260[2]
+            (= k, the damage-state index - 80, written by the 14cc10 registration).
+  sp-cb     169780(sp) + 169798(sp, actor): a temporary callback argument built on
+            the stack with sp[0] = actor, sp[1] = 1400a8(actor.a24) (its opponent).
+  reg       V+0x28c (registry28c, 13 words). Table-B engine use:
+              r[0]  current row index (relative to r[12])
+              r[1]  index of the row whose entry has been applied (-1 initially)
+              r[2]  set to -1 by 1634e8, not otherwise used here
+              r[3]  strength (1696c8 of the attacker, 0..2)
+              r[4], r[5]  latched offset (s16 << 16) for 166ce8 (from 166db0)
+              r[7], r[8], r[9]  "wait done" flags for victim / attacker / object
+              r[10] adopted object (row flag 0x40), else 0
+              r[12] row base address in table B
+  child     V.body+0x124: the object that delivered the contact (projectile,
+            companion...), 0 for body contacts (INFERRED from native_match.cpp:214
+            which stores the source handle only for object contacts).
+  eff_tab(a)/eff_idx(a)   1500a8 / 1500d0: (a.23c & 0x200000) ? a.1a4 : a.194
+            halfwords (effective state aliases) [R].
+  ended(a)  149488(a): actor's body ACT finished (INFERRED from existing ports).
+  ended(o)  o.c0 != 0 && !(o.104 & 1) (object form, [R] in 1663b8).
+  queue(a,n)       1493c0(a, n, 0).
+  queue2(a,x,y)    1494c0(a, x, y, 0) = queue(a, (a.23c & 0x1000) ? x : y) [R]
+                   (0x1000 = armed; x = armed ACT, y = unarmed ACT).
+  bind(a,h,t)      1522a0(a+0x260, h, t, -1): a.260 = h, a.264 = t, a.268 = -1.
+  req(a,t,i)       14ff80(a+0x18c, t, i): a.190 (s16) = t, a.192 (s16) = i [R];
+                   it does NOT write a.18c. 150090(a+0x18c) = {18c=0, t=-1, i=-1}.
+  timer clear      14d000(a+0x1ac, n): a timer n = 0.
+  timer inc        14d038(a+0x1ac, n): old = t[n]; t[n] = min(old + delta, 0x173400)
+                   (signed compare); returns OLD [R] (= native ActorTimers::increase).
+  stop(o)          11d990 (motion words cleared; docs/projectile-engine.txt).
+  print(...)       316140 debug printf (no state effect).
+
+--------------------------------------------------------------------------------
+0. Flow overview
+--------------------------------------------------------------------------------
+
+  contact (raw JDG type 36..63, or route-4 capture index)          [section 9]
+     |   V.254 = attacker character, V.body.124 = source object or 0,
+     |   V requests (2, 80+k)
+     v
+  V enters damage state 80+k; 14cc10 registers V.260 = {table4e97a8[V.254], 2, k}
+     |
+     v  (next callback visit of V)
+  damage-source dispatcher (Mina: 1fb970)
+     row = 165780(char, k)  -> k or -1
+     str = 1696c8(A)
+     V.260[0] = 0
+     1657b0(cb) == 0 ? ----------------------------- yes --> return (fail path ran
+     |                                                         1688c8; see 2)
+     no
+     row == -1 ? --- yes --> 169810(cb) (ordinary recovery)
+     |
+     no
+     165a78(cb, char, row, str)  [section 4]
+        |
+        +-- 168318 refuses (invalid source / KO of paired attacker) -> return
+        |
+        +-- 165f18 enters row 0
+        |      |
+        |      +-- row is last AND has no waits (166330) -> 166390: end ops,
+        |      |                                             script finished
+        |      +-- otherwise bind(V, 0x165cc0, 2)
+        v
+  165cc0 each visit  [section 5]
+     165da8 per-visit positioning / constraint
+     1663b8 waits complete? -- no --> return
+        | yes
+     1667f8 end ops of current row
+     row last? -- yes --> 168560 (print only), finished
+        | no
+     r[0]++; 165f18 enter next row; 166330? -> 166390 (end ops + finish)
+
+--------------------------------------------------------------------------------
+1. Row lookup
+--------------------------------------------------------------------------------
+165780(char, id) -> int  [R]
+    return 1633c0(char, id) != 0 ? id : -1;
+  NOTE: it returns the id, not the row pointer. 165a78 / 1688c8 look the row up
+  again through 1634e8.
+1633c0(char, id): table B pointer 0x4e4a68[char]; first 20-byte row with
+  byte0 == id, the search ends at the first row with byte0 == 0xff (checked
+  after the id compare). Rows following the first match are reached only by
+  r[0]++ in 165cc0, whatever their byte0 (Mina rows 0x4e3aa8/0x4e3abc both have
+  id 3; Hanzo rows repeat their id).
+1634e8(reg, char, id, str): reg[12] = row; if row { reg[3] = str; reg[2] = -1;
+  reg[0] = 0; reg[1] = -1; reg[7] = reg[8] = reg[9] = 0 }.
+
+--------------------------------------------------------------------------------
+2. Row layout (20 bytes)  -- every reader listed
+--------------------------------------------------------------------------------
+  +0x00 u8   id (lookup key only).
+  +0x01 u8   not read by this engine (0 in all observed rows).
+  +0x02 s16  victim ACT offset. -1 = none. Queued as 0x500 + value:
+               type (+0x13) == 6 or 0x58: queue(V, 0x500+v)
+               otherwise:                 queue2(V, 0x500+v, 0x501+v)   [165f18]
+  +0x04 s16  attacker ACT (raw id in the attacker's bank), -1 = none.  [165f18]
+               type 0x4a: kept only if eff_tab(A) == 1 && eff_idx(A)-80 < 4
+                          (unsigned), else -1 (plus a debug print)
+               type 0x29: += A.byte[0xf16]
+               type 0x41: += (2 - A.byte[0xf1b]) * 2
+               flag 0x02: (type 1: += 2*r[3]); queue2(A, act, act+1)
+               else:      (type 1: += r[3]);   queue(A, act)
+  +0x06 s16  object ACT for the child (V.body.124), -1 = none:
+               11d908(child, act, 0, 0)   (NO null check on child)
+               if child.14 == 4 && act == 0x328: 11db88(child) (toggle mirror
+               bit 0x80000).                                         [165f18]
+  +0x08 u8   wait type for the victim   (slot 0)  \
+  +0x09 u8   wait type for the attacker (slot 1)   > 0 = no wait. [1663b8, 166330]
+  +0x0a u8   wait type for the child    (slot 2)  /
+  +0x0b u8   end op for the victim   (slot 0)  \
+  +0x0c u8   end op for the attacker (slot 1)   > 0 = none.        [1667f8]
+  +0x0d u8   end op for the child    (slot 2)  /
+  +0x0e s16  parameter "e": requested damage/normal index for end ops 1..3,
+             tick count (<<8) for wait type 6, and the third argument of the
+             type handler 166e98.
+  +0x10 s16  script damage. Non-zero: 1413d8(V.a24, value, child ? child :
+             A.body, 1) at row entry (1413d8 -> 1a41b8 scaling -> 14a8d0 life
+             change; internals UNVERIFIED). Hanzo rows 16/22/35/9/12/20/45.
+  +0x12 u8   flags:
+             0x01 last row. 166330: last && bytes 8..10 all zero -> script
+                  finishes on entry. 165cc0: last -> finish after end ops.
+             0x02 attacker ACT is an armed/unarmed pair (queue2).
+             0x04 after each queued ACT set the owner body's FE |= 8 (victim body,
+                  attacker body, child respectively).
+             0x08 on entry 166c28(reg, V, A.body)  (split anchor, section 6).
+             0x10 if 0x08 clear: 166c28(reg, V, child).
+             0x18 (read as lhu & 0x18, i.e. still byte-0x12 bits 3/4): if type
+                  is 3, 5 or 0x1c, latch 166db0(reg, V, V.a3c, 0) after queueing
+                  the victim ACT (record 0 of the queued ACT).
+             0x20 "paired": attacker control is taken (165a78) and 168318 also
+                  refuses when the attacker is damaged / dead.  Tested on ROW 0
+                  only.
+             0x40 adopt the child (165a78, ROW 0 only).
+             0x80 168750 weapon operation at row entry (165f18); 1688c8 also
+                  runs it on the fail path, ROW 0 only.
+  +0x13 u8   row type: per-visit positioning in 165da8, ACT selection details
+             in 165f18, end-op 9 values, and the 166e98 entry handler.
+             0xff (and any value >= 0x5d) = no type behaviour.
+
+--------------------------------------------------------------------------------
+3. Gate 1657b0(cb) -> bool  [R]
+--------------------------------------------------------------------------------
+  V = cb[0]; A = cb[1]; char = V.254 (u8); k = eff_idx(V) - 80;
+  child = V.body.124;
+  if (168220(cb) != 0 || (V.23c & 0x10000000)) { 1688c8(cb, char, k); return 0; }
+  noFacing = 168f48(char, k) || 168700(V);
+  if (child == 0) {
+      if (!(A.23c & 0x10000000)) {
+          if (!noFacing) {                         // "oppositeFacing"
+              if (V.body.x < A.body.x) A.body.38 |= 0x80000;
+              else if (A.body.x < V.body.x) A.body.38 &= ~0x80000;
+              V.body.38 = (A.body.38 & 0x80000) ? V.body.38 & ~0x80000
+                                                : V.body.38 |  0x80000;
+          } else if (char == 40 && k in {2,3}) {
+              V.body.38 mirror = !(A.body.38 mirror);   // no position compare
+          }
+      }
+  } else if (!(child.104 & 0x100000)) {
+      if (!noFacing) {
+          if (V.body.x < child.x) child.38 |= 0x80000;
+          else if (child.x < V.body.x) child.38 &= ~0x80000;
+          V.body mirror = !(child mirror);
+      } else if (char == 39 && k == 0) {
+          14a978(V, 0);                             // face the opponent
+      }
+      child.104 |= 0x100000;
+  }
+  A.23c |= 0x10000000;
+  if (168690(char, k)) A.244 |= 0x1000; else A.244 &= ~0x1000;
+  return 1;
+
+168220(cb) -> bool "source invalid" [R]
+  if (168700(V)) return 0;
+  if (child == 0 || child.0c == 2) {
+      if (eff_tab(A) == 2) { req(V, 2, 74); V.18c = 1; return 1; }
+      return 0;
+  }
+  for (i = 0;; i++) {
+      o = 140d78(child.0c, i, -1);          // i-th object in owner seat's registry
+      if (o == 0) { req(V, 2, 74); V.18c = 1; return 1; }
+      if (o == child && (child.cc == 2 || child.cc == 3)) return 0;
+  }
+  (A matching object with another kind continues the scan.)
+168700(V) = V.a10 == 33 && V.254 == 33 && eff_idx(V) == 96   [R]
+168f48(char, k): membership in byte-pair table 0x4e8098 (terminated by a 0xff
+  byte) [R]. Pairs: (0,3)(1,4)(2,0)(3,5)(4,5)(5,0)(5,2)(6,2)(7,2)(8,3)(9,3)(10,3)
+  (11,4)(12,3)(13,0)(14,2)(15,1)(16,1)(17,0)(17,1)(18,5)(19,2)(20,0..7)(21,2)
+  (22,3)(23,2)(24,1)(24,2)(25,0)(25,2)(25,4)(26,1)(27,4)(28,2)(29,0)(29,4)(30,4)
+  (31,1)(32,3)(32,4)(33,3)(34,2)(35,0)(35,3)(35,16)(36,1)(37,1)(37,2)(37,6)(38,1)
+  (39,0)(39,2)(39,3)(40,2)(40,3)(43,1)(48,2).
+  -> Mina: k = 1, 2 skip facing; k = 3, 4 apply facing.
+168690(char, k) [R]: 0: k<3; 4: k==1||k==6; 18: k<3; 25 or 29: k==0; else 0.
+  -> Mina: always 0 (A.244 bit 0x1000 cleared).
+
+1688c8(cb, char, k)  fail-path weapon operation [R]
+  id = 165780(char, k); if (id == -1) return;
+  tmp registry on the stack: 163450(tmp); 1634e8(tmp, char, id, 0);
+  if (row0.12 & 0x80) 168750(cb);
+  (no request, no callback, no V registry change)
+
+--------------------------------------------------------------------------------
+4. Start 165a78(cb, char, id, str)  [R]
+--------------------------------------------------------------------------------
+  V = cb[0]; A = cb[1]; reg = V+0x28c; child = V.body.124 (read at entry);
+  1634e8(reg, char, id, str);
+  if (168318(cb, row0.12 & 0x20)) return;
+  152280(V+0x260);                     // clear V.callbacks260
+  1522b0(V+0x27c);                     // clear V.override27c
+  V.26c = str;                         // callbacks260[3]
+  V.body.128 = V.body.12c = V.body.130 = 0;
+  if (row0.12 & 0x20) {                // paired
+      print("FGT_ATK TASK CLEAR");
+      152280(A+0x260); 1522b0(A+0x27c); 150090(A+0x18c);
+      A timer0 = A timer1 = 0;         // A.23c keeps 0x10000000
+  } else A.23c &= ~0x10000000;
+  if ((row0.12 & 0x40) && child) {
+      print("TCB TASK CLEAR");
+      11db30(child);                   // child.e8 = child.dc = child.e4 = 0
+      147530(child[1]);                // child task -> 147540 (hold only)
+      child.108 &= ~(0x1000 | 0x2000 | 0x4000);  // cancel pending deletion
+      reg[10] = child;
+  } else reg[10] = 0;
+  168400(cb);
+  165f18(reg, cb);                     // enter row 0
+  if (166330(reg)) 166390(reg, cb);    // end ops + finish now
+  else bind(V, 0x165cc0, 2);
+  V timer0 = V timer1 = 0;
+
+168318(cb, paired) -> bool "abort" [R]
+  if (168220(cb)) return 1;            // second evaluation of the same check
+  if (!paired) return 0;
+  if (eff_tab(A) == 2 || A.a30 <= 0 || (A.23c & 0x80)) {
+      req(V, 2, 74); V.18c = 1; return 1;
+  }
+  return 0;
+  NOTE: on abort reg[12], reg[0..3], reg[7..9] were already written by 1634e8.
+
+168400(cb) [R]
+  char = V.254; k = eff_idx(V) - 80;
+  if (eff_tab(V) != 2) print(ASSERT ...);
+  if (!(A.244 & 0x1000)) {             // freeze every object (104 bit 0x800000)
+      140b68(V.a24, 1); 140b68(A.a24, 1); 140b68(-1, 1);
+  }
+  set10 = !(char == 27 && k == 0);
+  if (char == 40 && k == 2) set10 = 13a858() != 0;
+  if (set10) V.244 |= 0x10;
+  if (V.body.24 != 0x62a) stop(V.body);
+  if (169218(char, k)) V.244 |= 0x20000;
+  140b68(slot, on): slot 0/1 -> every object of that seat's 48-slot registry
+  (battle+0x29c+0x108*slot), slot -1 -> the 64-slot common registry
+  (battle+0x14c): set (on) / clear 104 bit 0x800000.
+  169218: pair table 0x4e8328: (4,3)(10,0)(10,1)(10,4)(12,16)(12,17)(12,18)(13,16)
+  (15,0)(16,0)(22,0)(26,0)(26,2)(43,0). Mina absent.
+
+--------------------------------------------------------------------------------
+5. Row entry 165f18(reg, cb) -> bool  [R]   (exact order)
+--------------------------------------------------------------------------------
+  V = cb[0]; A = cb[1]; child = V.body.124 (re-read on every entry);
+  if (reg[0] == reg[1]) return 0;
+  row = reg[12] + 20*reg[0];
+  1. if (row.10) 1413d8(V.a24, row.10, child ? child : A.body, 1);
+  2. if (row.12 & 8) 166c28(reg, V, A.body);
+     else if (row.12 & 0x10) 166c28(reg, V, child);
+  3. reg[7] = reg[8] = reg[9] = 0;
+  4. victim ACT (+2) as in section 2; if flag 4: V.body.FE |= 8;
+  5. if ((row.12 & 0x18) && type in {3, 5, 0x1c}) 166db0(reg, V, V.a3c, 0);
+     (executed even when +2 == -1? NO: the latch is inside the "+2 != -1"
+     branch; when +2 == -1 the code jumps straight to step 6.)
+  6. attacker ACT (+4) as in section 2; if queued and flag 4: A.body.FE |= 8;
+  7. object ACT (+6) as in section 2; if flag 4: child.FE |= 8;
+  8. if (row.12 & 0x80) 168750(cb);
+  9. 166e98(cb, type, e);
+  10. reg[1] = reg[0];
+  11. V timer23 = 0; A timer23 = 0;
+  return 1;
+
+166330(reg) -> bool: (row.12 & 1) && row.8 == 0 && row.9 == 0 && row.a == 0.
+166390(reg, cb): 1667f8(reg, cb); 168560(cb) (print "end" only).
+
+--------------------------------------------------------------------------------
+6. Positioning helpers  [R]
+--------------------------------------------------------------------------------
+166c28(reg, V, o)   split anchor (o may be the attacker body or the child)
+  if (!o) return;
+  V.body.x = o.x; V.body.y = o.y; stop(V.body); reg[5] = reg[4] = 0;
+  c = 0.2f (0x5f11c8);
+  if (!(o.38 & 0x80000)) { o.x -= c; V.body.x += c; }
+  else                   { o.x += c; V.body.x -= c; }
+  (each add/sub separately rounded; EE single precision.)
+166ce8(reg, V, o)   follow (per visit for types 3/4/0x36 with A.body, 5/0x1c
+  with child)
+  if (!o) return;
+  166db0(reg, V, V.body.24, V.body.28);       // current ACT + record
+  dx = (s16)(reg[4] >> 16); dy = (s16)(reg[5] >> 16);
+  V.body.x = o.x + ((V.body.38 & 0x80000) ? -(float)dx : (float)dx);
+  V.body.y = o.y + (float)dy;
+  stop(V.body);
+166db0(reg, V, act, rec)
+  r = 1212c0(V.body.0c, act, rec);            // ACT record
+  if ((u16)r.20 - 5 < 4) { reg[4] = (s16)r.22 << 16; reg[5] = (s16)r.24 << 16; }
+  (motion kinds 5..8; otherwise reg[4..5] keep their value.)
+
+--------------------------------------------------------------------------------
+7. Per visit 165cc0(cb)  [R]
+--------------------------------------------------------------------------------
+  165da8(reg, cb);
+  if (!1663b8(reg, cb)) return;
+  1667f8(reg, cb);
+  if (row.12 & 1) { 168560(cb); return; }      // finished
+  reg[0]++;
+  165f18(reg, cb);
+  if (166330(reg)) 166390(reg, cb);
+  NOTE: 165cc0 itself never re-binds V. A last row whose end ops neither bind
+  V nor request a new state leaves 165cc0 bound; reg[7..9] stay set, so every
+  later visit would run 1667f8 again (hazard for a generic port; no observed
+  row relies on it).
+
+165da8(reg, cb) per-visit positioning
+  child = V.body.124;
+  switch (type):
+    3, 4, 0x36: 166ce8(reg, V, A.body);
+    5, 0x1c:    166ce8(reg, V, child);
+    0x5a: if (V.body.28 >= 2 && V.body.128 == 0) {
+            V.body.x = A.body.x + ((A.body.38 & 0x80000) ? 88 : -88);
+            V.body mirror = !(A.body.38 & 0x80000);   // i.e. clear if A mirrored
+            V.body.128 = 1; }
+  // every type, including 0xff:
+  V.body.104 |= 0x2000; A.body.104 |= 0x2000; if (child) child.104 |= 0x2000;
+  (body/object 104 bit 0x2000: INFERRED terminal-ACT-jump suppression, as in
+  docs/standing-heavy.txt; hand ports call it "constrain".)
+
+1663b8(reg, cb) -> bool "all waits done"
+  all = 1;
+  for s in 0, 1, 2:
+    if (reg[7+s]) continue;
+    w = row.(8+s);
+    if (w == 0) { reg[7+s] = 1; continue; }
+    if (s == 0) { 168960(cb); actor = V; obj = V.body; }
+    if (s == 1) { actor = A; obj = A.body; }
+    if (s == 2) { actor = 0; obj = V.body.124; }
+    if (actor) { sp-cb(actor); v = ended(actor); } else v = ended(obj);
+    switch (w):                                   // jump table 0x5f1074
+      1  ACT end:           if (v) done;
+      2  hold reached:      if (1699f8(sp-cb)) done;
+      3  landing:           if (1737d8(sp-cb)) { 1697d0(sp-cb); done; }
+      4  y <= 16.0:         if (actor.body.y <= 16.0) { 1697d0(sp-cb);
+                                                         actor.body.y = 0; done; }
+      5  landing (173970):  if (173970(sp-cb)) { 1697d0(sp-cb); done; }
+      6  timer:             if (timer_inc(actor, 23) >= e << 8) done;  // OLD value
+      7  y <= 0:            if (actor.body.y <= 0.0) { 1697d0(sp-cb); done; }
+      8  mash restart:      if (!v) { 168588(cb); }   // not done
+                            else { print("VS LEVER CHECK");
+                              n = V.body.12c;
+                              if (n >= 10) done;
+                              else if (n > 0 && V.body.128 <= 0) done;
+                              else { V.body.128 = 0; V.body.12c = n + 1;
+                                     11d908(actor.body, actor.body.24, 0, 1); } }
+      9  ACT end (asserts obj != 0)       "SS_DMG_CT_TCB_ACT_END"
+      10 obj.y <= 0: stop(obj), obj.y = 0, done   "JUMP_END"
+      11 obj.104 & 0x100: clear it, done          "PAUSE"
+      12 obj.y <= 0: stop, y = 0; then as 11      "JUMP_END_PAUSE"
+      13 obj passes V.body.x in its facing direction:
+         obj.x = V.body.x; stop(obj); done        "OVER_X"
+      0, >= 14: never done.
+    if (!reg[7+s]) all = 0;
+  return all;
+  Types 2..8 use the actor sp-cb and are only meaningful for slots 0/1.
+  168960(cb): only V.254 == 40 (attacker ACT 0x261/0x262 or 0x26c/0x26d); no
+  effect for other characters. 168588(cb): V.body.128 += (#set A features
+  6..10, 58..61) - (#set V features 6..10, 58..61) (mash contest).
+  Native helper equivalents: 1737d8 = touchedGround, 1697d0 = stopAtGround,
+  1699f8 = release zero-duration hold (INFERRED from existing ports).
+
+1667f8(reg, cb)  end ops of the current row (slot order 0, 1, 2)
+  for s in 0, 1, 2:
+    op = row.(0xb+s); if (op == 0) continue;
+    s == 0: actor = V, o = V.body;  s == 1: actor = A, o = A.body;
+    s == 2: actor = 0, o = V.body.124;
+    if (actor) sp-cb(actor);
+    switch (op):                                  // jump table 0x5f113c
+      1   req(actor, 0, e); actor.248 |= 0x20;          (no 18c write)
+      2   req(actor, 1, e); actor.18c = 1; actor.248 |= 0x20;
+      3   i = e;
+          if ((actor.23c & 0x10) && (e == 19 || (unsigned)(e - 32) < 26))
+              i = (e == 54) ? 75 : 74;                   // airborne remap
+          req(actor, 2, i); actor.18c = 1; actor.248 |= 0x20;
+      4   169810(sp-cb)                                  (ordinary recovery)
+      5   bind(actor, 0x169a50, 0); actor.274 = 0;
+      6   bind(actor, 0x169a50, 0); actor.274 = 4;
+      7   bind(actor, 0x169a50, 2); actor.274 = 5;
+      8   bind(actor, 0x169a50, 2); actor.274 = 6;
+      9   if type == 0x41: o.128 = {0:-16, 1:-8, else:-4}[actor.f1b];
+          if type == 0x42: o.128 = -16;
+          bind(actor, 0x166e10, 1);
+      10  if (eff_tab(actor) == 1 && eff_idx(actor)-80 < 4u)
+              { bind(actor, 0x169a50, 0); actor.274 = 0; }
+      11..14  bind(actor, 0x174158, 1); actor.274 = op - 11;   (0..3)
+      15..22  bind(actor, 0x174158, 2); actor.274 = op - 11;   (4..11)
+      23  o.108 |= 0x1000 (delete at end of registry visit)  \  then
+      24  o.108 |= 0x2000 (delete when its ACT ends)          > V.body.124 = 0;
+      25  o.108 |= 0x4000 (-> 0x2000 next completion check)  /  reg[10] = 0
+          (o == 0: ASSERT print only, nothing else; names
+           SS_DMG_ET_TCB_DELETE / THEN_DELETE / THEN_RETURN)
+      26  o != 0: 147530(o[1]) (hold), V.body.124 = 0, reg[10] = 0
+          ("TCB STOP"); else ASSERT print.
+      27..34  163450(actor+0x28c); 163590(sp-cb, op + 37, 0)
+              -> actor starts its own TABLE-A script op+37 (64..71), variant 0.
+      0 / >= 35: none.
+  Lifetime-bit semantics: docs/projectile-engine.txt section 7.
+
+169a50 modes (callbacks260[5] = actor.274) [R]
+  Every visit: 1699f8(cb) (release hold); if (!ended(actor)) return.
+    0  if (actor.194 == 0x00230000) { 244 |= 1; 14cfe8(timers,5,2);
+          body.FE |= 0x100; 14cfe8(timers,7,0); }  169810(cb); 18c = 1
+    1  23c bit 8 = feature63 (held down); 169810(cb); 18c = 1
+    2  body.c0 = 2; 23c & 0x10 ? req(0, 8) : { 1697d0; req(0, 23c&8 ? 7 : 6) }
+    3  req(0, 23c & 8 ? 14 : 12)
+    4  if ((23c & 0x80) && eff_tab < 2) { req(2, 30); 18c = 1; }  else hold
+    5  if (169050(body.24)) body.FE |= 0x100; 244 &= ~0x8000; req(2,16); 18c=1
+    6  as 5 but 244 |= 0x8000
+    7  hold
+166e10 (end op 9 callback): if (1699f8(cb)) { V.f1b = min(V.f1b+1, 2);
+  14a8d0(V, V.body.128); bind(V, 0x169a50, 0); V.274 = 0; }
+0x174158 (end ops 11..22) is the attacker-side throw callback, ported for
+  modes 3/5 in ground_throw.cpp / haohmaru_special.cpp; not used by Mina.
+
+168750(cb)  weapon operation  [R]
+  special = 14fa18(A + 0x10c) || A.a10 == 43;
+  special ? 170240(cb) : 170010(cb);          // drop V's weapon (cb[0] = V)
+  V.244 &= ~0x20000;
+  if (V.a30 <= 0) return;
+  if (A.a10 in {0,3,5,14,17,18,23,25,26,28,29,30,32,34,36,37,40,43,45,46,48})
+      { 140930(6, 12); 140930(5, 6); }        // battle timers; not for Mina
+  14fa18(p): (p[0] == 6 && 152758(p[1], p[3]) && desc.byte1 == 6)
+             || p[0] == 7 || p[0] == 1.   A+0x10c = the attacker's system
+             descriptor (INFERRED: system 1 = the spirit whose drop is 170240).
+
+--------------------------------------------------------------------------------
+8. Row type handler 166e98(cb, type, e)  (jump table 0x5f1210, 93 entries)
+--------------------------------------------------------------------------------
+  s3 = 140040() (camera block), child = V.body.124. Decoded entries [R]:
+    0x00  stop(V.body); stop(A.body)
+    0x02  A.244 &= ~0x20000 (if A)
+    0x07  A.23c |= 0x20000000
+    0x08  V.body.FE |= 1
+    0x09  1e7b70(-1, 0x45) (sound); V.body.FE |= 0x80;
+          1242c0(a0 = e, a1 = V.body.38 & 0x80000, f12 = V.body.x,
+          f13 = V.body.y, f14 = -50.0, f15 = 1.0) (world effect e; argument
+          meaning INFERRED from docs/effect-runtime.txt)
+    0x16, 0x59  V.body.x = A.body.x + ((A.body.38 & 0x80000) ? -48 : +48)
+    0x17  o = 16c408(cb, 0x27d (637), 0, 1); 167100(o, V, -1) (Hanzo impact;
+          hanzo_capture.cpp startImpact documents the bank/placement; 16c408's
+          owner selection from cb was not re-read here)
+    0x40  child.x = V.body.x; stop(child)          (no null check)
+    no-op: 0x01 0x03 0x05 0x06 0x25 0x41 0x42 0x4a 0x5a and every type >= 0x5d
+  All other entries (0x04, 0x0a..0x15, 0x18..0x58 except the above, 0x5b, 0x5c)
+  are NOT decoded here (UNVERIFIED); handler addresses:
+    0a:166ff8 04/0b:167018 0c:167048 0d:16705c 0e:16706c 0f:16707c 10:167084
+    11/12:16708c 13:1670b0 14:1670c8 15:167110 18:167154 19/1a:167168 1b:16728c
+    1c:1672a4 1d:167304 1e:167350 1f..23:1673b4 24:167444 26:167460 27:16747c
+    28:1674ec 29:167530 2a:1675ac 2b:167658 2c:1676bc 2d:1676dc 2e:1676f0
+    2f:167704 30:16777c 31:167858 32:167884 33:16789c 34:1678a8 35:167910
+    36:16793c 37:167a30 38:167af8 39:167b80 3a:167c0c 3b:167c44 3c:167c84
+    3d:167c98 3e:167cac 3f:167cc0 43:167ce4 44:167d40 45:167d54 46:167d68
+    47:167db4 48:167e34 49:167e70 4b:167e90 4c:167ea8 4d:167ec0 4e:167ed4
+    4f:167ee8 50:167efc 51/5b:1680e0 52:167f68 53:167fa8 54:168018 55:168050
+    56:168078 57/58:168090 5c:168118.
+  Type also matters elsewhere: 6/0x58 single victim ACT; 1 strength offset;
+  0x29/0x41/0x4a attacker ACT adjustments; 3/5/0x1c latch; 3/4/0x36/5/0x1c/0x5a
+  per-visit positioning; 0x41/0x42 end op 9.
+
+--------------------------------------------------------------------------------
+9. Which Mina contacts produce victim states 81..84
+--------------------------------------------------------------------------------
+Path: JDG raw type t (metadata >> 26) in 36..63 -> captured state 80 + (t-36)
+(native reaction.cpp applyCapturedHit), V.254 = the delivering object's owner
+character; route-4 capture uses the profile class byte 1 of collision_24.bin,
+which for t = 37..40 is also 1..4 (class byte 0 = 2). Scan of act_24/jdg_24
+(all records of every ACT) [R]:
+  raw 37 -> k=1 (81): ACT 663, records 0..11. ACT 663 = start ACT of projectile
+         descriptor 0x5f (group 1), spawned by table-A script 5 (ACT 662,
+         special 77). Matches the native observation (special 77 -> state 81).
+  raw 38 -> k=2 (82): ACT 665, records 0..3 = projectile descriptor 0x60 (group 1),
+         spawned by table-A script 64 (row 24: ACT 664, 99 records). Script 64 is
+         referenced by no attack descriptor; its only found producer is THIS
+         engine: Mina row 1 attacker end op 27 (27 + 37 = 64).
+  raw 39 -> k=3 (83): ACT 803, records 0..5 = Chample state 30 attack (special
+         84, 1fc1b0 -> Chample cmd 30; docs/mina-callbacks.txt 6.4). The child is
+         the Chample object (kind 3, owner Mina).
+  raw 40 -> k=4 (84): ACT 711, records 0..1 = Mina's own body ACT, landing phase
+         of special 92 (709 -> 710 -> 711). Body contact: child = 0 (INFERRED).
+  Also present: raw 45 (k = 9, state 89, class 15) in ACTs 230/231 of BOTH
+  resource 24 and resource 00 (common data). Mina has no table-B id 9, so
+  1fb970 would run 1657b0 then 169810 (UNVERIFIED that the contact reaches state
+  89; class 15 routing not checked). native state_callbacks.cpp throws for it.
+Damage-state descriptors 0x590b60 (14 bytes, all motion/timer words zero) [R]:
+  80/81/83: bytes10..13 = 19 3c 00 ff; 82/84: 02 31 0b ff (meaning UNVERIFIED;
+  Nakoruru 0x5860e8 has the same two patterns).
+Victim ACTs 0x500+0xdb = 1499/1500 (7 records) and 0x500+0xde = 1502/1503 (11)
+exist in every fighter bank 00..43 [R]. Chample ACT 804 has 11 records in
+aid_24 [R].
+
+--------------------------------------------------------------------------------
+10. Mina rows (0x4e3a80) decoded
+--------------------------------------------------------------------------------
+  id  addr      vACT        aACT obj  waits  ends     e   dmg flags type
+  1   0x4e3a80  0xdb (1499)  -1   -1  0 0 0  6 27 0    0   0  0x21  ff
+  2   0x4e3a94  -1           -1   -1  0 0 0  3  0 0   63   0  0x81  ff
+  3a  0x4e3aa8  0xde (1502)  -1  804  6 0 0  0  0 25  92   0  0x40  40
+  3b  0x4e3abc  -1           -1   -1  0 0 0  3  0 0   52   0  0x01  ff
+  4   0x4e3ad0  -1           -1   -1  0 0 0  3  0 0   69   0  0x81  ff
+
+Common prefix for every row (visit E = the 1fb970 visit):
+  E.1 row = k; str = 1696c8(Mina) = (eff flags & 4) ? 2 : (eff flags & 2) ? 1 : 0;
+      V.260 = 0.
+  E.2 1657b0: invalid source (168220) or V.23c & 0x10000000 -> 1688c8 (rows 2/4
+      drop the weapon; rows 1/3 nothing) and stop. Otherwise facing (k=3/4 only),
+      child.104 |= 0x100000, Mina.23c |= 0x10000000, Mina.244 &= ~0x1000.
+  E.3 165a78 -> 1634e8 (reg[12] = row, reg[3] = str, reg[0] = 0, reg[1] = -1,
+      reg[2] = -1, reg[7..9] = 0) -> 168318.
+
+Row 1 (k=1, paired; Mina's projectile 663 hit V)
+  E   168318(cb, 0x20): abort with V req(2,74), 18c=1 if Mina is damaged
+      (eff_tab 2), at life <= 0, or Mina.23c & 0x80.
+      Clear V callbacks/override, V.26c = str, V.body.128/12c/130 = 0.
+      Paired: clear Mina callbacks260, override27c, request 18c/190/192,
+      Mina timers 0/1. Mina.23c keeps 0x10000000. reg[10] = 0 (no 0x40).
+      168400: 140b68 freeze x3 (Mina.244 bit 0x1000 is clear), V.244 |= 0x10,
+      stop(V.body) unless V.body ACT is 1578.
+      165f18: no damage, no anchor; queue2(V, 1499, 1500); no attacker/object
+      ACT; 166e98 nothing; reg[1] = 0; V and Mina timer23 = 0.
+      166330 true (last, no waits) -> 1667f8:
+        V  op 6: bind(V, 0x169a50, 0), V.274 = 4.
+        A  op 27: 163450(Mina.28c); 163590(Mina sp-cb, 64, 0): Mina starts
+           table-A script 64 (ACT 664 + projectile 0x60 -> ACT 665).
+      168560; V timers 0/1 = 0.
+  E+1.. V: 169a50 mode 4: releases holds, plays 1499/1500 to its end, then holds
+      the final pose (no recovery: mode 4 only requests (2,30) when V is dead
+      while eff_tab(V) < 2, impossible in table 2). V leaves state 81 only via a
+      new contact, normally Mina's ACT 665 (raw 38 -> state 82).
+      Mina: table-A engine (163610) runs script 64 (docs/script-engine.txt).
+  UNVERIFIED: what releases V if ACT 665 misses or is blocked; when Mina.23c
+  bit 0x10000000 is cleared if row 2 never starts.
+
+Row 2 (k=2, weapon loss; projectile 665 hit V)
+  E   No facing (168f48(24,2)); child (665) gets 104 |= 0x100000.
+      168318(cb, 0) -> 0 unless 168220 fails. Clear V callbacks/override, V.26c,
+      V.body.128/12c/130. Non-paired: Mina.23c &= ~0x10000000. reg[10] = 0.
+      168400 (freeze x3, V.244 |= 0x10, stop V.body).
+      165f18: no ACTs; flag 0x80 -> 168750: drop V's weapon (170240 if Mina's
+      system satisfies 14fa18, else 170010), V.244 &= ~0x20000; no timer
+      side effect for character 24. reg[1] = 0; timer23s = 0.
+      166330 true -> 1667f8: V op 3, e = 63 (no airborne remap: 63 > 57):
+      req(V, 2, 63); V.18c = 1; V.248 |= 0x20. 168560. V timers 0/1 = 0.
+      V.callbacks260 stay cleared; 248 bit 0x20 makes the caller re-visit V at
+      once (ground_state.cpp:862) so state 2/63 is entered in the same visit.
+
+Row 3 (k=3; Chample attack ACT 803 hit V)
+  E   Facing applied (168f48(24,3) false) relative to the Chample object, unless
+      its 104 already has 0x100000: Chample faces V, V faces opposite of the
+      Chample; Chample.104 |= 0x100000.
+      168318(cb, 0) -> 0. Clear V callbacks etc. Mina.23c &= ~0x10000000.
+      Flag 0x40 with child = Chample: 11db30(Chample), 147530(Chample task)
+      (its own handler 1fc750 stops running; 147540 only clears 104 bit 0x100),
+      Chample.108 &= ~0x7000, reg[10] = Chample.
+      168400 (freeze x3, V.244 |= 0x10, stop V.body).
+      165f18 row 3a: queue2(V, 1502, 1503); 11d908(Chample, 804, 0, 0) (Chample
+      ACT 804 in Mina's bank; kind != 4 so no mirror toggle); 166e98 type 0x40:
+      Chample.x = V.body.x, stop(Chample) (y unchanged); reg[1] = 0;
+      timer23s = 0. 166330 false -> bind(V, 0x165cc0, 2). V timers 0/1 = 0.
+  E+n (n = 1, 2, ...), each visit of 165cc0:
+      165da8: V.body.104, Mina.body.104 and Chample.104 |= 0x2000.
+      1663b8: slot 0 wait 6: old = V timer23; timer23 += delta; done when
+      old >= 92*256. Slots 1/2 have no wait (done on the first visit).
+      With delta 256 per visit the wait completes on the 93rd 165cc0 visit
+      (old = 23552); a different V timer delta changes the count.
+  completion visit:
+      1667f8 row 3a: child op 25: Chample.108 |= 0x4000 (freed after ACT 804 has
+      ended, via 147558's 0x4000 -> 0x2000 conversion), V.body.124 = 0,
+      reg[10] = 0.
+      reg[0] = 1; 165f18 row 3b: nothing but reg[7..9] = 0, reg[1] = 1,
+      timer23s = 0. 166330 true -> 1667f8 row 3b: V op 3, e = 52:
+      req(V, 2, (V.23c & 0x10) ? 74 : 52); V.18c = 1; V.248 |= 0x20. 168560.
+  UNVERIFIED: whether Mina respawns the Chample after it is freed; whether the
+  Chample's own contact handling (state 30 -> 32/ACT 805) runs on the contact
+  frame before the 1fb970 visit holds its task (ordering of 140270 object phase
+  vs 1494f0 callbacks for this case). V.23c bit 0x10 = airborne (INFERRED from
+  169a50 mode 2).
+
+Row 4 (k=4, weapon loss; Mina body ACT 711 hit V)
+  E   child = 0 (body contact). 168220: invalid only if eff_tab(Mina) == 2
+      (then V req(2,74), 18c=1, fail path drops V's weapon via 1688c8).
+      Facing (168f48(24,4) false) if Mina.23c lacks 0x10000000: oppositeFacing
+      against Mina's body. Then identical to row 2 with e = 69:
+      168750 weapon drop, req(V, 2, 69), V.18c = 1, V.248 |= 0x20.
+
+--------------------------------------------------------------------------------
+11. Cross-check against the hand ports
+--------------------------------------------------------------------------------
+Confirmed by this spec (no change needed): Nakoruru rows 0..4/16, Rimururu row 0,
+Hanzo rows (0x4e2a68..0x4e2d10) decode exactly to the ACTs, waits (victim
+wait 1/6, attacker wait 1/3, row-16 7/7), end ops (7/5, 6, 7, 3, 7/14), split
+anchor per flag-8 row, 166ce8 follow/166db0 latch, timer23 clears, 168318 KO
+gate after registration, Hanzo wait 6 with e = 16, damage +0x10 values
+16/22/35/9/12/20/45, type 0x16 (+-48) and 0x17 (ACT 637).
+Discrepancies / gaps (precise):
+  D1 nakoruru_capture.cpp treats every Mina slot as weaponLoss and uses that as
+     the "skip facing" predicate. The original predicate is 168f48(char,k) ||
+     168700(V): Mina k=3 and k=4 DO apply facing (oppositeFacing for k=4 body
+     contacts, child-relative for k=3). Today slot 4 skips it.
+  D2 Fail path: the port calls loseWeapon for every Mina slot. 1688c8 runs
+     168750 only when ROW 0 has flag 0x80 (Mina k=2/4 yes, k=1/3 no). Harmless
+     now because k=1/3 throw earlier, wrong once they are admitted.
+  D3 168750 special-drop choice: port tests opponentSystem == 1 only. Original:
+     14fa18(A+0x10c) (system word 1 or 7, or system 6 whose custom descriptor
+     byte1 == 6) OR attacker character 43.
+  D4 165a78 also zeroes V.body+0x130; the port clears only bodyState128 and
+     bodyLatch12c (no native field for +0x130).
+  D5 Port uses source.stateTable() for the attacker-damaged test; the original
+     uses the EFFECTIVE table 1500a8 (23c bit 0x200000 selects the 1a4 alias).
+     Same for the victim k (eff_idx).
+  D6 End op 1 (req table 0 without 18c) vs op 2/3 (with 18c = 1) and the end-op-3
+     airborne remap (V.23c & 0x10, e == 19 or 32..57 -> 74, e == 54 -> 75) are
+     not generalized in the port. Mina row 3b (e = 52) is affected.
+  D7 168400 sets V.244 |= 0x20000 via 169218 for some (char,k); the port never
+     does (not needed for 1/2/3/24) and its success path clears 0x20000 only via
+     loseWeapon (168750 does it unconditionally, which matches for flag-0x80
+     rows).
+  D8 Not ported at all: Mina rows 1 (paired + attacker script 64 via end op 27)
+     and 3 (flag 0x40 adoption, child ACT request, type 0x40, wait 6 with e = 92,
+     child end op 25, continuation row with request 2/52|74). Generic features
+     missing: end ops 1, 2, 4, 8..13, 15..34; wait types 2, 4, 5, 8..13;
+     flags 0x04, 0x10, 0x40; all 166e98 types except 0x16/0x17; per-visit types
+     0x36/0x5a; attacker-ACT adjustments for types 1/0x29/0x41/0x4a.
+  D9 168220 is evaluated twice (1657b0 and 168318); a request 2/74 written by the
+     first call already aborts the gate, so the second call is only reached when
+     the first returned 0. No behavioural difference, noted for exact ports.
+  D10 hanzo_capture.cpp writes callbacks260 words 3/4/6 when binding 169a50 at
+     the end; 1522a0 writes only words 0..2 and end ops write word 5.
+     Words 3/4/6 keep their previous values in the original (UNVERIFIED impact;
+     word 3 = str was already set by 165a78).
+
+--------------------------------------------------------------------------------
+12. Open questions
+--------------------------------------------------------------------------------
+  - Release of the victim after Mina row 1 when projectile 665 does not connect;
+    clearing of Mina.23c bit 0x10000000 in that case.
+  - Chample lifetime after row 3 (freed by 0x4000) and respawn path.
+  - Same-visit vs next-visit execution of 1fb970 after the state-81..84 entry,
+    and order relative to the Chample/projectile own handlers.
+  - 1413d8 internals and the 140930 battle timers in 168750 (not needed for Mina).
+  - Meaning of damage-descriptor bytes 10..13 for states 80..84.
+  - 166e98 types listed as undecoded in section 8.

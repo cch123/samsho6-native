@@ -16,6 +16,8 @@
 #include "haohmaru_special.hpp"
 #include "rimururu_special.hpp"
 #include "hanzo_special.hpp"
+#include "mina_special.hpp"
+#include "chample.hpp"
 #include "nakoruru_eagle_attack.hpp"
 #include "nakoruru_riding.hpp"
 #include "nakoruru_capture.hpp"
@@ -160,11 +162,19 @@ void GroundStateRuntime::begin(PlayerObject& o,StateEntryActor& a,const InputSys
     case 9:case 10:action=(state==9?6:8)+!armed;break;
     case 11:case 13:a.controlCounterC0=1;action=(state==11?278:282)+!armed;break;
     case 12:case 14:a.controlCounterC0=4;action=(state==12?280:284)+!armed;break;
-    case 25:case 26:case 27:case 28:case 29:case 30:
-        //169c28's actual weapon-clash branch. Its alternative blocked-swing
-        //actions are not interchangeable with the raw33 clash animations.
+    case 25:case 26:case 27:case 28:case 29:case 30: {
         a.opponentX=frame.opponentX;a.faceOpponent();restoreBody(o,a);
-        stopAtGround(o);captureBody(o,a);action=141+(state-25)%3;break;
+        stopAtGround(o);captureBody(o,a);
+        const int strength=(state-25)%3;
+        // 169c28 gives the Ten chain opener its own recoil even on a clash.
+        // For a blocked slash it reads the near/far variant at recoil entry.
+        const int variant=(a.flags23c&0x200000)?a.aliasCharacter1a8:a.stateCharacter198;
+        if(a.flags23c&0x40000)action=307;
+        else if(a.flags23c&0x20000)action=141+strength;
+        else action=(variant<2?294:300)+(state>=28?3:0)+strength;
+        a.flags248&=~0x800u;
+        break;
+    }
     case 35:action=74+!armed;break;
     case 40:action=318+!armed;break;
     case 44:action=312+!armed;break;
@@ -335,8 +345,8 @@ DownedEvents GroundStateRuntime::downedCallback(PlayerObject& o,StateEntryActor&
         }
         DownedInput controls;controls.system=config;controls.character=a.character;
         controls.controlKind=a.controlKindA20;controls.opponentX=frame.opponentX;
-        //1720b0 reads the published features, not raw keyboard edges or the
-        //attack request selected earlier in this same actor visit.
+        // 1720b0 reads the published features for either control type. A CPU
+        // recovery uses its command from this actor visit, including BACK.
         controls.pressRecovery=input.sampledFeatures[0x28/4];
         controls.back100=input.sampledFeatures[0x100/4];controls.down=input.sampledFeatures[0xfc/4];
         const auto previous=playback.phase;
@@ -475,12 +485,21 @@ void GroundStateRuntime::endingCallback(PlayerObject& o,StateEntryActor& a,State
             (*companion)[0x108/4]&=~0x100000u;
             if(a.character==1)(*companion)[0x128/4]=a.stateTable()==2?11u:a.stateIndex()==41?9u:a.stateIndex()==42?10u:12u;
         }
+        // 14e000 tests 1fde18 before its tail 1a3400 commands Chample state 34.
+        const bool champleBusy=a.character==24&&companion&&!champleAvailable(*companion);
+        // 1a3400 (win 34), 1a34c0 (draw 35), 1a3580 (loss 36), 1a3640 (surviving loser 37).
+        if(a.character==24&&companion&&(a.stateTable()==2||a.stateIndex()!=39))
+            commandChamplePresentation(*companion,a.stateTable()==2?36u:a.stateIndex()==41?34u:a.stateIndex()==42?35u:37u);
         if(a.stateTable()==2)playback.beginLoser(o,a.flags23c,a.flags244,&a.queuedActionA3c);
         else if(a.stateIndex()==39) {
             playback.beginIntroduction(o,a.flags244,context.player,&a.queuedActionA3c,a.character==frame.opponentCharacter);a.flags248|=0x1000;
         } else {
             a.opponentX=frame.opponentX;a.faceOpponent();restoreBody(o,a);
-            if(a.stateIndex()==41)
+            if(a.stateIndex()==41&&champleBusy) {
+                // Same non-forced 1494c0 request as the generic winner clips.
+                a.queuedActionA3c=508+!(a.flags23c&0x1000);
+                a.flags244&=~0x40000000u;playback.phase=EndingPhase::Playing;
+            } else if(a.stateIndex()==41)
                 playback.beginWinner(o,a.flags23c,a.flags244,a.fieldA30,frame.matchStats->complete(),&a.queuedActionA3c);
             else {
                 // A surviving loser and a draw each have a separate clip.
@@ -494,13 +513,29 @@ void GroundStateRuntime::endingCallback(PlayerObject& o,StateEntryActor& a,State
         //14e320 is authoritative; no persistent parallel EndingPhase may
         //survive a new hit or a round-controller state request.
         playback.phase=EndingPhase::Playing;ActorTimers timers{a.timerDelta,a.timers};
-        playback.update(o,a.flags244,&timers,context.player,&a.queuedActionA3c,a.character!=1||!companion||((*companion)[0x108/4]&0x100000));a.timers=timers.values;
+        playback.update(o,a.flags244,&timers,context.player,&a.queuedActionA3c,(a.character!=1&&a.character!=24)||!companion||((*companion)[0x108/4]&0x100000));a.timers=timers.values;
         //Only timer34's expiry queues a clip here;1493c0 explicitly forces492.
         if(a.queuedActionA3c!=-1)a.flags248|=0x1000;
     }
     a.callbacks260[0]=playback.phase==EndingPhase::Holding?0x169a50:0x14e320;
+    // 14e000 holds Mina's ordinary win clips in 14e470 until Chample is ready.
+    const int win=a.queuedActionA3c;
+    if(entering&&a.character==24&&a.stateTable()==0&&a.stateIndex()==41&&(win==495||win==496||win==499||win==501))
+        a.callbacks260[0]=0x14e470;
     a.callbacks260[1]=0;a.callbacks260[2]=0xffffffff;
     if(playback.phase==EndingPhase::Holding)a.callbacks260[5]=4;
+}
+void GroundStateRuntime::minaWinnerHold(PlayerObject& o,StateEntryActor& a,StateEntryContext& context) {
+    // 14e470: wait for 1a3930 readiness, then for 1699f8 on the clip.
+    auto& companion=context.tasks.objects.at(a.auxiliaryObject04-1);
+    if(!(companion[0x108/4]&0x100000))return;
+    const auto c=o.timeline.clock();
+    const bool done=actionEnded(o,a.queuedActionA3c)||(c.flags104&0x100);
+    o.setFlags(c.flags104&~0x100u,c.flags108);
+    if(!done)return;
+    const auto act=o.timeline.action().id();
+    if(act==499||act==501)companion[0x104/4]|=2;
+    a.callbacks260[0]=0x14e320;a.callbacks260[1]=0;a.callbacks260[2]=0xffffffff;
 }
 void GroundStateRuntime::weaponLockCallback(PlayerObject& o,StateEntryActor& a,StateEntryContext& entry,
         const GroundStateFrame& frame,bool entering) {
@@ -585,11 +620,12 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
     const int table=a.pendingTable==-1?a.stateTable():a.pendingTable;
     const int state=a.pendingIndex==-1?a.stateIndex():a.pendingIndex;
     const bool pendingRide=a.character==1&&(a.flags23c&0x200000)&&a.aliasPendingTable>=0&&a.pendingTable==-1;
-    if(!pendingRide&&!supports(table,state))throw UnportedFighterState(a.character,table,state);
+    // 1fb970 handles every captured state 80..111 of a Mina victim, recovering
+    // through 169810 where 4e3a80 has no row (e.g. the shared throw type 45).
+    const bool minaVictim=table==2&&state>=80&&state<=111&&a.pendingCharacter254==24;
+    if(!pendingRide&&!minaVictim&&!supports(table,state))throw UnportedFighterState(a.character,table,state);
     if(table==1&&(!frame.objects||(a.character==0&&state>=64&&state!=77&&!(a.flags23c&0x1000))))
         throw std::runtime_error("Ground attacks require armed actor and explicit object context");
-    if(table==0&&state>=25&&state<=30&&(!(a.flags23c&0x20000)||(a.flags23c&0x40000)))
-        throw std::runtime_error("Ground clash callback requires actual weapon-clash flag");
     if(((table==2&&state==13)||(table==1&&state==31))&&!frame.weaponLock)
         throw std::runtime_error("Ground throw requires both fighters");
     if(table==2&&((state>=10&&state<=12)||state==14)&&(!frame.weaponLock||!frame.random))
@@ -612,12 +648,12 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
     if(((table==1&&(state==78||state==79))||(table==2&&state==83))&&
        (!frame.battle||!frame.weaponLock||!frame.random))
         throw std::runtime_error("Haohmaru's weapon and secret techniques require the live battle clock and both fighters");
-    if(table==2&&((a.flags248&0x400)||(state>=32&&a.contactKind252&&
-            (a.contactKind252>5||!frame.battle||!frame.weaponLock))))
+    if(table==2&&((a.flags248&0x400)||(state>=32&&a.contactKind252))&&
+            (a.contactKind252>8||!frame.battle||!frame.weaponLock))
         throw std::runtime_error("Elemental damage requires its full callback path");
     if(table==2&&((a.flags23c&0x80)||state==7||state==16||state==30||state==31||KnockdownPlayback::supportsFall(state))&&
-            (!frame.effects||!frame.random||frame.training||a.controlKindA20!=0))
-        throw std::runtime_error("Ordinary downed/KO callbacks require human/system0 effect and random context");
+            (!frame.effects||!frame.random||frame.training))
+        throw std::runtime_error("Ordinary downed/KO callbacks require battle effects and random state");
     captureBody(o,a);a.flags248&=~0x20u;
     entries_.transition(a,input,config,context);
     entries_.transitionAlias(a,input,config,context);restoreBody(o,a);
@@ -643,6 +679,8 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
                 BattleGauges::endConcentration(*frame.battle,a,context.player);
             }
             if(damage<32&&(damage<18||damage>=24)) {a.fieldA2c=0;a.contactKind252=0;}
+            // 14a088 overrides the incoming JDG element for the defense-down item.
+            if(a.flags248&0x400)a.contactKind252=6;
             // 14b0a8 turns a fighter struck during the cross-behind ACT toward
             // the attacker. Other backwards hit descriptors retain their recoil.
             if(a.bodyAction24==74||a.bodyAction24==75) {
@@ -758,6 +796,8 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             a.flagsB8=context.opponentFlagsB8;context.player=player;context.opponentFlagsB8=flags;
         } else if(a.character==1&&a.stateTable()==1&&nakoruruEagleAttackSupports(a.stateIndex())&&handler!=0x169a50) {
             if(updateNakoruruEagleAttack(o,a,input,context,frame))recover(o,a,frame);
+        } else if(a.character==24&&a.stateTable()==1&&isMinaAttackCallback(handler)) {
+            if(updateMinaAttack(o,a,input,frame,context,scripts_))recover(o,a,frame);
         } else if(a.character==3&&a.stateTable()==1&&isHanzoSpecialCallback(handler)) {
             if(updateHanzoSpecial(o,a,input,frame))recover(o,a,frame);
         } else if(a.character==2&&(handler==0x1edf30||handler==0x163610)) {
@@ -820,6 +860,10 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             }
         }
         else if(handler==0x16ae60) {if(actionEnded(o,a.queuedActionA3c))recover(o,a,frame);}
+        else if(handler==0x1fb970) {
+            if(updateMinaVictim(o,a,context,frame,scripts_))recover(o,a,frame);
+            if(a.flags248&0x20)return visit(o,a,input,config,context,frame);
+        }
         else if(handler==0x1ec420||handler==0x1edfa0||handler==0x1ee658||
                 (a.stateTable()==2&&(a.pendingCharacter254==1||a.pendingCharacter254==3)&&handler==0x165cc0)) {
             updateFighterCapture(o,a,context,frame);
@@ -851,6 +895,7 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             updateWhirlwindVictim(o,a,input,context,frame);
         else if(handler==0x174fe0)beginDamage(o,a,input,config,context,frame);
         else if(handler==0x14e320)endingCallback(o,a,context,frame);
+        else if(handler==0x14e470&&a.character==24)minaWinnerHold(o,a,context);
         else if(handler==0x170640) {a.controlCounterC0=3;if(actionEnded(o,a.queuedActionA3c))recoverGuard(o,a);}
         else if(handler==0x170890) {if(updateGroundReaction(o))recover(o,a,frame);}
         else if(handler==0x172be8||handler==0x172c50||handler==0x172cb0)

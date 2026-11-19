@@ -73,13 +73,17 @@ int main(int argc,char** argv){try {
             result=ss6::spawnHaohmaruFlask(runtime,pools,players.at(player),player,owners.at(player).flags23c,parents.at(player));
         }else if(op=="reflect") {
             const auto object=word(),team=word();
-            ss6::reflectHaohmaruProjectile(runtime,pools.objects.at(object-1),team);
+            runtime.reflectProjectile(pools.objects.at(object-1),team);
         }else if(op=="rising-trail") {
             const auto player=word(),state=word();
             result=runtime.spawnRisingSlashTrail(pools,players.at(player),player,owners.at(player).flags23c,parents.at(player),state);
         }else if(op=="slash-effect") {
             const auto player=word();
             result=runtime.spawnSlashEffect(pools,players.at(player),player,owners.at(player).flags23c,parents.at(player),593);
+        }else if(op=="actor-attachment") {
+            const auto player=word();const auto& parent=parents.at(player);
+            result=runtime.spawnActAttachment(pools,players.at(player),common,player,owners.at(player).flags23c,
+                                              parent,parent,parent[0x10c/4],false);
         }else if(op=="projectile-pause") {
             const auto object=word(),first=word(),second=word();
             runtime.pauseWhirlwind(pools.objects.at(object-1),first,second);

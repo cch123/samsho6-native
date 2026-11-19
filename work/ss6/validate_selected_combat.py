@@ -53,7 +53,8 @@ def prefix(lineup):
         forward=(128,64)[side]
         back=forward^192
         directions={0:{66:32},1:{65:forward,76:forward,88:16,90:16},
-                    2:{62:back|16,72:back|16,82:back},3:{65:forward,76:forward,88:16}}[resource]
+                    2:{62:back|16,72:back|16,82:back},3:{65:forward,76:forward,88:16},
+                    24:{62:forward|16,72:forward|16,82:forward}}[resource]
         for tick,mask in directions.items():pads[tick-1][side]=mask
     # Select one costume on each seat. Confirm both Ken spirits, let P2
     # choose the default binary setting, then move random stage 10 to 0.
@@ -68,7 +69,7 @@ def trace(exe,assets,pads):
     if result.returncode:raise RuntimeError(f'{result.stderr.strip()} at pad tick {len(result.stdout.splitlines())+1}')
     return [r.split() for r in result.stdout.splitlines()]
 
-def capture(exe,viewer,assets,work,p,lineup,pads,tick,visibility,stats):
+def capture(exe,viewer,assets,work,p,lineup,pads,tick,visibility,stats,final_overlay=None):
     selected=pads[:tick+1];packet=subprocess.run([exe,assets,*map(str,lineup)],check=True,capture_output=True,
         input=''.join(f'{x} {y}\n' for x,y in selected).encode()).stdout
     stream=io.BytesIO(packet);n,=struct.unpack('<I',stream.read(4))
@@ -91,7 +92,7 @@ def capture(exe,viewer,assets,work,p,lineup,pads,tick,visibility,stats):
         # Re-use the same original rows and backdrop for the subtraction;
         # reset its real CLUT allocator before rendering each comparison.
         stream.seek(pos)
-        report=compare(p,stream,stats,f'{lineup}-{tick+1}',pixels(scene),target,pixels(arena))
+        report=compare(p,stream,stats,f'{lineup}-{tick+1}',pixels(scene),target,pixels(arena),final_overlay=final_overlay)
         assert target['quads'] and target['visible_pixels']>0,(lineup,tick,target)
         seen.append(target.copy())
     return dict(pad_tick=tick+1,ordered_objects=n,visible=seen,rgba_sha256=report['viewer_sha256'])

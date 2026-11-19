@@ -1,4 +1,5 @@
 #include "state_callbacks.hpp"
+#include "fighter_roster.hpp"
 #include <algorithm>
 #include <bit>
 #include <fstream>
@@ -6,9 +7,12 @@
 
 namespace ss6 {
 namespace {
-template<size_t N>std::array<uint8_t,N> read(const std::filesystem::path& file) {
-    std::array<uint8_t,N> data;std::ifstream in(file,std::ios::binary);
-    if(!in.read(reinterpret_cast<char*>(data.data()),N)||in.peek()!=EOF)throw std::runtime_error("Invalid callback table: "+file.string());
+template<size_t N>std::array<uint8_t,N> read(const std::filesystem::path& file,size_t extendedSize=N) {
+    std::array<uint8_t,N> data;std::ifstream in(file,std::ios::binary|std::ios::ate);
+    const auto size=in.tellg();
+    if((size!=std::streamoff(N)&&size!=std::streamoff(extendedSize)) ||
+       !in.seekg(0).read(reinterpret_cast<char*>(data.data()),N))
+        throw std::runtime_error("Invalid callback table: "+file.string());
     return data;
 }
 uint32_t word(const uint8_t* p){return p[0]|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24;}
@@ -27,7 +31,9 @@ uint32_t registerHandler(StateEntryActor& a,uint32_t handler,int table,int argum
 }
 StateCallbacks::StateCallbacks(const std::filesystem::path& assets):entries_(assets),bindings_(assets) {
     const auto handlers=read<51*4>(assets/"callback_attack_handlers.bin");
-    const auto special=read<51*128>(assets/"callback_special_parameters.bin");
+    // Fighter callbacks only use the playable 51 rows. Older asset packs
+    // stop there; the complete table also carries two CPU pattern banks.
+    const auto special=read<51*128>(assets/"callback_special_parameters.bin",53*128);
     const auto characters=read<51*28>(assets/"callback_character_parameters.bin");
     const auto systems=read<9*40>(assets/"permission_systems.bin");
     const auto constants=read<8>(assets/"callback_constants.bin");
@@ -74,12 +80,16 @@ void CallbackContext::setFirstAttackCommand(uint32_t value) {
 }
 uint32_t StateCallbacks::registerOrdinaryDamage(StateEntryActor& a,const InputSystemConfig& config) {
     const int index=a.stateIndex();
-    if(a.character>3||a.character!=config.character||config.system>5||a.stateTable()!=2||uint32_t(index)>111)
+    if(!playableFighter(a.character)||a.character!=config.character||config.system>5||a.stateTable()!=2||uint32_t(index)>111)
         throw std::runtime_error("Ordinary damage registration requires a supported fighter, spirit and common damage state");
     //15/16 retain the facing toggle for downed-body orientation. Other
     //entries clear it as well as the motion/clock gates4/8.
     a.bodyPendingFE&=uint16_t(~(4u|8u|((index==15||index==16)?0u:0x100u)));
     if(index>=80) {
+        if(a.pendingCharacter254==24) {
+            // 1fb970 itself recovers through 169810 when 4e3a80 has no row.
+            return registerHandler(a,0x1fb970,2,index-80);
+        }
         if(a.pendingCharacter254>3||(a.pendingCharacter254==2&&index!=80)||
            (a.pendingCharacter254==3&&index>87&&index!=96))throw std::runtime_error("Missing source character damage callback");
         constexpr uint32_t handlers[]{0x1ec248,0x1ec420,0x1edfa0,0x1ee658};

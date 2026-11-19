@@ -48,13 +48,8 @@ bool updateStageItemPickup(PlayerObject& body,StateEntryActor& actor,StateEntryC
         const int id=takeItem(battle,context.tasks);
         actor.pickedItemA40=id;
         if(id>=0&&id<=3) {
-            const bool timeout=battle.timeOption13c!=3&&battle.field08!=1&&battle.timers.values[0]==0;
-            if(battle.gameMode&&!(frame.weaponLock->opponent.flags23c&0x80)&&!timeout) {
-                constexpr int base[]={-16,-4,-12,-32};
-                // 14f2b8 also adds 99 for signed healing. The factory VS
-                // handicap is 100 percent and EE division truncates to zero.
-                actor.pendingDamageA38+=(100*base[id]+99)/100;
-            }
+            constexpr int base[]={-16,-4,-12,-32};
+            battle.queueLifeChange(actor,frame.weaponLock->opponent.flags23c,base[id]);
         } else if(id>=4&&id<=6) {
             // 14e838 awards no points in local VS. 14d97c still plays SE 66.
             if(frame.sound)frame.sound->sample(-1,66);

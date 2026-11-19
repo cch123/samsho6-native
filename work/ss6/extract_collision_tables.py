@@ -23,8 +23,13 @@ def main():
         result.extend(data[offset:offset+size])
     for target in [ROOT/'work/ss6/extracted/resources', OUT/'native-viewer/assets']:
         (target/'collision_00.bin').write_bytes(result)
+    # 1690b0 walks padded four-byte resource/ACT records up to the sentinel.
+    base=elf.offset(0x4e8168)
+    end=base+22*4
+    assert data[end]==255 and data[end+2:end+4]==b'\xff\xff'
+    (ROOT/'work/ss6/extracted/resources/projectile_hitstop.bin').write_bytes(data[base:end])
     # 153090 uses the object's +18 profile for raw classes 36..67.
-    for profile in (1,2,3):
+    for profile in (1,2,3,24):
         start=elf.offset(0x4d7278+64*profile)
         (ROOT/f'work/ss6/extracted/resources/collision_{profile:02}.bin').write_bytes(data[start:start+64])
     report = dict(elf_sha256=SOURCE_HASH,asset='collision_00.bin',size=len(result),

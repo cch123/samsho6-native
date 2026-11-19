@@ -19,4 +19,8 @@ python3 work/ss6/package_viewer.py
 ./select.command
 ```
 
+双击 `cpu.command` 可用 1P 直接对战电脑。要自行选人，可运行 `./select.command --cpu p2`。
+
+双击项目根目录的 `title.command` 可从日版标题进入本地双人 VS。赛后选择 `RETURN TO TITLE` 可以从模式菜单重开一场。
+
 Git 只跟踪源码、脚本、开发文档和对战测试输入。光盘镜像、原版可执行文件、提取出的图像与音频、截图、录像以及打包产物均保留在本地。

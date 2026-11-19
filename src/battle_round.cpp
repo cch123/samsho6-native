@@ -1,5 +1,6 @@
 #include "battle_round.hpp"
 #include "fighter_roster.hpp"
+#include <bit>
 #include <stdexcept>
 
 namespace ss6 {
@@ -8,11 +9,24 @@ int BattleRoundState::remainingSeconds() const {
     constexpr int count=90*256;
     return int((int64_t(timers.values[0])+count-1)/count);
 }
+bool BattleRoundState::timeExpired() const {
+    return timeOption13c!=3 && field08!=1 && timers.values[0]==0;
+}
+void BattleRoundState::queueLifeChange(StateEntryActor& recipient,uint32_t opponentFlags23c,int32_t amount) const {
+    // 14a8d0 checks the other fighter's KO flag even for healing. An attack
+    // already in flight may finish its animation after time runs out.
+    if(!gameMode || timeExpired() || (opponentFlags23c&0x80))return;
+    // Factory local VS uses 100% damage. The EE adds 99 even for negative
+    // amounts, so food granting 16 life actually queues a change of -15.
+    const int32_t scaled=std::bit_cast<int32_t>(uint32_t(amount)*100+99)/100;
+    recipient.pendingDamageA38=std::bit_cast<int32_t>(uint32_t(recipient.pendingDamageA38)+uint32_t(scaled));
+}
 void BattleRoundInitialization::begin(GroundStateRuntime& ground,const std::array<RoundPlayerRef,2>& players,
                                      BattleRoundState& battle,BattleEffects& effects) {
     if(battle.gameMode!=3)throw std::runtime_error("Battle round initialization requires local versus");
-    for(const auto& p:players)if(!playableFighter(p.actor.character)||p.actor.controlKindA20||p.config.character!=p.actor.character||p.config.system>5)
-        throw std::runtime_error("Battle round initialization requires supported human fighters and spirits");
+    for(const auto& p:players)if(!playableFighter(p.actor.character)||p.actor.controlKindA20>1||
+        (p.actor.controlKindA20==1&&p.actor.controlModeC8!=35)||p.config.character!=p.actor.character||p.config.system>5)
+        throw std::runtime_error("Battle round initialization requires supported fighters, controllers and spirits");
     const bool first=battle.match.roundIndex==0;
     battle.sampler.resetRoundSampling();battle.camera.resetRound();battle.timers={};
     const int timeLimit=BattleRoundState::roundTimeLimits.at(battle.timeOption13c);

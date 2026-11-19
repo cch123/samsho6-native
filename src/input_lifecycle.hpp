@@ -12,10 +12,10 @@ struct ActorInputSampling {
     //and the AI dispatcher are integrated. It is not a guessed pause flag.
     bool opponentSamplingAllowed=true;
 };
-enum class ActorInputRoute {HumanVisited,HumanSuppressed,AiSuppressed,AiRequired};
+enum class ActorInputRoute {HumanVisited,HumanSuppressed,AiSuppressed,AiRequired,AiVisited};
 void updateCharacterCharge(PermissionActor&,const ActorCommandInput&,int32_t battleState,int32_t battleField18); //14bcc8
 //1495e8..149740 sampling branch, including dynamic bindings and whole179530.
-//AiRequired explicitly hands control back to the unported158990/158aa8 path.
+//AiRequired hands this visit to the CPU decision source before shared requests.
 ActorInputRoute sampleActorInput(PermissionActor&,const PermissionActor&,ActorCommandInput&,InputSampler&,
     const CommandInput&,const ActorInputSampling&,const std::array<NormalizedPadSample,2>&,const std::array<InputMapping,2>&);
 bool inputRequestsLocked(const PermissionActor&); //149740..149768/1497fc

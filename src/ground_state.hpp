@@ -9,6 +9,7 @@
 #include "match_progress.hpp"
 #include "auxiliary_objects.hpp"
 #include "stage_camera.hpp"
+#include "script_engine.hpp"
 #include <stdexcept>
 
 namespace ss6 {
@@ -59,6 +60,7 @@ struct GroundStateFrame {
     std::function<void()> suppressCaptureObjects; // 168400 gates existing attackers when a pair takes control.
     std::function<void()> startExplosion; // 11f248, exceptional release when the opponent is already defeated
     std::function<void(bool)> issenMusic; // 13ab78 stops on capture; 13aaf8(1) restarts on surviving set
+    std::function<void(uint8_t)> scriptEvent; // 164c58 entry events that spawn character objects (33, 34)
     BattleRoundState* battle=nullptr; // Wall impact replaces the live camera command queue.
 };
 //Ordinary ground moves, heavy knockdown and KO in149d08, with native callbacks.
@@ -66,7 +68,7 @@ struct GroundStateFrame {
 //keeps tail state entry separate from next-visit callback/action registration.
 class GroundStateRuntime {
 public:
-    explicit GroundStateRuntime(const std::filesystem::path& assets):entries_(assets),callbacks_(assets),ordinary_(assets),reactions_(assets) {}
+    explicit GroundStateRuntime(const std::filesystem::path& assets):entries_(assets),callbacks_(assets),ordinary_(assets),reactions_(assets),scriptTables_(assets) {}
     //After animation/stage and before input sampling. Timer predicates use
     //the PREVIOUS published features, as in the original scheduler.
     void prepareInput(StateEntryActor&,const PermissionActor&,const ActorCommandInput&,CallbackContext&,int32_t distance) const;
@@ -83,17 +85,22 @@ public:
     static void captureBody(const PlayerObject&,StateEntryActor&);
     static void restoreBody(PlayerObject&,const StateEntryActor&);
     static bool supports(int table,int index);
+    const StateEntryRules& entryRules() const {return entries_;}
+    const ScriptEngine& scripts() const {return scripts_;}
     uint8_t damageFlags(const StateEntryActor& a) const {return entries_.descriptor(2,a.stateIndex(),a.damageCharacterA18)[0];}
 private:
     StateEntryRules entries_;
     StateCallbacks callbacks_;
     OrdinaryRules ordinary_;
     ReactionTables reactions_;
+    ScriptTables scriptTables_;
+    ScriptEngine scripts_{scriptTables_};
     void begin(PlayerObject&,StateEntryActor&,const InputSystemConfig&,StateEntryContext&,const GroundStateFrame&);
     void beginAttack(PlayerObject&,StateEntryActor&,const GroundStateFrame&);
     void beginDamage(PlayerObject&,StateEntryActor&,const ActorCommandInput&,const InputSystemConfig&,StateEntryContext&,const GroundStateFrame&);
     DownedEvents downedCallback(PlayerObject&,StateEntryActor&,const ActorCommandInput&,const InputSystemConfig&,StateEntryContext&,const GroundStateFrame&,bool entering=false);
     DownedEvents knockoutCallback(PlayerObject&,StateEntryActor&,const GroundStateFrame&,bool entering=false);
+    static void minaWinnerHold(PlayerObject&,StateEntryActor&,StateEntryContext&);
     void endingCallback(PlayerObject&,StateEntryActor&,StateEntryContext&,const GroundStateFrame&,bool entering=false);
     void weaponLockCallback(PlayerObject&,StateEntryActor&,StateEntryContext&,const GroundStateFrame&,bool entering=false);
     void callback(PlayerObject&,StateEntryActor&,const GroundStateFrame&);

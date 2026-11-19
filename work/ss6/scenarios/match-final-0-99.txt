@@ -1,0 +1,6 @@
+rounds
+win-limit 1
+place 280 344
+life 0 99
+life 1 1
+command 0 5

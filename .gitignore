@@ -1,0 +1,30 @@
+# Track project sources by default only in the paths below. Disc images, unpacked
+# game data, generated reports, recordings, builds and caches stay local.
+*
+!/.gitignore
+!/README.md
+!/README.txt
+!/AGENTS.md
+!/CMakeLists.txt
+!/*.command
+
+!/src/
+!/src/*.cpp
+!/src/*.hpp
+!/docs/
+!/docs/*.txt
+!/docs/*.md
+
+!/work/
+!/work/ss6/
+!/work/ss6/*.py
+!/work/ss6/*.cpp
+!/work/ss6/scenarios/
+!/work/ss6/scenarios/*.txt
+!/work/ss6/scenarios/*.pad
+
+# This is the plain-text launcher for the standalone package.
+!/outputs/
+!/outputs/ss6-feasibility/
+!/outputs/ss6-feasibility/native-viewer/
+!/outputs/ss6-feasibility/native-viewer/run.command

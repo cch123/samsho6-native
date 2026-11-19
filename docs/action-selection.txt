@@ -1,0 +1,150 @@
+Original input-to-state selection (SLPS_255.59)
+=============================================
+
+Native implementation: src/action_selection.hpp/.cpp.
+This layer selects logical states and writes pending requests. It does not
+execute PS2 code, start animations or consume command buffers. The offline
+Probe runs original functions for comparisons only. Current battle.command
+still uses direct TrialCommand controls; this library is not live-integrated.
+
+Source ELF SHA256:
+72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf
+
+Original tables
+---------------
+extract_action_selection.py pins the ELF and copies these original bytes:
+4d5ba0: normal transition64x31;4d6360: attack64x17;4d67a0: chain64x17.
+4d6be0: alternate normal map64;4d6c20: alternate attack map64x2.
+4e8d08:64 normal descriptors,5 bytes each, used by1511e0's bit2 filter.
+4e5420:51 character flag bytes;4e8120:8 threat-action pairs plus sentinel.
+Exact sizes/hashes are in action_selection_tables.json. Transition255 means
+refused; transition values are logical state indices, not animation IDs.
+Character indices here describe helper data, not implemented playable actors.
+
+State aliases and turning
+-------------------------
+1500a8 reads signed low half194, or1a4 when flags23c200000 is set.
+1500d0 normally reads signed high half194. With200000: alias table0->19;
+character45 or alias table!=1->0; other characters' table1 index0/2->2,
+index1->10,other->0. Keep effective state distinct from raw packed194.
+
+14a978 compares float X directly; equal positions preserve facing. It checks
+flags24c4 even when forced, flags23c10 when not forced, and special attack
+states>=64 with flags24810. Integer facing helpers elsewhere are different.
+
+Normal selection
+----------------
+1505d0 looks up a normal transition, then optionally remaps it for23c800000.
+150410 prioritizes recognized slots24,25,26,27,28,30,29, with system-specific
+substitutions after lookup. Slot30 precedes29. Refused candidates fall through.
+14f5d8 maps system8->5; system6 descriptor byte4 selects its column.
+1501e8 then checks slots19,13,12,0,1 before directions49..56(default8).
+Raw packed194 equal normal62/46 overrides this sequence: flags8000/10000
+and held features91/92 decide whether to stay or return0.
+Turning can select column9. Opponent threat selects guard columns10/11 via
+featuresd8/d4. A refused final direction preserves the incoming state.
+
+150dd8 is a separate restricted normal selector. It uses raw transitions,
+system substitutions, then1511e0's descriptor bit2; it does NOT use800000
+remaps or normal62/46's early held-pair gate. A filtered candidate falls
+through. It turns BEFORE inspecting bodyPendingFE100;1501e8 checks pendingFE
+first. Even if no new state is queued, selection may have changed facing.
+
+Attack and supplemental selection
+---------------------------------
+150620/150850 use attack/chain matrices. Flag23c800000 enables the alternate
+mapping; armed1000 chooses its first column, unarmed its second.
+Recognized5/6 choose column15 and setA48=0/1 only on accepted transitions.
+Then14 (chain also16), then2/3. Raw edges6,7,8,9 follow fixed button priority.
+Down and diagonal predicates select columns; character32 flags244400 blocks
+button9. No edge returns-1; a refused edge returns255 and does NOT try the
+next button. These values have distinct meanings at the selector boundary.
+
+150aa8 returns packed table*256+state for slots20/21/22, respecting raw
+state36 and permission bits.150b60 handles slots23,9/10,4,16/8,11/17/15/18
+and damage0..5 recovery. Their raw table accesses bypass800000 remaps.
+The last four normal candidates choose the FIRST recognized candidate, not
+the first accepted table cell.150d60 rejects effective normal states25..30.
+
+Request callers
+---------------
+14c2d0 rejects flags2444 and effective damage table2.2442000 selects attack
+row0. Accepted requests queue table1/state and explicitly set actor18c=1.
+14c3b0 requires system8 or system6 descriptor15==46, own attack table1,
+neither actor airborne, own body104&c0000, own state<64, and opponent not
+damage>=58. Chain result21 becomes39 when normal slot16 is recognized.
+Both preserve facing for remapped attack17..20; otherwise call14a978.
+
+14c510 chooses150aa8/150b60. Effective normal22 becomes row0 on direction
+edge features58..61. It deduplicates against RAW194, turns and queues the
+packed result. It preserves actor18c, unlike14c2d0/14c3b0.
+
+14bf30 rejects flags2442 and effective damage table2.2442000 makes the old
+and lookup state0; direction edges can replace normal22's lookup state0.
+It calls151428 guard permission and151478 threat before normal/restricted
+selection. Character41/2442000 rejects results0/1/9/10/4/5. New requests
+clear flags24802000000, turn, translate with14cca0, and queue normal table0.
+Actor18c remains unchanged. Deduplication happens BEFORE translation.
+
+14cca0 swaps23/24 when mirrored unless controlKindA20==1, controlModeC8!=36
+and flags2404 is absent. Result23 becomes36 for character flag4; character25
+with23c100000 translates36 back to23. No animation meaning is guessed here.
+
+Guard and threat
+----------------
+151428 denies system8/system6 descriptor12==40, flags2442 or23c10.
+151478 first rejects own airborne flag. Opponent attack table1 with cached
+battle+144 distance<240 is threatening. This uses the stored signed integer,
+not a newly calculated float distance. Any registered opponent object kind2
+or5 also qualifies; original140d78 scans48 slots through1473b8.
+
+1a3798 consults the opponent's SEPARATE actor+4 auxiliary object:
+character1/45:state128 in6/7;4:14/18/24/25/26/31/38/41/45;
+16:flag134!=0;19:state13;24:30;32:7/8;34:13/16/17. Other keys false.
+Finally, attack-table opponents may qualify by168fc8's character/action pair
+even at distance>=240. Body action and auxiliary state are not interchangeable.
+SelectionThreat represents the original cached distance and present object
+kinds. Their gameplay producers are still separate integration dependencies.
+
+Evidence
+--------
+action_selection_validation.json:71,296 cases,6,342,800 original instructions.
+All64-state matrix cells and remaps; whole normal/attack/chain/restricted/
+supplemental selectors; whole facing/alias/system-column helpers. Supplied
+actor snapshots,171 input features and31 recognized command results.
+attack_request_validation.json:33,792 cases,4,441,386 original instructions.
+Whole14c2d0(8,192),14c3b0(9,216),14c510(16,384), both player indices,
+rejected/accepted writes, chain21->39, custom systems and facing exceptions.
+normal_request_validation.json:17,240 cases,16,498,141 original instructions.
+Whole14bf30/151428/151478 each13,976;14cca0 another3,264. Real initialized
+48-slot object lists, auxiliary objects and custom descriptor lookup; no
+skipped callees. Checks include distance239/240, damage57/58, state63/64,
+all51 auxiliary-dispatch keys, all256 custom guard bytes, and input immutability.
+Reports record the exact tested native executable fingerprint.
+
+The selector-stage snapshot used viewer SHA256
+b544237f09b9ca13af999b946e44189ccb107ae9d7edc7df6a7dbe9d9922ba33.
+Those library changes did not add playable moves. Later build fingerprints
+and actual window checks are in battle_ending_window_validation.json.
+No new visual or whole-battle equivalence is implied by selector evidence.
+
+Next dependencies
+-----------------
+Now implemented and independently verified in input-permissions.txt:
+14af48 filters recognized results against category permissions,9 required
+conditions,179d10 object availability and1798f0's96 condition callbacks.
+The callback table is4eaee8;96 entries cover175590..1770f8.179e30 only
+initializes a context containing the actor pointer. Preserve result words
+when accepted; reject by clearing recognized, without inventing buffer resets.
+
+179d10 scans own kind2 objects and rejects matching subtypeD0. Keys254 map
+to4/5,253->18/19,252->24/25,251->33/34/62/63,250->42/43;255 rejects any
+kind2 object. The native port now has whole-function comparisons.
+
+Special requests14c608/14c7d0 and permission producers are now also ported.
+Custom-system cancel14c0d0, transformed14ca28 and the whole request dispatcher
+are now in input-routes.txt.14c0d0 requires system6 descriptor4==18, not stock5.
+Human sampling gates/dynamic character24/25 bindings and clear helpers are
+now in input-lifecycle.txt. Full state-entry consumption order and1491e0
+entry dispatch remain pending before live input integration.
+Do not wire recognized commands directly into invented animation transitions.

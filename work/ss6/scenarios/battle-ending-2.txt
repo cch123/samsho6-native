@@ -1,0 +1,5 @@
+place 280 344
+life 0 1
+life 1 1
+command 0 5
+command 1 5

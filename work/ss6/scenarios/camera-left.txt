@@ -1,0 +1,6 @@
+command 0 2
+command 1 1
+tick 400
+command 0 0
+command 1 0
+tick 1

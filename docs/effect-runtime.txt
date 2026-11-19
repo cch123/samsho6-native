@@ -1,0 +1,64 @@
+原版效果运行时（2026-11-18）
+
+实现范围
+src/effect_runtime.*：effect29、KO UI15、doubleKO UI18，以及RoundIntro开场完成链。
+01HitFlash.bin action18；Display/Display2全部38动作；Display3的18动作通过独立更新检查。
+Battle集成仍只触发Display3的0/1/2/3与12/13/14；新增开场入口见round-opening.txt。
+直接读取镜像内的原动作/贴图，不生成替代粒子或文字。
+battle.command与knockout.command已接；完整结束字幕分支、音频、GS排序/混合尚未接。
+已接有限状态4/5/7/8与初始state3字幕；自动下一局、决胜局与完整1:1游戏仍未完成。
+
+数据与原地址
+123268加载7个0x3da0字节的动作库到4a4810+(bank-1)*3da0。
+表+100有32个word起始记录号，+180有32个byte记录数，+1a0开始每条60字节。
+1233a0以object14库、24动作、28阶段查记录；阶段超数量返回0，独立于角色ACT。
+123330初始化speed256、XYZ、baseScale，123378重置阶段/时间后调用123400。
+123400按flags2装载16.16位置/速度/加速度；速度除100，加速度除10000，Y取负。
+flags4装载scale/scaleVelocity/scaleAcceleration，分别乘原始f32常量.01/.0001/.0001。
+flags10/20装载alpha/RGB及运动参数，未启用时只清速度、不清加速度；颜色初值ffffffff。
+123648先offset+=low32(velocity*speed)>>8，再velocity+=low32(acceleration*speed)>>8。
+scale和scaleVelocity各自分开执行乘speed、乘1/256、相加；采用显式有限ScalarFloat模型。
+alpha使用无符号SLTIU钳制：负向下溢会回到255；RGB是有符号0..255钳制。
+颜色加速度虽存储但此函数不累加到速度，不自行“修正”为通常的粒子行为。
+1239b8的duration0按1处理；clock+=speed，到期只进一条，保留低8位。
+1235f8顺序为积分→123800/1207e8复制绘制对象→推进时钟/进入下一条。
+绘制队列实际基址479250（LUI48 + signed9250），元素148byte，复制对象138byte。
+因此任务耗尽/释放当次仍有末帧绘制；不能删任务时一并删本次快照。
+124898遍历链表，所有对象查不到记录才结束。KO15/18与landing29无随机action或end callback。
+开场1..14使用共享owner/end callback；现已完整对照124620/124898和112838调度器，范围见round-opening.txt。
+
+调度与位置
+效果priority5在battle priority50之前更新。KO暂停11f588(1)设46a940但46a924保持0；
+1235f8只读46a924，故字幕在KO暂停期间正常播放。新效果在下一次priority5访问首次画出。
+170fa0创建effect29，坐标(X,0,0)、scale1、08000000与镜像标志。
+143eb0创建UI，坐标(320,240,-50)、scale1、screen flag100000。
+123840对世界效果先投影，随后加16.16局部offset，局部offset不再乘投影scale。
+123a38按projectionScale*baseScale*recordScale生成顶点，再应用原始UV镜像。
+必须先算原顶点再做检查器裁剪；代数重排会改变浮点边界采样。
+123a38确实调用117288计算对象颜色，但返回值未用于四个顶点；顶点颜色均写ffffffff。
+原函数片段检查也验证此行为，所以未人为加入“更自然”的透明渐隐。
+
+贴图/调色板
+1240c0名称表4a2a70：asset1=effect01、13=hanabi2、14=moji_e、17=moji3。
+1142d8/10aa28/102810读取对应.tex，512x512、线性4bpp、低半字节为偶数X。
+record+6选择PS2效果CLUT bank。此前推断为obj0.pal有误，现已用加载/上传路径纠正。
+1003dc读取effect_pal_data.bin到1237740；116588处理到1237a00；1094f4上传11组32-bit颜色。
+效果29使用bank4，KO文字/光效主要bank1/7；开场还用bank9/10。颜色直接取AABBGGRR原值。
+原版123a38→114ae8→108910将该bank写入GS CLUT地址(3105+bank)。
+效果29的资源显示为金色落地冲击火花，旧笔记称“扬尘”是事件用途简称。
+目前仍是400x160检查裁剪/最近邻采样；世界效果先画、screen UI后画属于预览合成。
+完整GS队列排序、08000000对应混合状态、硬件颜色/过滤/子像素覆盖仍待还原。
+
+验证
+python3 work/ss6/validate_effect_runtime.py：684组，144,324个对象及队列状态，
+完整执行未改写123330和1235f8及全部到达callee；57动作×4flags×3暂停模式。
+整数逐位一致，浮点显式有限模型，不是EE硬件或全调度器证明。
+修复离线Probe中LDL/LDR/SDL/SDR局部byte count覆盖instruction count的问题；
+新增原始1207e8执行预算失败检查，保证有复制循环时也不绕过指令上限。
+python3 work/ss6/validate_knockout_images.py：1,502画面，1,455次原版四边形片段。
+effect_oracle.py完整运行原效果更新，123840片段停在114ae8进入前，包含原三角函数；
+没有跳过绘制callee后继续执行。像素由独立Python预览策略合成，不宣称GS图像一致。
+birth事件来自原生检查场景，故不是原版完整战斗/调度oracle。
+battle_ending_validation覆盖双方获胜/双KO、暂停期间字幕推进及末帧保留。
+contact_trial_validation保留17类场景、7,776随机快照及223角色像素场景。
+实际窗口报告与最新二进制指纹见battle_ending_window_validation.json。

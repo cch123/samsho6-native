@@ -1,0 +1,71 @@
+侍魂6 日版普通resource00场地/镜头移植，2026-11-18
+
+实现：src/stage_camera.*；对照：work/ss6/validate_stage_camera.py。
+已接battle.command，原主帧相位在双方动画/运动之后、计时/生命提交之前。
+镜头命令队列现已接入（见文末）；实战震屏已接入，见下方时序。特殊角色边距、替代actor状态和强制位置恢复未接。
+这些限制仍须补全，不能把本范围当成完整场景或完整回合实现。
+
+0x1426d8普通路径
+先对双方调用142d00，以PREVIOUS camera.left/right限位。资源00边距34：
+lo=max(left+34,34)，hi=min(right-34,606)。普通走路返回修正量0。
+table2、state<80且原反应描述符byte0含20才把实际修正量传给对手；
+对手非空中时加上修正量的一半。flags24420000可跳过限位。
+换边用各自X先转整数再比较；相等时保留已有朝向，清actor24c bit2。
+原版只更新24c/a08，不立即翻转渲染。table1state>=64及24c bit4保留特殊朝向意图。
+本样例还使用直接状态命令，完整转身动画/输入回调仍未接，不能混为一谈。
+
+0x146460/146750/146870
+默认centerX320、Y120、width320，左右160/480。
+目标宽度clamp(abs(x0-x1)+80,320,444)，目标中心受世界0..640限制。
+纵向只给y0加48，然后计算中心/240..336高度；保留这个不对称规则。
+相机速度X±0x40000、Y±0x200000、width±0x20000。
+乘delta256和2^-24分别每次移动4、32、2，越过目标则钳住并清相应速度。
+146870取整数宽度和整数半宽形成下一次边界。它将bottom写入+30，
+这个地址也用作Y速度；实现保留原版别名，没有自行“修正”。
+原版投影全局中心与相机自身位置分开存储：发布后边界修正可改变camera.x/y。
+
+0x122ed8/123020与显示
+保留原depth/offset运算顺序和有限精度，123020的普通z=0角色锚点已有完整函数对照。
+PIL路径1214bc/1214e8把sprite scale向下量化到1/128；锚点使用未量化的比例。
+查看器用原锚点/比例驱动400x160检查裁剪（半分辨率原屏幕坐标X+40，Y-68）。
+背景仍是检查格，像素采样仍为最近邻软件预览；GS子像素覆盖/原调色板色彩待核对。
+这不是原版完整屏幕输出，也没有用检查裁剪去改变碰撞或场地边界。
+
+证据与浮点边界
+stage_camera_validation.json：384目标、384移动、384发布、384组合更新、384投影，
+2304完整1426d8普通阶段；共4224个原版函数比较全部通过，浮点字段按bits比较。
+原始ELF指令不打补丁、不跳过callee。随机覆盖交换/等整数X、分数坐标、空中排除、
+朝向锁定、各80种反应描述符边界位。4项手写ACC指令检查验证读写/保留与精确模式拒绝舍入。
+新增指令NEG.S、SUBA.S、MULA.S、MADD.S；注意旧笔记把MADD误写成MSUB，现已纠正。
+MULA fn1a写ACC；MADD fn1c读ACC并写fd而不修改ACC；SUBA fn19写ACC。
+编码/数据流参考PCSX2上游：
+https://github.com/PCSX2/pcsx2/blob/master/pcsx2/DebugTools/MipsAssemblerTables.cpp
+https://github.com/PCSX2/pcsx2/blob/master/pcsx2/FPU.cpp
+离线probe默认仍拒绝非精确运算；本报告显式启用finite模型，乘法和加法分开舍入。
+模型不是EE硬件证明，尤其MUL低位与ACC细节还须实机/完整模拟器数据核验。
+
+集成/运行
+contact_trial_validation.json新增两侧绝对边界、最大间距和墙边命中推回检查。
+223像素场景用原版122ed8/123020计算锚点、独立Python解码和采样核对C++画面。
+包括左右墙边以及镜头width444的全身/武器显示；仍不等于GS截图对照。
+trial_window_validation.json覆盖7个实际macOS窗口场景。
+可复现镜头场景：
+./battle.command --trial-script work/ss6/scenarios/camera-separated.txt
+./battle.command --trial-script work/ss6/scenarios/camera-left.txt
+./battle.command --trial-script work/ss6/scenarios/camera-right.txt
+脚本直接请求测试状态，与原版输入解析分离；同一解析器供native probe和viewer使用。
+
+新增原版镜头队列
+camera+4c为count，+50起最多16条(kind byte,param word)，146b30对cmd3..10参数左移8。
+146b00要求队首cmd0；空队列不算完成。146460按队首改写两角色输入坐标后算目标。
+146bc0 cmd0停移动；cmd1/2用delta64/192并比较current/target三轴截断整数，到位才出队；
+cmd3旧等待量>0则扣全局delta并停移动；cmd4..10同样扣等待量但允许移动。
+旧等待量<=0出队，每次只消费一个命令；本次不会立刻执行新队首。
+1463d0仍按target→消费→可选move→publish，不能将等待长度直接换成固定显示帧数。
+camera_commands_validation.json：192场景/23,232状态，完整146b30/146b00/146460/1463d0
+及146bc0/146d10/146750/146870，被调原函数不打补丁。覆盖11命令、delta256/128/85/0、
+负数/word wrap参数、16条队列和胜利2/3/2/0；显式finite模型，不代表EE硬件证明。
+已接battle状态7/8，细节见docs/ending-playback.txt。该记录针对命令队列阶段；当前震屏进度见下。
+
+日版震屏时序（2026-11-19）
+14293c 在场地更新中读取双方身体 +FE 的两轴请求，再分别清掉已取的位。玩家转身、挥空或对手被旋风卷起都可能发生在该拍。146ba0 对非负参数重设对应轴的 8.8 倒计时，负参数保留该轴。146870 发布投影前按倒计时的旧值取振幅和正负，再扣该拍的 camera.delta。相机的纵向下限会裁掉部分负位移，所以不一定每个触发点都能立刻看到屏幕动。场地在优先级 10 取上次发布的镜头，随后角色使用本拍的镜头，因此两者在震动开始时可以相差一拍。

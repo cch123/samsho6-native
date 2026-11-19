@@ -1,0 +1,79 @@
+首局角色登场与开场衔接（2026-11-18续）
+
+当前入口
+battle.command 的 match 命令开启首局初始化与自动续局。两边均为资源00霸王丸、
+持刀/system0、显式两胜/无限时间；R从登场重开。完整游戏机制1:1目标仍未完成。
+实现位于contact_trial、ending_playback、player_object和action_runtime。
+同角色登场完整播放；按键跳过、异角色声音错开选择和其他角色辅助对象尚未接。
+
+原版依据
+13fd80在roundIndex0调用双方149008(actor,1)，并将battle timer2设为60。
+149008首局派normal39，174738→14df00；后续回合派normal0。
+14df00强制排action492，清actor244 bit40000000并安装14e320 type0回调。
+双方actor+a14和+a1c相等且资源00时，1695e8返回-1，不错开动作；
+第二玩家设body104 bit200，避免重复语音。声音后端仍未接，不将该标志称为有声播放。
+本资源1a3220/1a3340没有需要驱动的辅助角色路径，不代表其他角色也没有。
+
+492有21个ACT阶段，起始记录2762；时长依次为：
+32,1,2,16,5,6,18,2,2,2,10,5,0,2,9,2,1,1,1,1,85。
+第12阶段（零基）duration0使动画层写body104 bit100。
+1699f8在未结束时也会清100，因此下一次动画相位继续；不能累加时长后直接跳过。
+PIL有c011武器图层（局部水平+垂直翻转）和b4808080半透明身体，均完整合成。
+声音命令215/261保留为数据事件，当前音频仍静音。
+
+14be28正等待值写timer34=ticks<<8、body104|300、pendingFE|6。
+14e320检测timer34>0时先14d010递减，比较新值：
+仍大于0时body104|130；归零时14bea0清330/pending6、清timer34，
+回到X=240/400、Y=0，强制重播492；此路径不调用stopMotion。
+timer34==0时1699f8检查动作完成；resource00的1a3930返回就绪。
+完成后才设置actor244 bit40000000，清body104 bit200，切169a50 arg4保持末姿态。
+
+149d08在动画之后执行168a68 type0前缀，再设body104 bit2000。
+149008之前写过同一位不够：11d730会清它，新动作提交的首拍必须再次设。
+原版完整149d08集成对照发现并纠正了登场首拍、登场转待机首拍漏设该位的问题。
+
+首局衔接
+1435d8的timer2比较旧值，首局60等待与登场同时进行。
+143798在roundIndex0等待双方40000000；完成后14bea0，排normal0、清镜头队列，
+timer2设30并直接排state3。没有用固定登场时长替代角色回调就绪。
+按键跳过是另一个走state2的分支，仍待移植，不能插进正常完整播放路径。
+当前资源/速度256的观测：update1提交492，205双方就绪，206转待机并排3，
+237进入原字幕，438进入state4解锁战斗。上述数值是执行结果，不是运行时代码常量。
+后续回合不重播人物登场，保持独立149008(actor,0)与原30等待/字幕流程。
+
+验证范围
+character_intro_validation.json：236次原生更新的指定字段对照。
+原版完整13fd80一次、1435d8共235次、149d08共472次，以及动画/运动/动作提交函数，
+共488,323条原指令。比较双方状态、动作阶段/分数时钟/结束标志/104、位置、就绪位，
+以及battle状态和计时器；完整143430含音频/控制台，仍使用明确state1入口边界。
+另检查整段输入锁、旧攻击请求清除、开打后真实轻斩命中（200→192）。
+这不是整个原版主循环的逐帧执行证明，也不是手柄解析或PS2图像验证。
+
+round_entry_validation扩展为256组完整149008；round_flow扩展为128组完整13fd80，
+包含64组首局、64组后续局及3,968次完整1435d8访问。
+ending_playback_validation为120场景/194,424状态：原有96结束场景加24登场场景，
+两玩家×delay0/1/3/17×delta128/256/512，全部21阶段和一次零时长保持均检查。
+等待参数是独立输入，用于验证timer34执行，不宣称异角色等待选择已移植。
+原ELF不修改，日志使用真实buffered FILE，不跳过callee；资源和池均显式初始化。
+action_sequence和player_object加入492；分别34,240和100,286状态通过。
+knockout_image_validation加入492所有阶段、两朝向、半透明和双向翻转；
+使用原投影及独立Python部件合成，仍非GS硬件采样/混合证明。
+实际窗口与自然连续比赛结果见battle_ending_window_validation和match_flow_validation。
+
+持续输入组件补充（2026-11-19）
+GroundStateRuntime的normal39现在复用相同登场动作与14e320回调；timer34与输入/动作
+共用同一个角色状态。14bea0释放独立于坐标重置和动画请求，提前中断正值延迟也不会复活旧492。
+ground_ending_input_validation.json覆盖双方/双朝向、delay0/3/17、21阶段和零时长保持，
+释放进入normal0后用实际软件pad重斩成功；该报告同时覆盖结束动作，共52场景/10,704快照。
+尚未把这个独立输入组件接入原149008及主对战；不重复初始化采样器来伪造换局清理。
+
+复现
+python3 work/ss6/validate_ground_state.py --ending
+python3 work/ss6/validate_character_intro.py
+python3 work/ss6/validate_round_entry.py
+python3 work/ss6/validate_round_flow.py
+python3 work/ss6/validate_ending_playback.py
+python3 work/ss6/validate_match_flow.py
+python3 work/ss6/validate_knockout_images.py
+python3 work/ss6/package_viewer.py
+python3 work/ss6/validate_battle_windows.py

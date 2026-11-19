@@ -1,0 +1,109 @@
+原版KO/回合流程（角色子流程已接，2026-11-18）
+
+更新：battle.command已接普通resource00轻受击后的KO进入、两次落地、normal52胜者等待
+及输入锁、普通KO的40+2暂停和KO/双KO字幕效果任务；保留独立预览knockout.command。
+更新：状态7/8镜头和胜利演出已接，详见ending-playback.txt；进入5的胜局/完胜/双KO记录和
+回合计时基础已接，详见match-progress.txt。完整actor调度、其他结束字幕与自动下一回合仍待接。
+
+以下保留状态4/5开发时的地址笔记；最新边界以README和上述两个补充文档为准。
+src/round_rules.*和ContactTrial::advanceRoundBodies保留原进入/更新相位。
+按原顺序先检查上一帧KO标志，下一次进入5，本次不执行5的update；角色准备条件在动画前。
+151b00普通门控在生命提交前更新；KO已置位时保留244低四位。actor1c4对应timer5，
+计时数组从actor1b0开始，不是timer6。14b880的timer15先增量，比较返回的旧值。
+普通致命轻受击170890结束先回normal；下一次14b880强制damage31，即使在地面。
+随后172b38 variant2启动382；胜者145240允许后在actor回调阶段进入normal52/action493。
+两个角色完成设置roundBodiesReady，UI15/18结束设置roundPresentationReady。
+state7+的镜头命令队列、败者保持/胜利演出及统计未接，当前仍保持state5。
+139290(40,2)已经按外层1390d8..139218接入：先跑2次，再连续40次跳过140270。
+这不是半速运动。11f588(1)暂停全局时钟；随后普通分支11f5a0(0)恢复。
+11e760检查battle+0而不是+4，pending5起停止剑气/怒气；此条件也已接。
+battle_pause_validation.json包含60个未修改原指令片段对照、24个完整槽函数门控对照。
+指令片段以1390d8为起点，在139140或140270执行前停止，完整执行沿途11f588/11f5a0。
+这不代表完整调度器/显示时序验证。其他暂停原因、UI16的60+2分支、实机墙钟相位未接。
+效果priority5先于战斗50；1235f8看46a924，普通KO暂停只设46a940，故字幕继续。
+初始1HP检查场景在update8创建UI，9首次绘制，88结束且仍画末帧，89移除。
+这些数字是该场景观察值；运行时根据原资源和任务状态判断，不硬编码80次等待。
+
+验证：round_rules_validation.json共7,424原函数案例，另126静态分支案例。
+151b00比较普通resource00的244字段；145240含condition254及object104bit1，
+143390输入锁；149980+14b880只执行不触发printf的分支。打印分支由静态规则测试覆盖，
+没有跳过callee后声称整函数通过。battle_ending_validation.json覆盖实际接触的1HP初始
+场景：两边获胜及双KO。对战集成回归仍验证从完整HP200连续攻击到KO，非生命中途改写。
+现有直接指令输入/省略转身回调的边界仍存在，不能将该集成视作完整原版整帧对照。
+
+控制器入口1435d8由143320调用；143320位于140270的接触处理1424b0之后、动画之前。
+1435d8先看全局timer2，正数时返回；143430执行pending state -> current state进入，
+一旦发生状态进入，本次不再执行该状态的update。无切换才分派update，最后增加timer1。
+跳转表5e9c08和5e9c34（11项）给出entry/update对应：
+state0 entry14350c / 无update；state1 entry143708 / update143798；
+state2 entry1438e8 / update1438f0；state3 entry143930 / update143a38；
+state4 entry143b08 / update143b88；state5/6 entry143c60；state5 update144020；
+state6特殊等待；state7 entry1441e0 / update144360；
+state8 entry1443f0 / update144570；state9 entry1447c0 / update144848。
+这些entry调用音频/UI/调度器等，不应随意no-op后声称整函数通过。
+
+state4的143b88先检查140788（疑似时间到，需确认），否则查双方actor23c80。
+任一条件触发写battle.pendingState5。当前ContactTrial仅接KO分支，未接时间到分支。
+state5 entry143c60比较双方actor+a30生命：
+两者相等且为0 -> battle+20 draw1、+24 winner-1、+28 result1，UI种类18。
+两者相等非0 -> result3，UI种类19；后续144020可能先显示时间到再显示平局。
+不等 -> +24较高生命方，+20 draw0；输方<=0时result0/UI15，非0时result2/UI19。
+通过147db8更新玩家回合统计，若胜者生命等于+a34最大值则附perfect标记。
+还涉及145358/145118决定比赛结束和模式差异，仍须继续核对。
+正常KO调用139290(40,2)并设置全局timer5=30；其他结束UI分支有60/2、timer6=30。
+不能把40或30直接当成整段KO动画时长；调度及UI任务参与结束条件。
+
+state5 update144020先等待battle+30 UI任务112550，结束后1124b8释放。
+同时统计双方角色完成状态：KO方须落地且149488动作完成；存活方通过145240(actor,52)。
+两个角色都准备好且UI任务清空才切到state7。145240会请求normal state52，
+并等待该状态对象动作完成，而不是生命归零立刻宣布获胜。
+
+KO actor路径：1494f0内，149980在244 bit2未设且23c80时，
+地面请求table2 state30，空中请求table2 state31，写18c=1。
+1494f0的14b880另有兜底：KO仍在normal/attack表则请求table2 state31；
+timer15超过0x257ff且不在指定KO/倒地状态也会强制state31。
+149980不总执行：受24c bit1（回合输入锁定）和其他状态条件影响。
+需要结合14bb48、149d08/1491e0、14b6a0等主调度判断真实顺序；不可只加if(life==0)。
+
+验证工具边界：entry143c60/143930中的323050是库打印路径，进入329ba8/322150等。
+离线probe没有硬件/BIOS系统调用模型。继续按完整可执行子函数做对照，
+遇到未支持指令显式停，不修改ELF指令、不跳过callee制造“通过”。
+
+后续发现：不能把life0直接变成state30/action400
+151b00在151968生命提交之前，先actor244|0xf；若此前已KO则不清这四位。
+normal表按descriptor bit4/8/10分别清244 bit1/2/4；普通attack按descriptor bit10清2/4；
+damage表通常保持2，只对特定state7的object10840清8。因此149980会受真实状态阻挡。
+普通轻受击1707b0安装170890；其动作结束后169810排普通待机/转身状态，
+不是直接排KO。随后14b880对KO仍处normal/attack表强制damage31。
+damage31调用172b38 variant2；在地面时也可能选择382而非400，需核对真实整段调度。
+当前独立KO预览不用于冒充上述进入时机。
+174928的胜者等待动作493/494安装169a50，callback type=0（不是2），274=4。
+存活时169a50 case4保持；KO时可能排damage30。原记录callback type2的推测已纠正。
+143390仅在battle.currentState4且battle+0xc==0清actor24c1，其他状态设置锁定。
+完整状态切换仍要保留1435d8的entry跳过同次update，以及UI任务结束条件。
+
+state7后续分析（现已实现普通非决胜局，详见ending-playback.txt；以下保留地址笔记）
+1441e0经1414b8清镜头命令队列。2026-11-19整函数对照纠正旧笔记：1400a8返回
+胜者的对手；只有该对手存活，才先排cmd2(loser)、cmd3(30)。然后排cmd2(winner)、
+cmd0(0)。普通KO直接为cmd2(winner)→cmd0；双KO只排cmd0。旧样例误查胜者，
+因而KO多了等待；现已通过共享beginVictoryCamera同时修正试玩版与新控制器。
+1414b8/1414d8/1414f8分别包装146ad8清队列、146b00完成检查、146b30追加。
+镜头队列在camera+4c，最多16条8字节记录；cmd3..10参数左移8位。
+146b00判断队首cmd0才返回完成，队列空返回0。146bc0分派11种命令；
+146ccc/146ce4先比较旧的等待量再扣1405f0返回的delta；不可直接按30帧跳过。
+146d10删除队首并前移。完整命令分派已按跳表5e9ff0移植并通过camera_commands_validation.json核对。
+state7 update144360还给双方object104加400000、actor244加20000，等待镜头队列完成→8。
+state8请求胜者normal41；144570等待actor24440000000完成位，再按模式/比赛结果切0/9/10。
+不能以KO末帧或字幕完成直接清血重开，绕过这里的胜利与镜头流程。
+
+镜头队列补充：146460先按队首命令改写输入角色坐标后计算目标；
+跳表5e9f58：cmd0/3/4普通，cmd1保留各自X而令双方Y480；
+cmd2按参数0/非0选择P0/P1并合并双方位置；cmd5保留各自X而令双方Y0，
+cmd6令双方X=P0X/Y0，cmd7令双方X=P1X/Y0；cmd8/9保留各自X，
+双方Y分别取P0Y/P1Y；cmd10双方Y+48。
+以上已通过原函数参数/运动对照；历史静态发现保留作格式说明。
+1463d0在a1==0先设camera.delta256，再调用146bc0；返回0才146750移动；最后146870发布。
+146bc0 cmd0返回1停移动；cmd1/2把delta改64/192，比较current/target三个坐标的截断整数，
+相等则弹出队首；cmd3旧等待量>0时扣delta并返回1停移动，到期弹出；
+cmd4..10也扣等待量但返回0允许移动。到期弹出不会在本次再执行新队首。
+state7按上述实际分支生成队列；所有分支都保留目标计算、命令消费、移动、发布相位。

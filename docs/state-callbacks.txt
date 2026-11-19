@@ -1,0 +1,118 @@
+Native callback registration and entry-side gauge/effect dependencies
+
+Scope
+-----
+state_callbacks.* ports whole172d68(normal registration),172eb0(attack
+registration),14cc10(alias registration),14efb8(rage gain),1732b0(damage
+weapon-drop decision),14eb78(system mode availability) and11e548(mode exit).
+Registration stores stable numeric handler IDs, preserving source addresses
+for traceability. They are not PS2 instructions and are never cast to native
+function pointers. The corresponding move bodies still need native dispatch.
+The current viewer remains the previously verified limited TrialCommand battle.
+
+state_callbacks_validation.json:36,410 cases /7,591,700 original instructions.
+128 normal;612 alias;7,398 rage gain/wrap;19,584 attack registrations;
+1,032 stock/custom system gates;1,536 metadata->attack compositions;
+5,800 weapon-drop decisions;224 mode-availability and96 mode-exit cases.
+33,229 fixtures execute only integer operations;3,181 reach explicitly
+modeled finite float arithmetic. ScalarFloat agreement is not EE hardware
+proof. Every reached original callee executes normally, with no interception,
+early-stop boundaries or diagnostic ASSERTs.
+
+The attack matrix covers51 character descriptors ×4 variants ×96 states.
+It checks both metadata channels,all7 callback words,flags,gauges,first-match
+objectD4,48 ordered registrations and shared object identities. Entire body,
+battle and task records remain unchanged. Object bytes outsideD4 and actor
+bytes outside the represented fields must remain unchanged. Mode-exit cases
+also compare both players' global flags/phases,the shared scale and all1,024
+halfword flags. The old state-entry and preparation suites are rerun after
+expanding StateEntryActor; their scopes remain separate from move execution.
+
+Original data
+-------------
+extract_callback_tables.py pins the same source ELF hash as other extractors.
+callback_tables.json records4 assets,total8,168 bytes:
+callback_attack_handlers.bin:51 words at4e8fe8.
+callback_special_parameters.bin:51 ×32 ×4 bytes at4e6618.
+callback_character_parameters.bin:51 ×28 bytes at50d948.
+callback_constants.bin:two float words at5ea9d0 (0.01 and47104).
+Existing permission_systems.bin supplies9 ×40 bytes at50dee0;input_categories
+and entry descriptors are reused, without inventing move/system parameters.
+
+Registration order and metadata
+-------------------------------
+172d68 registers1743c0 with effective table0 and state index.1522a0 writes
+only the first3 words of callback260; the remaining4 words are preserved.
+14cc10 changes only callback260[0] in alias mode: character45->2099e0,
+other characters->1ec728. It leaves type,argument and other fields intact.
+
+172eb0 reads effective index/table and the SAVED variant at198 or1a8.
+It does not recompute that variant from current weapon/range flags.14b798
+must run at the original earlier call site. Normal attack index<64 with
+descriptor byte0 bit80 clear uses174b40/index; all other attacks use the
+character handler and descriptor byte1 as its argument.
+
+For character-dispatched attacks,14f768 enables attack rage effects in
+system5 or7,or custom6 descriptor0=2/3. First special category sets24480000000;
+indices>=64 gain rage using the corresponding parameter byte0. The second
+special category independently sets24440 for system1/custom descriptor2=8,
+otherwise2481. Those categories use the existing whole-function-verified
+InputBindings predicates, including character32/48 exceptions.
+
+140d78(player,0,3) resolves the FIRST kindCC=3 object from the48 registered
+task references. At the end of registration,even ordinary attacks write
+index-64 into itsD4 as a wrapped word. Holes,order and shared identities
+matter. CallbackContext keeps handles and a separate object map; repeating
+a handle does not create a copy that could miss the write. Remaining kind3
+objects are untouched. This updates object state,not a visible effect spawn.
+
+Rage gain14efb8
+---------------
+Only rageState120=0 accepts gains. The amount is shifted8 bits and added as
+wrapped32-bit arithmetic,then compared SIGNED against0xb800. A negative
+result clamps to0. At/above the threshold,the helper sets amount0xb800,
+state1 and decay using the original order:
+duration = float(character.word0) * float(system.word9) * original0.01;
+decay = truncate(original47104 / duration).
+Each float operation rounds separately through the established ScalarFloat
+model. The configured meter character may differ from actorA10; tests keep
+that distinction. Sword maximum/current become(system.word7 <<8),while
+swordWait and unrelated gauge fields remain intact. Positive wrap,negative
+gains,zero,exact threshold and already-active states are all compared.
+
+Damage decision and shared mode exit
+------------------------------------
+1732b0 only asks for a drop when actor character33 has244200000. For common
+damage it excludes indices0..14 and18. For extended damage,source character12
+excludes slots16/17/18;source13 excludes16. Other extended cases request a
+drop. This predicate does not itself create the dropped weapon or clear the
+armed flag. Full170440/170010/170070 execution is still required.
+
+14eb78 exposes mode state for system4 or custom6 descriptor3=14 or5=24/25.
+11e548 is called with that valid mode state: set actor13c=4 and144=0,clear
+own46a918 bit1,set own46a910 phase2. If the opponent's active bit remains set,
+shared scale1239d84 and flags3ebf30 stay unchanged. Otherwise set scale256
+and clear halfword entries512..1023 via117180; preserve entries0..511 and
+all unrelated player flag bits. This is data-level behavior; global palette/
+time integration and the full system activation/expiry sequence remain next.
+
+Next dependencies
+------------------
+173108 still requires actual weapon creation before its damage handler can
+be registered. Its1732b0 and11e548 dependencies now exist, but a full method
+must also preserve the FE gates,normal174fe0 versus character4e97a8 handler,
+and source-character35/extended-slot16 exception.
+
+170440 builds the callback context and calls170010; for this damage predicate
+the dropping actor is character33.170070 clears the armed flag,gets112300(3),
+creates a kind4/player-tag1390 object via140c68,queues action466,positions and
+launches it with original motion constants.112300 is RNG,not allocation.
+140c68 reaches1471a8->112670(task) and11e2e8(object),11d528 reset,then11d9c8
+copy/initialization and ownership flags. Native tagged pools currently verify
+cleanup only; complete allocation,creation and RNG are needed here. The
+object's1701c0 callback lands it and queues467 before147530 changes its task.
+Do not replace this with a dropped-sword sprite or skip it in damage entry.
+
+Once full173108 is present,14aec8 can be completed without unsupported
+branches.149d08 pre/post hooks,recursive24820 execution,remaining move bodies,
+AI and the rest of1494f0 are still needed before live full input integration.

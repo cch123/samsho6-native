@@ -1,0 +1,3 @@
+place 280 380
+heavy-hurt 0
+command 1 6

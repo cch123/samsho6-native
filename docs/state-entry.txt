@@ -1,0 +1,124 @@
+Native state entry and task cleanup — SLPS_255.59
+
+Scope and evidence
+------------------
+state_transition.cpp completes14a348 and1491e0, plus14cbc8's alternate-state
+entry (1ec688/209940) and14b798 metadata. tagged_tasks.* implements112a70,
+11e3a0 and124d18 with native opaque identities. These are library components;
+the current limited battle still uses TrialCommand and its admitted callbacks.
+They do not execute arbitrary character moves or complete149d08.
+
+state_transition_validation.json:24,639 cases /15,450,652 original instructions.
+16,464 descriptor resolutions;4,896 attack-window decisions;136 pose cases;
+345 condition cases;120 task/object cleanup cases;822 whole14a348;
+512 whole1491e0;576 whole14cbc8;768 whole14b798. All callees execute normally,
+without patched returns, skipped functions or early-stop boundaries. Real
+libc diagnostics use a buffered FILE fixture.844 stack diagnostic events
+match original order. The existing6,144-case prefix suite also still passes.
+
+The probe compares both state channels,35 timers,body/auxiliary fields,
+171 features,63 command progress/results,32 special cancel permissions,
+opponentB8,linked object108,1488e0's global marker and both complete256-slot
+pools. Bytes outside the represented actor/body/auxiliary fields must remain
+unchanged. Only object/stack addresses are normalized into opaque handles.
+The fixtures use exact finite values; this is not EE hardware/GS evidence.
+
+Original tables
+---------------
+extract_state_entry.py pins the source ELF SHA from extract_collision_tables.
+Five new assets total97,753 bytes, recorded in state_entry_tables.json:
+entry_attack.bin:51 character blocks ×4 variants ×64 states ×5 bytes.
+entry_special.bin:51 ×32 ×5, used for attack indices64..95.
+entry_damage.bin:80 common ×14, then51 ×32 ×14 for damage80..111.
+entry_conditions.bin:69 ×3 at4d6ce0.
+entry_special_exceptions.bin:69 pairs including169308's255 sentinel.
+Normal64 ×5 records reuse selection_normal_descriptors.bin. Each extracted
+record was checked through whole172d18/172e08/173078, not a duplicate reader
+of the exported asset. Character table coverage does not imply a playable
+roster. Normal pose/condition are bytes1/2,attack2/3,damage10/11.
+
+14a348 ordering
+---------------
+152300 restores saved body104/108 when override27c is active, before clearing
+the override and callback registrations. Body104/108/FE/E4/E8,actor23c and
+timers3/15/4 then receive their original masks/resets.24480000000 ends rage
+and clamps sword according to the system table;2481 performs the system5
+or custom6 descriptor2=9 bonus-state reset and then clears that flag.
+
+Normal4/5 set timer5=32*256. Normal23/24/48/54/55/56..60 clear all63 command
+buffers. Attack always clears buffers, sets timer3=11*256 for regular states
+or0 for specials, and sets timer4 from14bb08/169308. Damage clears timer17
+and preserves command buffers. Partial motions,recognition and cancel flags
+survive these buffer clears, including inactive slots.
+
+124d18 clears display kind6 THEN5 for this player. Non-damage entry clears
+A2c,contactKind252 and body124; its02000000 flag has the original table/index
+exceptions.16a8f8 applies one of31 poses (out-of-range is a no-op), including
+stopMotion and y=0 where required.151298 applies condition records AFTER
+that pose: condition token254 uses the resulting X velocity sign, so a
+stopping pose selects the stationary bit even if the old state moved.
+The condition reset flag clears two bitset words; another flag sets the
+OPPONENT's controlB8 bit2. Existing bitsets are otherwise ORed, not replaced.
+
+Remaining flag/character-byte resets retain the normal/attack/damage gates.
+Actor2b4's referenced object gets1084000 before163450 clears all13 registry
+words and sets word2=-1. A nonzero native handle must resolve to a live
+object; no PS2 integer is interpreted as a native pointer.
+
+Main and alternate state channels
+---------------------------------
+1491e0 keeps the previously verified request ordering in state_entry.cpp,
+then runs the complete entry effects. Leaving attack sets swordWait130=20
+only AFTER entry returns. Duplicate requests can still reenter via18c.
+
+14cbc8 checks23c200000, then compares the raw alternate pending/current
+words. Unlike main1491e0, an unchanged or missing alternate request does
+not reenter merely because19c is set. Entry receives the translated index:
+normal->19; character45 non-normal->0; other alternate attack0/2->2,1->10,
+otherwise0. Entry runs BEFORE the raw alternate state is committed. The
+alternate metadata saves weapon variant0/1, flags0 and19c=1; main requests
+remain intact. This distinction is independently compared for both paths.
+
+14b798 reads effective table/index and computes weapon/range variant0..3.
+It takes descriptor byte0 as state flags, or preserves effective flags for
+other tables.150080 nevertheless writes the MAIN198/19a fields, even while
+an alternate state is effective. Attack also writes12d2300 to(player==0).
+The historical names stateCharacter198/aliasCharacter1a8 mean variants here,
+not character IDs; preserve this meaning when adding callback registration.
+
+Task and object identities
+--------------------------
+112a70 scans256 task records of52 bytes. Tag0 does nothing. A tag>65535
+matches the complete word, otherwise only the low16 bits. Matching tasks
+save the old tag at+30,set state+4=4,clear tag+14 and release stack+18.
+1124b8 clears only an8-byte stack header when flag4 is set, increments its
+counter and prints a diagnostic. Duplicate references must not count twice;
+the task drops its reference even if the header was already cleared.
+
+11e3a0 scans256 objects of320 bytes. Its full-word selection uses SIGNED
+comparison, unlike task cancellation: high-bit tags do not match low16 IDs.
+Each match zeros the record, links+138 to the old free head and prepends this
+slot. Ascending scan therefore produces descending free-list order. Counters
+wrap at32 bits. Tests include zero/short/full/high-bit tags, shared stacks,
+both players, matching/nonmatching tasks and counter overflow. EE word
+arguments in the oracle are sign-extended as produced by SLL/ADDU/LW;
+zero-extending high-bit test arguments creates a false LW comparison failure.
+
+Callback continuation
+---------------------
+149d08 calls1491e0,14cbc8,14b798 and14aec8/14cc10, then performs original
+pre/post hooks around the selected callback. It calls1491e0 again and can
+recurse on24820. Existing introduction/ending paths cover only their scoped
+callbacks; do not replace the general pipeline with a guessed action ID.
+
+14aec8 dispatches172d68 normal,172eb0 attack,173108 damage.172d68/172eb0 and
+14cc10 registration are now ported in state_callbacks.*,along with14efb8
+rage gain/threshold initialization. They preserve the first kind3 object's
+D4 update and the stock/custom system and special-category branches.
+See docs/state-callbacks.txt and its36,410-case whole-function report.
+173108 may drop character33's weapon through1732b0->170440->170010, clears
+bodyFE gates, registers174fe0 or4e97a8's handler, and may call11e548 on the
+system-state3 path.1732b0's predicate and11e548 are now ported separately;
+actual weapon creation is still needed,so full173108 is not claimed.
+Full callback registration/execution,AI and the remaining1494f0 prefix/tail
+remain unported as a whole actor update. The live viewer is unchanged.

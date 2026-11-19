@@ -1,0 +1,86 @@
+比赛结果、回合计时及跨局保留（2026-11-18续）
+
+当前集成
+src/match_progress.*：PlayerMatchStats、MatchProgress、BattleTimers。
+ContactTrial在进入state5时调用recordRound；此前生命归零/请求5尚不记录。
+普通胜利仅胜方+1，满血life==maximum在结果字节加20；双KO双方+1并各写04。
+同次入口之后不重复提交；R是整个样例重置，会清比赛记录，不冒充原版下一局。
+样例requiredWins显式设2；原PS2选项加载路径尚未定位，不声称这是原版默认值。
+MatchProgress::transition已接自动后续局和终局边界；battle.command显式启用rounds。
+原版后续局初始化、持刀决胜动作/UI现已集成，详见continuous-match.txt。
+评分+1c/+20事件来源、比赛结果保存/菜单和完整首局初始化仍未接。
+完整机制1:1目标保持；本轮没有把缺失流程用延时或一键reset代替。
+
+原版结果和统计
+玩家记录battle+254+108*player；+28累计结果数，+2c胜利阈值，+40..44五个结果字节。
+147cc8清+28、+24=-1、五字节ff，调用147d60与147d28；保留requiredWins。
+147d60清rating+34/score+38/bonus+3c；443140为0/1时，读取4430e0+index30+8，
+按signed除1000截向零再+1得到rating。字段语义为目前命名，未声称完整评分系统。
+147d28只重置局内buffer(+48,count30)及+1c/+20=-1；本模块只表示后两者，未实现buffer。
+147db8先用旧count写history[old count]，再count+1；result|perfect20|other40。
+平局score+=signed32(119-rating)/20；普通score+=signed32(104-rating)/5。
+非平局：+1c==1时bonus+2，否则+20==0时+1；完胜另+3。整数加减保留32位回绕。
+本模块history超过五项显式拒绝，原函数无边界检查；不把内存越界改成隐式截断。
+14ab80与145358以signed比较count>=required，任一玩家达到则比赛完成。
+143ce0片段：等血为0→draw/result1/UI18/stat4；等血非0→result3/UI19/stat6。
+不等血：高血方胜，败方<=0→result0/UI15/stat0，否则result2/UI19/stat5。
+本分类模块限1393a0=false；该特殊模式的时间到强制胜者分支未接。
+原生battle只接KO触发，不因分类模块支持时间到结果就宣称已有时间到控制器。
+
+状态8之后的模式选择
+完整144570完成路径先timer2=30、roundIndex++、pending0。
+4c3808+a0==6且任一方满足胜利条件→9；该值==5则跳过下面单玩家胜者分支。
+其他情况mode1且winner0，或mode2且winner1→9，不要求本场已达到胜利阈值。
+剩余情况：已完成→10，否则→0；draw时等待分别改120或90。
+ContactTrial在启用rounds时提交roundIndex/pending/timer2；旧独立场景默认仍保持state8。
+144570输入跳过仍未接；864个全函数案例全部令两角色完成、skip字段2f0=0。
+
+回合计时
+battle+104结构：flags0、lock4、rawDelta8、resolvedDelta0c，七个timer从+10开始。
+143180恢复delta256/锁0/全timer0。143228将ticks的低32位左移8，再signed除正divisor。
+140930普通除数1，特殊全局时钟下只有timer5/6除8；本类型接收已解析delta/除数，
+没有实现全局11f450策略。非正除数显式拒绝，未猜测EE异常DIV。
+143260减timer，负值归0；143288加timer，上限173400；二者均返回旧值。
+143200单独递减lock并钳0，143218检查lock>0。
+ContactTrial::advanceRoundBodies先decrease(2)，旧值>0则跳过；入口后清timer1，
+普通update结束后increase(1)。KO入口按140930(5,30)赋值；全局40暂停期间不推进。
+目前普通样例固定resolvedDelta256；角色hitstop/半速不等于全局battle时钟。
+
+下一局保留模块（现已接149008表示字段，整函数证据见continuous-match.txt）
+ActorTimers::resetRound移植14cf80：先保存结构+50，即values[19]，
+14cf48清其余35个timer并恢复delta256，再还原该值。索引19的玩法含义未确定。
+RoundActorFlags::resetRound移植14fe10：
+23c=(old&400000)|1000；240=old&e；244=old&20000040；248=(old&c)|2；24c=0。
+DamageTables::resetOrdinaryRoundMeters移植14ec80的system0/普通选项分支：
+rageState0/1保留amount/decay；state2变3且清amount/decay；已是3则保留其值。
+剑气current/maximum按system table+18回满100*256，rageState1使用+1c的180*256。
+swordWait保留。完整14ec80对照包含所有到达callee，并核对未遗漏其他meter字段写入。
+该函数支持重置state2/3，不等于已接怒气爆发玩法；既有普通槽更新仍显式拒绝这些玩法状态。
+
+验证与范围
+match_progress_validation.json：4,612例。147db8+14ab801536；147cc8表示字段36；
+147d28表示字段128；143ce0结果分类片段+145358512；完整144570864；timer helpers1536。
+143ce0片段分别停在143d54或143d58（不等血返回会跳过143d54），没有替换logger或callee。
+round_reset_validation.json：2,048例，完整14cf80512、14fe101024、14ec80512。
+battle_ending_validation.json：原有7个实际接触结束场景增查统计提交时机/完胜/双KO/不重复统计，
+timer1入口清零/普通更新/全局暂停，以及timer5赋值；结束动画相位未改变。
+contact_trial_validation.json：17类场景、7,776随机快照、223独立像素场景通过。
+battle_ending_window_validation.json：新打包二进制17个真实窗口通过。
+旧image/动作报告保留各自二进制指纹；未修改图像路径，不用改hash冒充重新执行。
+
+开局UI依据（已移植部分与新验证见round-opening.txt）
+1249c8(label)使用descriptor表4a3e30、stride6c。label1先排index2后index1；
+其他label排index(label+2)。起点320,240，scale1，背景z=-50、前景z=-60。
+index1：bank5 actions0..5，回调124b48再排对应round label。
+index2：bank5 action6，回调124cf0（空），不自行清UI owner active。
+index3..11：bank5 [label+6,16,17,21,label+21]（label1..9），回调124bf0。
+index12：bank5 [18,19,20,31]，final round label10，回调124bf0。
+124bf0先排index14(bank6 action2,空回调)，再index13(bank6 actions0,1,3,4,5)。
+index13回调124cc0清owner bit1并释放调色板池槽10；116268(10,11)上界排他。
+两个同owner组不能用简单的“任一组耗尽即完成”或任意固定等待代替。
+124898结束组仍保留本次draw副本，调用end callback后清owner bit8；无callback才清bit1。
+bank5=Display.bin、bank6=Display2.bin；动作更新、旋转/投影、新纹理15/16/20/21/22已验证。
+112838每次先构建priority buckets再运行1128c4，新建任务下一次访问才进入；完整调度器对照通过。
+13fd80含147d28/149008、camera146388/146418、battle timer143180和其他子系统。
+149008/13fd80现使用真实buffered FILE执行库日志，完整函数已通过范围明确的字段比较。
+未跳过日志、池分配或辅助callee；143430仍会触及音频/内核接口，未声称整函数已验证。

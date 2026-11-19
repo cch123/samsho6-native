@@ -1,0 +1,99 @@
+原版普通 KO 角色动作（2026-11-18）
+
+持续输入链新增证据（2026-11-19，优先于下文早期阶段的待接说明）
+GroundStateRuntime已接致命174fe0原始状态改选、KO30/31回调和模式7结束保持，
+并将完整14b880恢复检查放在输入请求之后。KnockoutPlayback可把动作排入actor队列，
+保持1493c0到149918的边界；既有ContactTrial/独立预览接口不变。
+ground_ko_input_validation.json通过72条轨迹/8,025快照、6,504次完整149d08、
+7,080次完整14b880及72次真实落地效果分配；新的组合环境执行真实170fa0及全部callee。
+这补充了旧knockout_validation.json首次落地仅比事件边界的证据，不重写旧报告范围。
+完整顺序、指纹、输入/伤害边界与回归见docs/ground-input-execution.txt。
+组件尚未替换主对战直接控制，胜者/尸体/胜利/开场/换局还需接入同一新链。
+
+当前实现与边界
+src/knockout.* 已移植普通 resource00 KO 角色回调、两次落地和结束保持。
+knockout.command 是独立角色动作预览；不是已经接通的原版回合流程。
+battle.command 已接轻受击后的KO调度、normal52胜者等待动作和回合输入锁。
+它仍只含结束回合的角色部分；详见round-flow.txt，不能称为完整KO/回合实现。
+effect29已接原版6阶段落地冲击贴图、动作和生命期；声音仍静音。
+普通KO的40+2暂停与UI15/18已接；完整actor调度、其他暂停/字幕、后续胜利与下一回合待接。
+
+运行
+./knockout.command
+./knockout.command --action 402 --dump-mirror 1
+./knockout.command --action 382 --updates 55
+可选 400/401、402/403、382/383，成对分别为持武器/空手。
+382/383 预览显式从 Y64 开始，是检查初始条件，不是原版 KO 高度常数。
+--dump-mirror 1 选择朝左的 P2。R 重播；Space 暂停；N 单步；H 判定框。
+也可在场景脚本中写 knockout PLAYER ACTION，接 tick N；脚本属于检查接口。
+已查看 knockout-preview.png、knockout-contact-sheet.png，身体和武器均完整合成。
+
+原版地址与规则
+172b38(ctx,variant)：若 actor23c10 表示空中，强制 variant2，姿态29；
+否则姿态28。原版表4e8cf8=[400,402,382]，无武器再加1。
+16a8f8 姿态28/29 清 actor23c 的1/2/8/200/400/800，设置4。
+姿态28还调用11d990并令Y0；姿态29保留运动和高度。
+object fe|1，1494c0/1493c0 排入 actor+a3c，149918 再请求 object 动作。
+特殊角色 action remap flags23c d00000 尚未覆盖，明确拒绝。
+
+172be8：173970落地就绪时，1697d0停运动并夹负Y到0，170fa0请求dust29，
+随后安装172c50。第二次落地172c50再停运动并安装172cb0。
+172cb0等待149488动作完成，然后11d990并安装169a50、参数274=7。
+169a50 case7 不再切回待机，保留倒地末姿态。
+
+173970先调用1737d8：endControl100立即满足落地候选；
+否则，动作已结束或object104100为真时，Y==0且vy==ay==0满足；Y<0也满足。
+再调用1699f8：动作结束则清104100并返回1，否则返回104100是否存在。
+149488完成条件：object.c0!=0、104 bit1未设、actor.a3c==-1。
+不能仅检查Y==0，也不能把零时长记录直接跳过。
+
+本轮修正的底层细节
+11d990 除六个运动量清零，还清 object104 的40和100。
+之前的 stopMotion 只清运动量；新落地路径需要100清除才能继续动作。
+11de10 在 duration0 时设置104100，其他时长清除；负Y夹0并设置endControl100。
+11d730遇104100跳过动画，但11d6c8仍会推进运动，直到落地回调解除等待。
+120ac8遇ACT header4000且时长已到，检测 trunc(Y) +/- (dy>>16)，正数则保留
+当前记录并继续累计时钟，否则清Y/dy/vy/ay、标记落地后进入下一记录。
+向下一记录转移仍仅保留时钟低8位，仍一次最多推进一条。
+11d730的1042000/4000会设置全局ACT跳转抑制；table2回调前168aa0每次重设2000。
+因此 KO 末条的8000/48等转为完成码，停在当前KO动作末帧，不进入起身动作。
+原始无抑制播放仍支持400->48->52、402->50->54及空手对应链，用独立序列测试覆盖。
+
+浮点范围
+新增纵向/分数速度测试触及舍入，motion.cpp 位置提交现在使用与camera/damage相同的
+显式有限 ScalarFloat 模型：CVT.S.W -> MUL 2^-16 -> ADD/SUB 分开处理。
+原有精确样例仍通过；新增非精确原始动作序列明确标为有限模型，不是 EE 硬件精度证明。
+不把宿主IEEE默认四舍五入产生的低位误差忽略或放宽断言。
+
+验证
+knockout_validation.json：72组，43,560状态。包含持刀/空手、3种入口、
+地面/空中、两朝向和delta128/256/512；每组均经过两次落地并保持结束姿势。
+整函数覆盖172b38+149918、玩家对象wrapper、173970、1697d0、172c50、172cb0、169a50 case7。
+第一次落地的 effect 任务是显式边界：比较原版predicate/stop/install，未声称完整172be8通过。
+没有修改原版指令、替换callee或跳过硬件调用伪造整函数成功。
+player_object_validation.json：84,350状态，包含两个零时长hold的释放和跳转抑制。
+action_sequence_validation.json：29,888状态（20,672精确、9,216显式有限模型）。
+knockout_image_validation.json：当前659场景，覆盖6动作所有阶段、两朝向、原版锚点投影，
+两侧获胜/双KO、493全3阶段和原始效果；648次原版四边形计算片段。不是PS2 GS截图对照。
+knockout_window_validation.json：4个实际WindowServer KO窗口场景+既有对战入口通过。
+已有17类对战场景、7,776随机快照、223像素场景回归通过。
+底层608运动命令、1024积分、1024矩形、2052相交、25443动作状态回归通过。
+
+效果依据（已接实现与验证见effect-runtime.txt）
+170fa0调用1242c0(effect29,mirror)，坐标(X,0,0)，f15=1.0（常量5f1644）。
+effect描述符地址4a2b30+29*108=4a376c：首word1，+4 word1，+14 action18，
+其余action项-1。这里的资源编号是运行时槽语义，尚不能直接当作磁盘resource01。
+1242c0/124620会分配effect对象、123330初始化，建立priority5的124898任务。
+资源槽映射和动作生命期现已实现；仍不宣称完整172be8/PS2任务分配器对照。
+
+效果资源映射：123268加载7个0x3da0字节的独立效果动作库到4a4810，
+依次01HitFlash.bin、02Guard.bin、03etc.bin、04tenso.bin、Display.bin、Display2.bin、Display3.bin。
+object14是这里的一基库号，不是角色resource编号。1233a0以(bank-1)*3da0定位；
+动作offset表+100，32个word；数量表+180，32个byte；记录从+1a0开始，每条60byte。
+dust29 descriptor的bank1/action18对应01HitFlash.bin记录105开始，共6条。
+1240c0以资源编号查4a2a70字符串表；asset1="effect01.pvr"，加载时映射到动态纹理槽。
+镜像中已提取effect01.tex与effect01.pal；原版loader1142d8负责.pvr名到实际资源的读取。
+效果ACT是独立格式，不可当作角色ACT解析；123400按其标志装载运动/变色等。
+KO UI15 descriptor4a3e30+15*108：bank7，assets17/14/13，actions0/1/2/3。
+doubleKO UI18：bank7，assets17/14，actions12/13/14。bank7是Display3.bin。
+现已按动作耗尽判断任务结束，保留本次绘制副本；未用猜测时长替换字幕任务。

@@ -1,0 +1,131 @@
+Original input lifecycle (SLPS_255.59)
+====================================
+
+Native implementation: input_lifecycle.* plus ActorCommandInput clear
+methods and InputSampler::clearPressLatches. Original source hash:
+72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf.
+This extends input-processing.txt and input-routes.txt. The actual viewer
+still uses direct TrialCommand; the full1494f0 actor frame is not ported.
+
+Clearing versus recognition progress
+-----------------------------------
+1797a8 clears all31+32 completion buffers, including unused slots. It does
+not clear step,elapsed,charge,recognized or cancelAllowed.179708 returns
+immediately when specialStart==-1; otherwise clears171 actor features and
+31 normal results, then recognized/cancelAllowed for visited special slots,
+then all63 buffers. Unused special results and all partial motions survive.
+178920 clears only the selected player's six press latches. It does not
+clear the shared feature frame or600-entry recording arrays.
+
+Human sampling branch of1494f0
+-----------------------------
+1495e8 selects the human route for controlKind0, controlMode36 or flags2404.
+Other actors take the AI path unless24c1 suppresses it. Native exposes an
+explicit AiRequired boundary;158990/158aa8 have not been approximated.
+For human control,1405f0's supplied false result plus opponent23c08000000
+suppresses both sampling and14bcc8. The1405f0 producer is still external.
+
+Sampler uses actor+a24, swapped by flags2408; expected facing is+a08,
+actual facing is body38 bit19, reversal is timer20>0.151568 returns timer0>0,
+so completion-buffer aging runs when timer0<=0. Playback is flags2404;
+record/play index is actor2c0 when flags2402 or4, otherwise-1.
+Dynamic character24 slots0/1=114,2/3=64,5=41 when transformed100000;
+otherwise196/197/116. Character25 slot0=269 transformed,206 otherwise.
+Only definition halfwords change; no partial progress or buffers are reset.
+These rewrites happen even when179530's owner is disabled.14bcc8 still
+runs after the disabled sampler, using that owner's previous features.
+
+Request lock is24c1 OR (23c&30000000)==10000000. Locked actors take14bb48;
+others use14a1b8->149980->149bc0. See input-routes.txt for exact ordering.
+
+Character9 charge14bcc8
+----------------------
+Active when battleState>=4 or battle+18!=0, except raw attack77 and AI
+control1 outside modes36/37. Held feature46 increments timer19 using its
+wrapped/capped original timer helper. On release with old timer>0, clear it
+and publish byteF18 from old timer>>8: thresholds60/180/360/1200/4800 give
+levels1..5. A short positive charge writes0; old timer<=0 preserves the byte.
+This helper is distinct from command-template charge recognition.
+
+Late replay and cancel-window tail
+---------------------------------
+149790 increments actor2c0 with signed32 wrap only when141820 is true:
+battleState>=4 or battle+18>0. Note >0 here versus !=0 in14bcc8's extra gate.
+Playback flags2404 then takes signed remainder720. The sampler records only
+600 entries: do not "fix" the original600..719 neutral playback interval.
+14bdf0 always follows. A positive timer31 clears on pressed & normal mask4
+for the original UNSWAPPED actor+a24, even in game mode6. The earlier
+14c0d0 dispatch and this late test must remain at different call sites.
+
+Evidence and remaining integration
+----------------------------------
+input_lifecycle_validation.json:5,344 cases /140,221,429 original instructions.
+384 whole clear helpers;3,072 whole14bcc8;512 sampling/gate slices;
+864 whole179258 binding initializations plus864 sampling-to-request slices;
+512 late recording/cancel-tail slices. The864 combined cases cover all48
+explicit binding blocks/systems0..8/both facing directions and compare
+actual recognized requests, including refusal and locked-input outcomes.
+All171 shared/actor features,63 slot definitions/progress/results,32 priority
+bytes,12 latches,1,200 recording words,35 timers and request-side writes pass.
+
+The report records whole clear/charge helpers and
+explicit1494f0 slices, with all reached callees executed normally. Sampling
+slices stop before actor callbacks or the unported AI path. Tail slices
+start after callbacks with the original saved return address supplied.
+They are not whole1494f0 evidence. The report pins case counts, exact scope,
+input/request field comparisons and the tested native probe fingerprint.
+Full state callbacks and live controls remain next. Complete state-entry
+consumption is now verified separately in docs/state-entry.txt.
+
+Historical state-entry preparation boundary
+------------------------------------------
+state_entry.* now implements the1491e0 prefix through pending-state commit,
+ending before14a348. state_entry_validation.json has6,144 cases /620,001
+instructions:1,024 whole150000,1,024 whole150038,4,096 explicit1491e0
+prefixes, with separate original1500a8/1500d0 reads of the old effective state.
+Of those prefixes,478 return without entry and3,618 reach the entry boundary.
+Both state channels,metadata,all timers,auxiliary queue and entry arguments
+match. StateEntryPlan.finishAttackAfterEntry describes the static continuation;
+it does not execute or claim validation of14f1a0. That report remains a
+prefix-only check. The newer state_transition_validation.json separately
+verifies whole14a348/1491e0,14cbc8 alias entry and14b798 metadata, including
+the actual14f1a0 continuation. See docs/state-entry.txt for current coverage.
+
+1491e0 captures effective old table/index, then150000 checks whether both
+pending halfwords are !=-1 and their packed word differs from RAW194.
+An accepted main request clears23c200000 and resets the entire alias channel
+via14ff58 before reading the new pending table/index.150038 copies pending
+to current and clears pending; actor18c becomes1. A previously set18c can
+still trigger entry when150000 rejected a duplicate; do not deduplicate the
+whole dispatcher by animation ID or assume the flag always means new state.
+
+Before commit, transformed800000 entering damage outside0..5 clears that
+mode and queues auxiliary action776/state128=27.14bc58 also sets timer6=3
+when leaving damage0..6,9,17 or32..57 for a non-damage table. The actual
+14a348 entry helper then runs; leaving attack additionally calls14f1a0.
+
+14a348 is not just an action lookup. It clears callback/condition structures,
+many actor/body flags and timers3/15/4; resolves172d18/172e08/173078 metadata;
+updates system/gauge and HUD paths; and handles registry/object references.
+Normal23/24/48/54/55/56..60 and attack entry reach1797a8, while normal4/5
+instead set timer5=32 before continuing. Damage entry skips that buffer-clear
+call site. These effects now have whole-function fixtures and native ports;
+full callbacks and live actor integration are still required before replacing
+ContactTrial::enter with the complete state execution pipeline.
+
+149d08 calls1491e0 before and after registered callbacks, and can recurse
+on24820. It also has14cbc8/14cc10 alias dispatch and state metadata updates.
+The existing intro/ending comparisons cover their admitted resource00 paths,
+not arbitrary normal/attack/damage callbacks. The verified14b6a0 history
+helper already exists in actor_history.*. Keep these existing ports when
+completing1494f0; do not rerun extraction or substitute fixed callback waits.
+
+Persistent composition continuation
+-----------------------------------
+human_input.* now exposes the verified sampling/locked-or-ordinary request
+sequence as one reusable call. input_lifecycle_probe uses this class for
+the864 sampling-to-request cases; the full5,344-case suite still passes.
+ground_state.* additionally runs ordinary0..7/9..14 entry/metadata and real
+ground callbacks after those requests. Its persistent software-pad traces
+are documented in ground-input-execution.txt. This is still independent of
+ContactTrial; do not claim full1494f0 or live battle input based on that test.

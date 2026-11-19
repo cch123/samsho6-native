@@ -1,0 +1,89 @@
+侍魂6 resource00 普通非决胜局：胜利镜头与结束角色，2026-11-18续
+
+实现：src/ending_playback.*、contact_trial.*、stage_camera.*。
+battle.command现由实际接触造成KO，经状态4→5→7→8，自动下一局或到比赛完成边界10。
+首局492登场、持刀终局499/501/UI16和后续局初始化已接；旧独立场景保持state8，便于原有检查。
+R仍是本地重开比赛，原版菜单未接；最新证据见continuous-match.txt。
+这不是完整回合系统，完整机制1:1目标不变。
+
+状态流程
+144020同时等双方角色准备、原KO UI结束才排pending7；下一次进入7且跳过同次update。
+1441e0清镜头队列：仅存活败者才排cmd2(loser)→cmd3(30)，随后cmd2(winner)→cmd0；
+普通KO直接cmd2(winner)→cmd0，双KO只有cmd0。2026-11-19完整1441e0对照发现旧代码
+误将1400a8解释为胜者查询，已修正并重跑实际比赛；详见round_control_validation.json。
+原版平局winner=-1，本样例公共winner=2，分支相应转换。KO角色强制排damage15。
+普通action382不触发169050的特殊动作保留分支。144360设置object104400000、actor24420000，
+等镜头队首cmd0才排pending8；镜头目标/消费/移动/发布在后面的stage相位。
+1443f0进入8时胜者排normal41，145dc0清双方actor244200000；播报音频未接。
+144570设置双方object104400000，依序设置actor24420000并检查40000000。
+P0未完成就返回，不能提前设置P1对应位。按键跳过/模式分支尚未接。
+两者完成标roundEndingReady；启用rounds时继续写timer2、round index与模式分派。
+
+角色回调
+1751d0 damage15保留KO→14e178：清actor24440000000、object.fe|1；
+actor2448000选48/49或50/51，23c1000选持刀/空手；安装14e320 type0。
+1a3580在aux为空时返回；资源00跳表652578也不派动作。
+48..51末尾带ACT跳转52..55；168aa0每次callback设1042000，抑制跳转，保持原末姿态。
+normal41入口17475c朝向对手→14e000，不执行普通待机pose18重置。
+14ab80比较玩家统计+28与+2c；达到阈值时动作编号在非终局基础上加4。
+14ab70以life>=100选495/496，否则497/498；不是低血待机的49阈值。
+清24440000000、安装14e320；资源00的1a3400不派辅助动作。
+14e320 timer34==0：1699f8每次都清104100，包括尚未结束时；1a3930资源00返回1。
+这使492的零时长阶段只保持一次动画访问；只在结束时释放会卡住登场。
+完成才设24440000000，切169a50 type0/arg4，清object104200。
+169a50 case4的KO重启仅限current table<2；KO damage15保持，存活normal41也保持。
+音频仍为静音检查事件；清200保留对象状态，不代表已有声音后端。
+timer34>0的冻结/重定位/action492分支已接，详见character-introduction.txt。持刀终局499/501已接，
+499的motion5与纵向翻转、501的刀光已验证。500有独立动作检查；
+502仍有未实现header400，不能直接放行忽略。
+
+历史证据（下述旧时点包含修正前的KO镜头等待；当前数据以报告指纹为准）
+ending_playback_validation.json：72场景/103,968对象状态；完整原14e178/14e000/149918、
+168aa0/14e320/1a3930/169a50及对象提交/动画/移动函数。aux为空、timer34=0、非决胜局。
+两武器状态、48..51/495..498、HP99/100、两朝向、delta128/256/512；不改ELF或跳过callee。
+action_sequence_validation.json：32,064状态（精确20,672+finite模型11,392）。
+player_object_validation.json：92,318状态；action_image_validation.json：208单体/231旧双人场景。
+单体140高检查裁剪可能裁掉498最低像素，不是资源改动。
+battle_ending_validation.json：7实际命中场景，双方获胜/双KO/胜者HP99、100、200。
+原生快照重放完整144360448次、等待1445701116次；7次完成路径停在1446b8统计转换前。
+后者是明确片段，不声称整144570或原版整帧通过。
+P1样例：KO6、state5于8、准备127、state7于128、state8于203、动作完成371、就绪372；
+P2后两点为204/372/373；低血胜利晚40次。这些是场景观测，不可硬编码为全游戏定时。
+knockout_image_validation.json：1,502场景，495/497全阶段、48末姿态与移动镜头；
+1,455原效果quad片段。原投影+独立Python PIL合成，非PS2 GS截图。
+battle_ending_window_validation.json：17个实际WindowServer创建/绘制/正常退出场景。
+仍是400x160检查裁剪、RGB1555/nearest预览，声音/GS/完整调度尚未核对。
+
+持续输入组件补充（2026-11-19）
+GroundStateRuntime已通过真实actor回调执行normal52/41和damage15。
+EndingPlayback可选actorAction参数仅排actorA3c；默认接口仍供既有ContactTrial使用。
+原版169a50模式4的有效表限制已保留，damage15不会因为死亡位而重新进入KO30。
+ground_ending_input_validation.json覆盖52场景/10,704快照，包含等待→胜利、KO→尸体，
+以及实时HP/胜场在进入之后改变也不重选动作。其回合请求由夹具提供，非完整回合控制器证明。
+准确顺序、输入锁和初始化边界见docs/ground-input-execution.txt。
+
+复现
+python3 work/ss6/validate_ground_state.py --ending
+python3 work/ss6/validate_camera_commands.py
+python3 work/ss6/validate_ending_playback.py
+python3 work/ss6/validate_battle_ending.py
+python3 work/ss6/validate_knockout_images.py
+./battle.command --trial-script work/ss6/scenarios/battle-ending-0.txt
+./battle.command --trial-script work/ss6/scenarios/battle-ending-0-low.txt
+
+后续线索（统计/计时及模式决策已有独立模块；完整初始化和流程尚未接）
+144570成功后140930(2,30)、battle+18++；4c3808及+0xa0、145358决定0/9/10。
+非决胜平局timer2=90，比赛结束平局=120，不能统一延时后直接清血。
+147db8更新玩家+28和+40结果字节（基础结果|perfect20|其他40），另更新+38/+3c评分。
+147d28新局重置局内buffer(+48,count30)、+1c/+20=-1，保留比赛胜局。
+state0为143430分派块14350c，非独立函数：145d98显示效果清理、1159d0、13fd80
+整局初始化、1b4e88/1b4d90场边角色位置/事件请求，直接进state1的143708。
+这两个函数不是音频调用；静音时仍有状态副作用，现已由stage_event.*保留。
+13fd80依次含177258特殊对象、146388镜头、143180全局timer、147d28/149008双方，
+146418初始镜头、1405e0速度等；还有模式和介绍分支，须继续核对callee。
+149008恢复HP/max200、位标志、240/400位置/朝向、局内资源/计时/判定buffer；
+排normal39介绍或normal0，调用149d08、1a3220、可能1a3340、16e6d0、14ae70。
+不能用ContactTrial.reset代替，后者清掉比赛状态且未覆盖这些原副作用。
+state1 entry143708排镜头cmd0；update143798首次局等介绍/按键，后续局跳过介绍。
+14bea0双方并排normal0、清镜头；后续局timer2=30直接排state3。
+1438e4是分支延迟槽，写3；此前文档误记为state2，现已用完整1435d8对照纠正。

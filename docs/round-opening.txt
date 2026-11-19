@@ -1,0 +1,77 @@
+开场字幕、旋转与操作解锁（2026-11-18续）
+
+当前入口
+双击项目根目录opening.command：原版首局标题→局数→开始字幕→有限双人对战。
+opening.command是显式state3初始场景，R回普通对战样例。
+battle.command现启用连续比赛：初始字幕、自动后续局、决胜字幕和终局动作已接。
+后续局13fd80/149008的范围明确验证见continuous-match.txt；首局角色登场、音频/重放和菜单仍待接。
+脚本opening LABEL只允许首次tick之前，LABEL范围1..10；10是决胜字幕的预览选择，
+这个初始预览选择独立于比赛；连续比赛按双方胜场自动选择决胜标签。示例scenarios/round-opening-1/2/10.txt。
+
+原版完成链
+RoundIntro使用4a3e30、stride6c的描述符数据；原始动作来自Display/Display2。
+1249c8(label1)先创建descriptor2，再1；其他label创建label+2。
+1：bank5 actions0..5，结束回调124b48创建label+2。
+2：bank5 action6，结束回调124cf0为空，不释放共用owner。
+3..11：bank5 [descriptor+4,16,17,21,descriptor+19]。
+12：bank5 [18,19,20,31]；3..12的124bf0先创建14、再13。
+13：bank6 [0,1,3,4,5]；14：bank6 [2]。
+13的124cc0才清owner.active，并调用116268(10,11)释放调色板池槽10。
+11是排他上界；此前match-progress.txt将这项误写成font10/11，现已纠正。
+全部对象screen flag100000、坐标320/240、scale1；2/14深度-50，其余-60。
+
+调度规则
+112838先按任务槽构建priority链，再逐个访问回调。回调新建的任务下一次访问才更新。
+124620构建对象链、登记priority5任务；124898更新所有对象并检查1233a0存活。
+结束时先释放对象/纹理引用，再回调；绘制副本已经入队，因此最后一帧不能删掉。
+首局owner在正常第200次效果访问完成，其余第110次；这是原记录执行结果，非硬编码时长。
+交错暂停时分别在第300/165次完成；持续效果暂停时保留owner，不超时解锁。
+ContactTrial的state3等待owner，完成当次只请求4；下一次入口4清镜头队列、timer3，
+原有roundInputFlags在当前state4时解除输入锁。入口回调不额外执行state4 update。
+效果priority5先于battle50，所以完成帧仍画字幕，下一次才允许攻击请求。
+原生槽更新已由样例调度器拥有，按pendingState==4且未全局暂停门控；未伪造PS2任务地址。
+
+PS2效果调色板：纠正旧预览
+1003dc..1003f0读取effect_pal_data.bin到1237740，704byte，即11组16色32-bit CLUT。
+116588在无全局染色/淡入淡出时将其原样写入1237a00。
+109490..10955c从1237a00按每组64byte上传到GS地址3105+bank。
+123a38→114ae8→108910也使用3105+record.palette，故这才是这些效果实际选取的颜色。
+旧obj0.pal路径属于另一通用调色板区；旧像素测试只证明两套预览实现一致，未证明来源正确。
+本次已修正KO15/18、landing29和新增开场字幕；32-bit字顺序AABBGGRR，alpha128是不透明。
+保留颜色原值，不用RGB1555扩展近似替代。全局染色/淡入淡出、GS混合仍待移植。
+
+旋转几何
+新增asset15 moji1、16 moji2、20 ougi1、21 ougi2、22 sakura，都是512²线性4bpp。
+原记录flags8启用角度；signed(degrees<<16)/360后取负16-bit turn，整体X/Y镜像各再取负。
+UV翻转按record8000/4000 XOR object80000/40000。原strip顺序TL/BL/TR/BR。
+所有已接记录角度为0或270；目前只接受四分之一圈，不使用宿主sin/cos猜测其他角度。
+四种turn的cos/sin值来自完整10b4b8/10b4f8及其库函数，在显式有限浮点模型下求得。
+90度cos仍有微小残量，不能理想化为0。每个乘加分别用ScalarFloat并保留原运算顺序。
+四个顶点均逐位对照；预览按原两个三角形取样，不把顶点强制改为完美平行四边形。
+纹素坐标在除法前缩放，避免浮点权重把精确整数边界变成115.999999…。
+Python覆盖/纹素oracle对二进制有理数顶点使用整数边函数，独立验证这一边界。
+零面积记录仍保留对象时钟/回调和绘制副本，只是不产生像素。
+
+验证
+round_intro_validation.json：30场景、5,550调度状态、16,622有序绘制副本。
+完整执行未修改124620、112838、124898及三个完成回调；预置已驻留纹理、owner和空闲池。
+不包含1249c8的owner分配/文件I/O；声音使用原版disabled全局开关，不替换callee。
+effect_runtime_validation.json：57动作×4flags×3暂停模式，684场景、144,324对象/队列状态。
+effect_quad_validation.json：179原记录、1,432四边形片段，其中56旋转；176色完整116588检查。
+opening_trial_validation.json：全部10标签的输入锁/末帧/延后入口/实际轻斩互击，95画面。
+画面对照使用原调度器及原投影生成UI，再由独立Python取样覆盖既有角色预览；
+角色部分由独立PIL验证覆盖，没有将共享底图说成第二套角色渲染器。
+knockout_image_validation.json：1,502原有结束画面，在新效果颜色路径上重跑。
+battle_ending_window_validation.json：28个实际窗口场景，含11个开场/解锁场景。
+probe_extension_validation.json：1,040完整memset边界案例、4个JALR延迟槽/别名案例、
+2个MSUB精确/有限模式ACC保留案例。补齐DSLL、PCPYH、PCPYLD、SQ、JALR、MSUB；
+标量写保留128-bit GPR高半部，不把未知指令当空操作，也未修改原ELF。
+指令语义参照PCSX2原始实现：
+https://github.com/PCSX2/pcsx2/blob/master/pcsx2/MMI.cpp
+https://github.com/PCSX2/pcsx2/blob/master/pcsx2/FPU.cpp
+这仍不是EE硬件精度或GS覆盖一致性证明；完整机制1:1目标不变。
+
+下一依赖
+后续局初始化、历史、持刀终局499/501/UI16现已接，见continuous-match.txt。
+注意：后续局state1直接排3，1438e4延迟槽写3，不经过首局专用state2。
+继续补首局角色登场、完整输入/声音和结果菜单。

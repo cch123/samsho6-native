@@ -1,0 +1,146 @@
+Original input processing (SLPS_255.59)
+=====================================
+
+This is a native input subsystem, not an emulator dependency. The bounded
+instruction runner is used only by offline validation scripts. The current
+battle.command still sends direct TrialCommand state requests: recognition
+is not yet connected to original action selection/permission/cancel logic.
+Do not describe the current playable fixture as having full original inputs.
+
+Sources and runtime boundaries
+-----------------------------
+Pinned ELF SHA256:
+72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf
+
+177310 samples118128's two software-pad words, configured masks, facing,
+actual facing, direction reversal, and optional600-entry recording/playback.
+177908 produces171 predicates and six per-player button latches.
+178980 wraps178ac8 recognition with optional direction-block substitution.
+179258 initializes31 normal/32 special bindings and179810 orders priorities.
+179530 samples, copies171 predicates to the actor, recognizes and ages buffers.
+
+Native source: input_features.*, command_input.*, input_bindings.*.
+The subsequent selection/request layer is now in action_selection.*;
+its original boundaries and evidence are documented in action-selection.txt.
+ActorCommandInput::sampleAndAdvance is the whole179530 boundary. Disabled
+owners return before sampling, feature copying, latch updates or recording.
+InputSystemConfig takes the selected system6 descriptor as caller input;
+native mode/preset/menu selection is not silently approximated.
+
+Extracted tables (extract_input_tables.py, original bytes, little endian):
+4e9898 input_commands.bin:273 records of17 bytes.
+4eb068 input_normal.bin:31 records of12 bytes.
+4eb1e0 input_special.bin:972 records of12 bytes, through the three terminal
+  sentinels at4edf4c/4edf58/4edf64; different data starts at4edf70.
+4eab00 input_characters.bin:51 records of six signed halfwords.
+4e5c50 input_categories.bin:51 records of five bytes.
+Special block keys exist for0..41 and43..48.42/49/50 need caller alias/context
+analysis; native initialization rejects them instead of inventing a mapping.
+The51 table keys are not a claim about51 playable characters.
+
+Sampling compatibility details
+------------------------------
+118128 returns1237cc8+12*player. +0/+4 supply held/edge words to177310;
+the physical pad driver and SDL keyboard/controller adapter remain separate.
+Normalized direction bits4..7 and start-like bit3 are fixed at this boundary;
+eight masks come from4eaac0+32*player, or12d32d8 in game mode6.
+Masks test any intersection. Three combination inputs expand buttons1+2,
+0+1 and0+3 after recording the original13 input bits.
+
+Both600-halfword recording arrays (12d2978 held,12d2e28 edges) are shared.
+Unsigned index<600 means negative indices are rejected too. Out-of-range
+playback yields neutral input; out-of-range live input skips recording.
+Playback ignores current pad words and current mappings, then applies the
+current facing/reversal and combination-button expansion.
+
+First and second facing are independently XORed with direction reversal.
+149634..149730 supplies actor+a08 and body+38 bit19. Direction reversal is
+actor+200>0 (timer20), NOT body height. The exact gameplay cause of timer20
+is not named here until its producers are ported.
+
+171 words live at12d26b8. Sampling preserves offsetc0, which is not written.
+There are three direction blocks: expected-facing, actual-facing, and world
+directions. Only one diagonal pair is resolved per block, in original order;
+opposing held directions are not neutralized. Do not add modern SOCD rules.
+
+Raw edges, exclusive edges and four-visit latched edges are separate.
+Any other held button suppresses an exclusive edge. Each new edge sets its
+player's latch to4; absent edges decrement nonzero latches before publishing.
+Pair/triple predicates use latched edges, while direction+button predicates
+mostly use raw edges. The shipped0x9c triple repeats024, not034; preserved.
+
+Recognition compatibility details
+---------------------------------
+Each template has14 tokens, timeout, completion-buffer duration and optional
+reset predicate.255 terminates,48 is the charge marker. At a noninitial step
+the8-bit elapsed counter increments/wraps BEFORE timeout comparison.
+Failure/reset clears step/elapsed/charge, preserving an existing match buffer.
+Only direction-token49..101 followed by button-token6..45 can coalesce in
+one call. Other tokens consume separate visits.
+
+Charge requires52 held visits AFTER entering the marker; its counter caps at
+6000. Releasing with charge>=52 can immediately consume the next direction
+and button within that same visit.178dc8 maps button0..4 to held91..95 and
+accepts only its original direction classes, not arbitrary features.
+
+178980 substitutes feature49..65 from66..82 for alternate-facing bindings,
+then restores the shared frame. Native recognition uses a nonmutating view.
+179530 publishes immediate match OR the old completion buffer, then ages
+all31+32 buffers if requested, including unused special slots. A disabled
+definition(-1) can still publish a preexisting completion buffer. Special
+cancel-permission flags (owner+3a8, previously mislabeled consumed) are
+cleared only for the visited special slots. See input-permissions.txt.
+
+Bindings and order
+------------------
+179178 clears actor predicates/results/progress/definitions, but preserves
+alternate-direction flags and priority bytes. Null179258 config disables the
+owner without clearing those preserved fields.
+Per-character override halfwords replace normal slots23,2,3,8. Individual
+system6 descriptor fields choose availability columns independently. The
+special category checks use168d48/168dc8, including explicit character32/48
+extra cases. Eligible alternate special commands consume override halfwords
+4/5 only as those category slots are encountered; unavailable slots do not
+advance that replacement cursor.
+Priority order begins with reversed slot indices, then selection-sorts by
+descending priority byte. Strict comparison, unstable ties and inclusion of
+disabled definitions are all retained; do not replace with stable_sort.
+
+Evidence
+--------
+command_input_validation.json:273 grammars,546 successful predicate traces,
+19,932 snapshots,1,026 charge predicate cases; whole178ac8/178980/178dc8.
+Its31+32 slot test is explicitly a17959c..1796a8 slice, not a whole call.
+input_features_validation.json:4,154 snapshots, whole1773101,024 times and
+whole1779083,130 times,3,882,924 instructions. All171 words,12 latches and
+full recording arrays checked, including invalid directions and byte values.
+input_pipeline_validation.json:512 whole179530 calls,472 enabled/40 disabled,
+60,070,152 instructions. Full sampling-to-recognition boundary; command
+bindings and software-pad state are explicit fixture inputs.
+input_bindings_validation.json:1,040 whole179258 calls,15,146,620 instructions;
+48 character keys,systems0..8,eight stock system6 descriptors,custom fields,
+null config, preserved remap/priority fields and original sort.
+input_stream_validation.json:16 persistent native binding/sampling/recognition
+traces,16 whole179258 and482 whole179530 calls,39,362,384 instructions.
+Includes motion timeout, charge threshold, double taps, staggered combination
+buttons and completion-buffer expiry. Both successful and failed attempts.
+Each report records its exact scope and tested binary SHA256.
+The input-foundation snapshot used viewer SHA256
+b544237f09b9ca13af999b946e44189ccb107ae9d7edc7df6a7dbe9d9922ba33.
+Later builds and their window checks are recorded in
+battle_ending_window_validation.json; this layer adds no visual gameplay.
+
+Next integration boundaries
+---------------------------
+1494xx actor input gating/151568 buffer aging decision and dynamic character
+binding rewrites precede action selection. Normal/attack/chain/restricted and
+supplemental selectors, facing and their ordinary request callers are now
+ported and independently verified; see action-selection.txt. Their tables
+have been extracted with pinned hashes. General14af48/whole14a1b8 permissions
+and14c608/14c7d0 special request callers are now independently verified; see
+input-permissions.txt. Custom-system/transformed/forced/locked dispatchers
+are now verified in input-routes.txt. Human sampling gates, dynamic bindings,
+clear helpers, character charge and recording advancement are now in
+input-lifecycle.txt. Full actor callbacks and consume/state-entry ordering
+remain before live integration; no AI execution is silently substituted.
+Do not turn a recognized command directly into an invented action request.

@@ -1,0 +1,5 @@
+place 280 344
+command 1 7
+command 0 7
+tick 1
+command 1 5

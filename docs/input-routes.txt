@@ -1,0 +1,87 @@
+Original input request dispatch (SLPS_255.59)
+===========================================
+
+Native implementation: input_routes.*, building on action_selection.*,
+input_permissions.* and special_requests.*. Source hash remains
+72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf.
+These functions queue requests; they do not execute a complete actor frame,
+start arbitrary animations or add playable specials to battle.command.
+
+149bc0 dispatch order
+--------------------
+If actor18c is nonzero, only ordinary14bf30 runs. Otherwise character24's
+nontransformed human/control36/37 branch copies feature62 into2444000,
+then14ce28 filters special results. Try, in order:14ca28 alternate route,
+14c510 supplemental(systemOnly),14c608 special cancel,14c7d0 special,
+14c510 supplemental(all),14c0d0 custom cancel,14c2d0 attack,14c3b0 chain,
+then14bf30 ordinary. An accepted caller stops dispatch.14ca28 can report
+handled without queuing a request; preserve that distinction.
+
+14ce28 changes only published special results, regardless of specialCount:
+transformed character1 clears24/13/16/17/22/23;23 clears10/5..9;
+24 clears17/4/6..11/16;25 copies boolean(slot3) to4, clears3, and clears2
+when unarmed. Nontransformed24 clears28/21..27;25 clears9/7/8.
+Partial motions, completion buffers and cancel flags remain intact.
+
+14ca28 flags200000: try special then alias fallback; always handled.
+flags800000: special cancel, special, constrained normal23/24 choice,
+attack,chain,ordinary; always handled. Other flags return false.
+1ec4c8/209840 increment timer23 BEFORE checking the alias table. Alias table0
+with feature9 or updated timer>=2a00 stops all six motion words and clears
+body104140, then chooses normal20/21/19/34/33/32 by features57/55/56/64/62.
+Non45 transformed actors force32 and set244800. The main request preserves18c.
+Otherwise non45 attack edges6/7/8 can queue alias19c/1a0/1a2 independently.
+Character45 skips that alias attack fallback. Preserve both request channels.
+
+14c0d0 custom cancellation
+-------------------------
+Requires system6 descriptor4==18, effective column5 and grounded actor.
+Stock system5 alone does not qualify. Timer31 window requires effective
+normal56/58/60; timer33>0 vetoes before reading/consuming the command.
+Otherwise human control tests raw pressed & NORMAL mapping[4], including
+game mode6. AIcontrol1 uses15ae30's bitB44000. Timer32 can enable normal
+or damage0..5; AI uses15aee0's B48000 and humans need no new edge here.
+
+The AI helpers clear their bit even on rejection, then require mode35 and
+the CONTROL OWNER's custom descriptor4==18. A set bit writes owner.normal26
+when owner raw state is normal56, otherwise29. Owner and requester can differ.
+Accepted systemNormal row0 queues main normal/18c1, clears timers31/32,
+sets24802000000 when timer31 was positive, and emits the original diagnostic.
+
+149980 forced requests
+----------------------
+An eligible KO queues damage30/31 and18c1. Unarmed character48 standing
+queues normal51 while preserving18c. First eligible rage1 standing visit
+sets2482; system1/custom6 descriptor8==32 also queues normal63. Non-rage1
+clears2482. Armed244200000 with standing/timer21==0 copies character to254,
+clears the bit and queues damage96/18c1; unarmed only clears the bit.
+
+Character16 special15 in raw damage16/damage9/normal54 can activate its
+auxiliary: nonzero byteF15 and134==0 write134=1,130=F15*7800+3c00 and queue
+action605+F15 via whole11d908 semantics. If already running that action,
+pending/frame/104 remain unchanged, while meter/active writes still happen.
+This branch returns false, so ordinary request dispatch can still run.
+
+Locked input14bb48
+-----------------
+Only battle state3 permits this route. Custom6 descriptor13==42 runs
+restricted14bf30, then14bba8 applies character11's400000 toggle. Inactive
+uses special9, active uses21. A successful toggle clears the original
+player's six latches and all63 completion buffers, then flips400000.
+It preserves recognized results and partial motions. This is a verified
+consumption call site, not a substitute for state-entry consumption.
+
+Evidence
+--------
+input_routes_validation.json:30,920 cases /14,541,122 original instructions.
+Whole14ce28:1,632;1ec4c8:2,304;209840:1,152;14c0d0:6,400;
+14ca28:6,144;149bc0:7,872;149980:5,096;14a1b8:1,728;14bb48:2,048.
+Counts include1,728 composed permission->forced->ordinary snapshots in
+1494f0 order, but do not claim whole1494f0. Both state channels, all timers,
+motion fields, auxiliary/character writes and both input owners are compared.
+Locked cases additionally compare all63 partial motions/buffers and12 latches.
+Original callees run normally, including initialized buffered libc logging.
+No callee is skipped. Reports pin the tested native probe executable.
+
+Sampling-to-request integration evidence is in input-lifecycle.txt.
+Full actor callbacks, state entry and actual move execution remain pending.

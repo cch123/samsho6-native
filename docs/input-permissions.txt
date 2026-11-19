@@ -1,0 +1,164 @@
+Original input permissions and special requests (SLPS_255.59)
+============================================================
+
+Native implementation: input_permissions.* and special_requests.*.
+The request dispatcher and sampling lifecycle now continue this layer in
+input-routes.txt and input-lifecycle.txt.
+This continues input-processing.txt and action-selection.txt. The live trial
+still uses TrialCommand. Passing these boundaries does not make all special
+moves playable: full actor scheduling, state-entry consumption and actual
+move callbacks remain separate integration dependencies.
+
+Source ELF SHA256:
+72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf
+extract_input_permissions.py pins the ELF and copies seven assets:51 air
+rectangles,51 target ranges,51 attack ranges,9 system records,96 cancel flags,
+five callback constants and13 gate constants. Manifest records original
+addresses, sizes and hashes. No gameplay thresholds were chosen by feel.
+
+Complete permission stage14a1b8
+------------------------------
+179e30 creates an actor context.179e38 denies flags23c&4c0. An allowed actor
+gets13 category words from179e68 and9 requirement words from17a150; otherwise
+all22 words are zero. These words are captured ONCE before filtering.
+14af48 filters31 normal results, then specialCount results beginning at the
+bound specialStart record. Accepted result words are preserved, even if not1.
+Rejected results become0. It does not reset partial motions or buffered input.
+
+14af48 checks record.condition high byte category, all nine required low flag
+bits, object availability when flags4 is present, then condition low byte.
+Earlier callbacks' writes are visible to later callbacks, while the original
+category/requirement snapshot stays unchanged. A callback may return false
+and still mutate the actor. Replacing this sequence with pure predicates
+or reevaluating all gates per command would change the original behavior.
+
+Finally, for each visited special slot, recognized!=0 invokes179968 and
+stores its boolean at input-owner+3a8. Rejected slots get0. Slots beyond
+specialCount stay intact. Count<=0 skips special work; the routine does not
+read input.enabled. Native CommandSlot.cancelAllowed names this field.
+Earlier notes called it consumed; that name was incorrect. Actual command
+buffer consumption is a different, still-unintegrated phase.
+
+State categories and required flags
+----------------------------------
+Categories0..8 gate ordinary movement/airborne states using23c100/10,
+raw194, timers8/27, vertical velocity5c, horizontal velocity50 and Y.
+Category3 accepts raw normal23 when timer8<=0; otherwise timer27>0 and raw
+normal0/1/2/9/10. Category5 uses vy>=0 and Y<=48. Category6 uses wrapping
+unsigned(vy+40000)<=80000, including both boundaries. Category7 uses vy<0;
+category8 uses vx!=0. Category9 ignores23c100, rejects airborne/raw attack36,
+and admits effective attack only below64. Categories10/11 use damage-table
+flags8/4, with raw normal54/55 also admitted by11. Category12 always false.
+Raw state194 and effective alias state must remain distinct.
+
+Requirements0/1 are armed/unarmed;2/7/8 true;4/5 flags23c200000/800000;
+6 rageState1/2. Requirement3 runs the complete1a3700 auxiliary dispatch:
+  character1/45: auxiliary state<6, distance to mirrored(X-50,Y+120)<24;
+  character4: auxiliary state<11, delta from mirrored(X-68) strictly(-32,32);
+  character16: byteF15!=0 and auxiliary flag134==0;
+  character19: auxiliary state<12 and Y<=0; clear auxiliary104100 BEFORE
+    testing delta from mirrored(X-40) strictly(-80,80);
+  character24: auxiliary12c outside19..23 and25..32 (24 is allowed);
+  character32: true;
+  character34: auxiliary state<12, mirrored(X-28) delta strictly(-32,32).
+Other keys false. State< comparisons are signed. Auxiliary actor+4 is a
+separate object, not the main body. Character19's write persists on a later
+horizontal rejection. Do not erase it by treating readiness as const.
+
+1a3b68 uses dx/dy subtraction, MULA/MADD and SQRT. ScalarFloat adds an
+integer-significand floor square root, with independent rational Python
+checks. Each operation rounds under the existing explicit finite model.
+This is not EE hardware SQRT/MUL accuracy. Strict probe mode still rejects
+inexact square roots; exact-square fixtures exercise that separate boundary.
+
+96 condition callbacks and object availability
+---------------------------------------------
+1798f0 dispatches through4eaee8. All96 entries plus unconditional255 exist.
+Callbacks cover system/rage/meter predicates, raw and effective states,
+contact/hit flags, timers, character bytes, auxiliary states and geometry.
+83..95 explicitly return false. Conditions0/1 inspect the FIRST matching
+registered object, not any later matching object.0 falls back to stage X
+when that first battle kind5 is unsuitable;1 has no such fallback.
+
+Condition16 truncates each air-grab WORLD boundary to an integer before
+comparison with the opponent's float coordinates, including mirrored bounds.
+Condition59 truncates absolute X distance and compares with the original
+attacker range plus target armed/unarmed range. Neither uses guessed boxes.
+
+Side effects:10 clears244400000;34 saves body action to body128;53 clears
+or sets24401000000;65 ALWAYS returns false but can set24404000000;74 emits
+a diagnostic and stores effective attack index-64 in body128. Native74
+publishes a typed diagnostic count; offline original verification executes
+the real libc logger using an initialized buffered FILE, with no call skips.
+
+179d10 scans48 own registered objects, only kind2. It rejects exact subtype
+matches;255 rejects any kind2. Groups254->4/5,253->18/19,252->24/25,
+251->33/34/62/63,250->42/43. Registration order and holes are retained.
+
+179968 cancel permission first rejects current special categories from
+168e00, except character32/state73 and48/state79. Then a nonzero original
+4ead68 condition flag allows; else record flag80 calls14d010 on timer4 and
+allows when its returned OLD value>0. The counter is decremented/clamped
+even on refusal, and each qualifying candidate performs its own decrement.
+This write was missing in the earlier port: its26,659-case report compared
+permission results without checking timers, and zero-delta fixtures masked
+the difference. The revised tests compare all35 timers and include1,920
+additional signed-delta/wrap/clamp cases. Do not restore a read-only test.
+Character22/action564 with23c100000 absent additionally allows slots outside
+7..9 relative to specialStart. Preserve this unsigned relative-index check.
+
+Special request callers
+-----------------------
+14c7d0 scans the precomputed specialPriority bytes, trying recognized slots.
+Raw duplicate attack64+slot is skipped except character15 slots8/10 and
+character30 slots17..19. flags2448 additionally requires cancelAllowed.
+An accepted character15 slot8/10 increments byteF14 with byte wraparound.
+Character23 slots17/18,19/20,13/14,15/16,24 set F1A bits1/2/4/8/16;
+slots5..10 also set244100. Character21 slots4..6 set24480. All accepted
+ordinary special requests clear24810, then set it only when the old effective
+state is attack<64. They queue table1/index64+slot and set18c=1, without
+turning or consuming a buffer. Raw duplicate checks precede these writes.
+
+Effective damage table2 delegates to14cd78, bypassing count, priority and
+cancel flags: character3 tries fixed slots22 then23; character4 tries16 then17.
+Other characters return false. This path queues the request without14c7d0's
+ordinary side effects.
+
+14c608 requires custom system6 descriptor14==44, body10820, and effective
+attack table1. Current first-category states reject. Current second-category
+states may target only first-category specials; other admitted current states
+can target either category. Those other states require index>=64, except
+character32/action599. It scans priority, skips raw duplicates, and queues
+the first admitted special. This caller preserves24810 and does not turn.
+
+Evidence and limits
+-------------------
+input_permissions_validation.json:45,205 cases /6,766,541 instructions:
+40,874 whole1798f0,2,304 whole179d10,2,027 whole14af48. All96 callbacks,
+both outcomes for nonconstant0..82 except deliberately-false65, every shipped
+31 normal/972 special record, multi-record ordering, first-object and geometry
+boundaries. Supplied category/requirement snapshots at this boundary.
+
+permission_stage_validation.json:28,579 cases /13,291,263 instructions:
+7,780 whole179e68,3,586 whole17a150,9,984 whole179968,2,240 whole14a1b8.
+Remaining4,989 are explicitly1a3b98 SQRT/return-tail checks, not whole1a3b68.
+Whole auxiliary functions are reached normally from requirements/stage calls.
+18,033 exact-finite cases;10,546 explicitly opt into the finite model.
+All48 explicit binding blocks andsystems0..8, denied/empty/unused slots,
+input-owner byte preservation and native command-progress preservation pass.
+
+special_requests_validation.json:22,542 cases /6,991,636 instructions:
+11,136 whole14c7d0,11,086 whole14c608,320 whole14cd78. All51 character
+keys and32 candidate slots, all request outcomes, priority fall-through,
+alias/raw disagreements and byte/flag side effects. Original input and body
+memory remain unchanged. Character helper coverage is not playable roster
+coverage. Reports pin the exact tested native executable.
+
+The custom-system cancel14c0d0, transformed14ca28/14ce28, forced149980,
+ordinary149bc0 and locked14bb48 dispatchers are now ported; see input-routes.txt.
+The earlier label "system5 cancel" was misleading:14c0d0 requires custom
+system6 descriptor4==18, not stock system5. Human sampling gates/dynamic
+bindings and input clearing are now covered in input-lifecycle.txt.
+Next:complete actor scheduling and actual consume/entry order, then connect
+the full input path to the live battle. Keep1:1 as the goal; do not label
+this verified library layer a finished game or invent missing move behavior.

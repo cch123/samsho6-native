@@ -1,4 +1,5 @@
 #pragma once
+#include <utility>
 #include "actor_state.hpp"
 #include "game_random.hpp"
 #include "input_bindings.hpp"
@@ -32,6 +33,11 @@ public:
     DownedPhase phase=DownedPhase::Inactive;
     //A supplied queue keeps1493c0's actor action separate from149918's
     //body request. Legacy standalone playback commits that boundary here.
+    // 4e8c50 row type of a fall state: 0 ordinary, 1 backward, 2 single
+    // bounce (same steps as 0, own callbacks), 3 wall, 4 launch; -1 none.
+    static int fallType(int state);
+    // The first/second landing callbacks of the fall's type (171418 dispatch).
+    static std::pair<uint32_t,uint32_t> landingCallbacks(int state);
     static bool supportsFall(int state);
     static bool backwardFall(int state);
     static bool landsOnBack(int state);

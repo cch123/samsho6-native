@@ -76,12 +76,12 @@ def main():
         folder=Path(temp);lib=folder/'runtime.a';shutil.copy2(LIB,lib);shutil.copy2(viewer,folder/'viewer')
         compile_driver(folder,'queue',CAPTURE_DRIVER,lib);compile_driver(folder,'stage',STAGE_DRIVER,lib)
         sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
-        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
                         HERE/'sdl_slash_input_test.cpp',lib,*sdl,'-o',folder/'keys'],check=True)
         if not args.development:
             from validate_versus_gamepads import Original
             original=Original()
-            subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+            subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
                             HERE/'sdl_gamepad_input_test.cpp',lib,*sdl,'-o',folder/'pads'],check=True)
         for side in (n-1 for n in args.seats):
             if not args.moves:verify_rematch(folder,side,'ten',assets)

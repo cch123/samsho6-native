@@ -21,7 +21,7 @@
 
 从选人开始
 双击 /Users/xargin/Projects/samsho6-native/select.command。两个玩家分别移动光标并按攻击键确定角色和服色，再分别选剑质。初始光标往下一格是霸王丸。娜可露露在初始位置横移两列、上移两格处，P1 向右移，P2 向左移；等每次翻页结束再走下一列。从 select.command 进入时由 P2 选道具和场地，从标题进入时由确认 VS 的另一席负责，赛后直接重选则由败方负责。默认选「アイテムなし」。想开道具就向右切到「アイテムあり」并确认，场地光标从随机格开始。向右一次到场地 0，再向右一次到场地 1（雪村）。每次等场地图切稳再按下一次，最后确认。对阵介绍中，面键可快进，Start 可跳过。
-选人页保留日版出厂 42 格（40 位指定人物及两个随机格），有头像、姓名报幕、剑质说明、场地图与选人音乐。实战已接入霸王丸、娜可露露、莉姆露露、服部半藏和真镜名弥娜（部分招式仍在移植，见下文）。双方可选同一角色，娜可露露的鹰、莉姆露露的冰精灵和弥娜的 Chample 分别跟随自己的主人。其他人物和其余八个可选场地仍在开发，提示出现后可按攻击键重新选人。两页选择、对阵介绍及移门见 character_select_validation.json、character-select-art-validation.json、spirit-select-art-validation.json、versus_faceoff_validation.json 和 vs-curtain-validation.json。进入、重选和再战的窗口回放见 select-session-validation.json。选人进入对阵时，白色渐变的起止和停留已核对；中间亮度目前在合成画面上处理，与 PS2 分别调整色盘和顶点色的做法仍有差异。
+选人页使用原版全解锁画面：8 列 × 6 行共 48 格，包括 Kim、Rasetsu Galford、紫色娜可露露、Poppy、Shikuru & Mamahaha、Chample 和 PakuPaku，随机格从 47 名人物中抽取；按 Start 切换到黑子页，确认即选黑子（Kuroko）。全部 49 名人物均已接入实战（部分招式与边缘情形仍在移植，见下文）。双方可选同一角色，各自的同伴（鹰、冰精灵、Chample、狼、小狗、人偶、纸牌及环绕物等）分别跟随自己的主人。其余八个可选场地仍在开发，提示出现后可按攻击键重新选人。两页选择、对阵介绍及移门见 character_select_validation.json、character-select-art-validation.json、spirit-select-art-validation.json、versus_faceoff_validation.json 和 vs-curtain-validation.json。进入、重选和再战的窗口回放见 select-session-validation.json。选人进入对阵时，白色渐变的起止和停留已核对；中间亮度目前在合成画面上处理，与 PS2 分别调整色盘和顶点色的做法仍有差异。
 
 场地道具（双人对战）
 开启「アイテムあり」后，飞脚会从场边跑入并抛下道具。道具落地后，双方都能走到旁边同时按轻斩＋踢拾取。P1 是 J＋M，P2 是 O＋右方括号，手柄可按 L2。两人同时争抢时，拾取动作完成后才确定归属。
@@ -48,6 +48,100 @@
 • 斩剑质满怒时 236＋轻中可使出武器破坏技：第一箭命中后对手僵直，弥娜接着射出第二箭，命中后打落对手的武器并将其击倒。
 蓄力 4〜6＋按键、623＋斩的另一组弓箭必杀和 Chample 的道具相关指令只属于原版的另一种出招模式，普通模式下原版会清除这些指令（14ce28），出厂 VS 设定下不开放。各剑质专属的秘奥义尚未逐项实测；Chample 攻击和跳射回收类的受击演出（原版 B 表第 3、4 行）只在另一种出招模式出现，仍未移植。
 资源、绘制、碰撞与声音对照见 mina_resources_validation.json。Chample 的逐帧回调与原版 1fc750 的 1,920 组对照见 chample-validation.json。弓箭的生成与逐帧回调对照见 mina-projectile-validation.json，攻击回调和通用招式脚本解释器的逐访问对照见 mina-special-validation.json。
+
+罗刹丸（羅刹丸，资源 18）
+双击 select.command。从初始光标向后翻两列（P1 按 A 两次，P2 按 → 两次），翻页结束后再下移一格（P1 按 S，P2 按 ↓）。
+以下按面向右输入，换边后左右对调。轻、中、重斩对应 P1 的 J、U、L，踢为 M。
+• 623＋踢；623＋斩；236＋轻／中／重斩（41236 亦可）；236＋踢；214＋踢（自损少量体力并增加怒气，原版脚本事件 28）。
+• 236＋轻中、236＋中重为秘奥义类指令，电脑对战中已出现并逐访问对照，公开输入尚未触发。
+• 投技命中后由受击方按原版 B 表第 3、4 号两行脚本推进（带等待，原版 165cc0 逐帧处理），包括特效、镜头指令、短暂停顿和震屏。
+攻击回调逐访问对照见 fighter_18_special_validation.json，受击方入口 490 组见 victim_rows_18_validation.json，实战受击逐访问见 victim_visits_18_validation.json，资源见 fighter_18_resources_validation.json，缺口探测见 fighter_18_gaps.json。
+• 236＋斩放出旋风（描述符 0x2d），命中后把对手卷起再摔落（B 表第 0〜2 号，与霸王丸的旋风同形式）。
+旋风的生成与逐帧回调对照见 fighter_18_projectile_validation.json，卷起过程逐帧对照见 whirlwind_victim_18_validation.json。
+
+骸罗（花諷院骸羅，资源 10）
+双击 select.command。从初始光标向后翻三列（P1 按 A 三次，P2 按 → 三次），翻页结束后下移一格（P1 按 S，P2 按 ↓）。
+• 必杀全部由通用招式脚本驱动；近身投技为原版专用的连打投（1f3cc8 起）：攻击方连按轻、中、重斩和踢凑满一组即加快下一击，打满八组后摔出，撞到身后的画面边缘时震屏。
+• 目前限制：电脑操控骸罗时会选用通用普通状态 36（原版 169e00，尚未移植），此时对局按原版行为提示后回到选人；玩家操作不会进入该状态。
+攻击回调逐访问对照见 fighter_10_special_validation.json，受击方（含连打投各阶段）见 victim_rows_10_validation.json 与 victim_visits_10_validation.json，资源见 fighter_10_resources_validation.json。
+
+王虎（ワンフー，资源 38）
+双击 select.command。从初始光标向前翻一列（P1 按 D 一次，P2 按 ← 一次），翻页结束后下移一格（P1 按 S，P2 按 ↓）。
+• 必杀由通用招式脚本驱动；投掷武器的必杀（原版描述符 0x8b..0x8e，第 9〜11 组）会让王虎变为空手，武器落地后成为普通掉落武器，走过去按原版操作捡回。
+• 投技命中后受击方按原版 B 表第 0 号四行脚本推进，包括地面冲击效果（世界效果 29）、脚本伤害，以及王虎接着自动发动的追击（结束操作 27 → 他自己的脚本 64）。
+• 部分招式持续时会按原版自损少量体力并增加怒气（行类型 0x32）。
+对照：飞行道具 fighter_38_projectile_validation.json（生成 114 次、逐帧 9,123 次），攻击回调 fighter_38_special_validation.json，受击 victim_rows_38_validation.json 与 victim_visits_38_validation.json，资源 fighter_38_resources_validation.json。
+
+安德鲁（アンドリュー，资源 30）
+双击 select.command。初始光标上移一格（P1 按 W，P2 按 ↑）。
+• 必杀由通用招式脚本驱动；射击类招式消耗弹数，命中特定投技会补充弹数，弹数以头顶图标显示（原版 16ea00/16ec48）。
+• 扔出的道具在 78 范围内会被自动接回（行类型 0x24）。
+• 投技命中后受击方按原版 B 表多行脚本推进，落地阶段使用通用的 174158 回调。
+对照：攻击回调 fighter_30_special_validation.json，飞行道具 fighter_30_projectile_validation.json，受击 victim_rows_30_validation.json 与 victim_visits_30_validation.json，资源 fighter_30_resources_validation.json。弹数图标尚未与原版逐帧对照。
+
+橘右京（资源 6）
+双击 select.command。从初始光标向前翻两列（P1 按 D 两次，P2 按 ← 两次），翻页结束后下移一格（P1 按 S，P2 按 ↓）。
+• 必杀由通用招式脚本驱动；另有一招不经脚本、由原版专用例程处理（选择号 12：先出 ACT 0x246，命中后接 ACT 0x247）。
+对照：攻击回调 fighter_06_special_validation.json（含专用例程 1,500 余次），受击 victim_rows_06_validation.json 与 victim_visits_06_validation.json，资源 fighter_06_resources_validation.json。
+
+破沙羅（资源 8）
+双击 select.command。向后翻3列（P1 按 A 3 次，P2 按 → 3 次），翻页结束后上移1格（P1 按 W，P2 按 ↑）。
+• 选择号 6：留下影子（16c4e0，任务为空函数 1f2c68），本体在计时器 23 期间按摇杆方向以 ±30 移动，结束时挂起影子并以 174158 落地；选择号 2：跃起，接触后按摇杆方向接跳跃。
+• 飞行道具组 8（回旋返回的武器 16f088，按接住 ACT 查 4e87d8 目标偏移）、组 15（先漂移后追踪的 16f510，命中时三段爆发）、脚本生成模式 4（16d0e0 及其后续对象 16d1a0/16d270）、脚本结束码 7–13、入口事件 18/19、受击行类型 0x24/0x26 均为本次随之移植的通用机制。
+对照：fighter_08_special_validation.json、fighter_08_projectile_validation.json、victim_rows_08_validation.json、victim_visits_08_validation.json、fighter_08_resources_validation.json。
+
+柳生十兵衛（资源 12）
+双击 select.command。向前翻3列（P1 按 D 3 次，P2 按 ← 3 次），翻页结束后下移1格（P1 按 S，P2 按 ↓）。
+• 选择号 0–2 的必杀不经脚本：按力度查原版 ACT 表（58b3e0 起 6 张表），被打中或命中（本体 104&0xc0000）时转入第二段并以落地收尾。当身架势（攻击状态 73–75）可接住对手（空中/地面各有条件），对手进入受击状态 96–98；状态 79 只记录弹刀。
+对照：攻击回调 fighter_12_special_validation.json，飞行道具 fighter_12_projectile_validation.json，受击 victim_rows_12_validation.json 与 victim_visits_12_validation.json，资源 fighter_12_resources_validation.json。
+
+斬紅郎（资源 13）
+双击 select.command。向后翻1列（P1 按 A 1 次，P2 按 → 1 次），翻页结束后下移1格（P1 按 S，P2 按 ↓）。
+• 选择号 4 是蓄力技：按住的按键决定计时器 22 的累加，达到 0x3c00/0x7800/0xb400 依次升级（ACT 0x241/0x242/0x245），松手即放出。当身状态 73 只接地面攻击。他的重击常造成倒地类型 2（伤害状态 68）。
+对照：攻击回调 fighter_13_special_validation.json，飞行道具 fighter_13_projectile_validation.json，受击 victim_rows_13_validation.json 与 victim_visits_13_validation.json，资源 fighter_13_resources_validation.json。
+
+シャルロット（资源 14）
+双击 select.command。向前翻3列（P1 按 D 3 次，P2 按 ← 3 次），翻页结束后下移2格（P1 按 S，P2 按 ↓）。
+• 选择号 10–12 为蓄力射击：保持期间松开对应按键或动作结束即发射（1f5860 飞行道具，命中或被击时转 ACT 0x21a）。
+对照：攻击回调 fighter_14_special_validation.json，飞行道具 fighter_14_projectile_validation.json，受击 victim_rows_14_validation.json 与 victim_visits_14_validation.json，资源 fighter_14_resources_validation.json。
+
+徳川慶寅（资源 22）
+双击 select.command。初始光标即是。
+• 选择号 7–9 为三段连斩（ACT 0x22c/0x22f/0x232 起，按力度偏移），第三段首次命中时生成接触特效。脚本行类型 0x1e 的接触特效同样移植。
+对照：攻击回调 fighter_22_special_validation.json，飞行道具 fighter_22_projectile_validation.json，受击 victim_rows_22_validation.json 与 victim_visits_22_validation.json，资源 fighter_22_resources_validation.json。
+
+雲飛（资源 23）
+双击 select.command。向前翻3列（P1 按 D 3 次，P2 按 ← 3 次），翻页结束后上移1格（P1 按 W，P2 按 ↑）。
+• 选择号 4 直接抓取（对手当场进入受击状态 96，与空中投相同的立即状态进入）；0x18 为下落攻击，命中时弹起并按摇杆方向选择跳跃；0x1a 为下落特效技。处于 23c&0x100000 时脚本行 8–11 强制转向。
+对照：攻击回调 fighter_23_special_validation.json，飞行道具 fighter_23_projectile_validation.json，受击 victim_rows_23_validation.json 与 victim_visits_23_validation.json，资源 fighter_23_resources_validation.json。
+
+腐れ外道（资源 25）
+双击 select.command。向前翻3列（P1 按 D 3 次，P2 按 ← 3 次）。
+• 选择号 3/4 由 1fe1b8 生成飞行物；描述符飞行道具 0x32 带投技类别，命中玩家时由 1566e8 把对手交给腐れ外道的受击脚本（该对象成为受害方子对象，含接管、子对象等待与结束操作）。前冲为单步（168bf8 位 4）。
+对照：攻击回调 fighter_25_special_validation.json，飞行道具 fighter_25_projectile_validation.json，受击 victim_rows_25_validation.json 与 victim_visits_25_validation.json，资源 fighter_25_resources_validation.json。
+
+夢路（资源 28）
+双击 select.command。向后翻2列（P1 按 A 2 次，P2 按 → 2 次）。
+• 选择号 9/10 不经脚本：保持期间按键（特征 6/7）决定后续 ACT。
+对照：攻击回调 fighter_28_special_validation.json，飞行道具 fighter_28_projectile_validation.json，受击 victim_rows_28_validation.json 与 victim_visits_28_validation.json，资源 fighter_28_resources_validation.json。
+
+我旺（兇國日輪守我旺，资源 26）
+双击 select.command。从初始光标向后翻一列（P1 按 A 一次，P2 按 → 一次），翻页结束后再下移两格（P1 按 S、S，P2 按 ↓、↓）。
+以下按面向右输入，换边后左右对调。轻、中、重斩对应 P1 的 J、U、L，踢为 M。
+• 214＋踢；623＋轻／中／重斩；236＋轻／中／重斩；63214＋轻／中／重斩。
+• 236＋轻斩命中后接 236＋中斩，再命中后接 236＋重斩，为原版按命中条件（305/306）派生的三段连续技。
+• 贴近对手 623＋踢为投技，由受击方按原版 B 表第 0 行与我旺一起播放投出动作。
+• 236＋轻中（怒剑质以外、怒气状态）与 236＋中重（真、剑剑质）为秘奥义类指令，尚未用公开输入实测。
+我旺的招式全部由通用招式脚本解释器 163610 驱动，没有角色专属回调。攻击回调的逐访问对照见 fighter_26_special_validation.json（双席公开输入及与全部已接入角色的电脑对战，共约两万次访问），受击方 1fe368 的 490 组入口对照见 victim_rows_26_validation.json，资源、绘制、碰撞与声音见 fighter_26_resources_validation.json，全部可输入指令与电脑对战的缺口探测见 fighter_26_gaps.json。
+
+地震（アースクエイク，资源 36）
+双击 select.command。从初始光标向前翻一列（P1 按 D 一次，P2 按 ← 一次），翻页结束后再下移两格（P1 按 S、S，P2 按 ↓、↓）。
+以下按面向右输入，换边后左右对调。轻、中、重斩对应 P1 的 J、U、L，踢为 M。
+• 214＋轻／中／重斩；236＋轻／中／重斩；623＋踢；跳跃中 ↓＋轻／中／重斩。
+• 6321＋轻斩＋踢：跳到对手上方后落下（原版脚本事件 47）。
+• 236＋轻中（怒气状态）可在空中按前后操控漂移（脚本行类型 5）；目前只在电脑对战中出现过，已逐访问对照。236＋中重尚未实测。
+• 挑衅（后＋E）播放 ACT 150，最后一帧以完成码 0 结束；这一结束方式按 120c78 接受，尚未单独对照原版。
+攻击回调的逐访问对照见 fighter_36_special_validation.json，受击方 205e40 的 490 组入口对照（含镜头指令队列）见 victim_rows_36_validation.json，资源、绘制、碰撞与声音见 fighter_36_resources_validation.json，缺口探测见 fighter_36_gaps.json。
 
 莉姆露露（リムルル）
 双击 select.command。默认光标向上并翻一列、再向上并翻一列、最后只翻一列，就到莉姆露露。翻列方向为 P1 向左、P2 向右；也可以先横移三列，再上移两格。等每次翻页结束再继续移动。
@@ -473,3 +567,10 @@ work/ss6/scenarios/match-00.txt / match-11.txt / match-010.txt保存完整控制
 补全route7/8副作用、异角色登场、声音与舞台，
 以及全部角色、招式和系统。
 保持所有机制1:1目标；当前可运行的有限对战流程不代表完成整款游戏。
+
+Character select (2026-11-21): the native port always presents the fully unlocked original
+select screen: 8 columns x 6 rows (48 cells) including Kim, Rasetsu Galford, Purple Nakoruru,
+Poppy, Shikuru & Mamahaha, Chample and PakuPaku, a 47-entry random pool, and Start toggles the
+Kuroko view (confirm selects Kuroko). All 49 fighters (0..48) now start and finish matches;
+probe_fighter_gaps.py completes 310 of 310 runs for every fighter 0..48. Remaining known gaps
+are individual moves and edge cases listed in docs/development-plan.txt.

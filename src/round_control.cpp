@@ -124,7 +124,7 @@ void RoundControl::enterEnding(BattleRoundState& b,const std::array<RoundPlayerR
                                ScheduledOpening& captions,const MatchEndingRules& results,SoundSelection* sound) {
     if(b.gameMode!=3||b.matchEnd.profileActive123a168)
         throw std::runtime_error("Round end requires local versus with profile recording disabled");
-    for(const auto& p:players)if(!playableFighter(p.actor.character)||p.config.system>5)
+    for(const auto& p:players)if(!playableFighter(p.actor.character)||(p.config.system>5&&p.config.system!=8))
         throw std::runtime_error("Round end requires a supported fighter and spirit");
     BattleGauges::stop(b,players);
     b.match.recordRound({players[0].actor.fieldA30,players[1].actor.fieldA30},
@@ -179,6 +179,7 @@ void RoundControl::ending(BattleRoundState& b,const std::array<RoundPlayerRef,2>
                 // 1452b8 releases the rider before the victory request can succeed.
                 p.body.timeline.stopMotion();a.pendingTable=0;a.pendingIndex=32;
             }
+            else if(decision==VictoryRequest::Ride){a.pendingTable=1;a.pendingIndex=0x46;a.request18c=1;}
             else if(decision==VictoryRequest::Queue) {
                 GroundStateRuntime::captureBody(p.body,a);a.opponentX=players[1-i].body.timeline.motion().x;
                 a.faceOpponent();p.body.timeline.setObjectFlags(a.bodyFlags38,c.flags104,c.flags108);

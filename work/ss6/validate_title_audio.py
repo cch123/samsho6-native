@@ -150,7 +150,7 @@ def main():
         tmp = Path(td)
         src,exe,pcm = tmp/'title.cpp',tmp/'title',tmp/'title.pcm'
         src.write_text(CPP)
-        subprocess.run(['c++','-std=c++20','-O2','-I',SOURCE,src,SOURCE/'combat_audio.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',SOURCE,src,SOURCE/'combat_audio.cpp',
                         SOURCE/'combat_music.cpp',SOURCE/'combat_sound_bank.cpp','-o',exe],check=True)
         for variant in (0,1):
             expected,report = reference_mix(iso,variant,assets)

@@ -70,7 +70,7 @@ def main():
                     lines.append(' '.join(map(str,[flags,state,hp,int(final),*o,*owner])))
     with tempfile.TemporaryDirectory() as tmp:
         src=Path(tmp)/'probe.cpp';src.write_text(DRIVER);exe=src.with_suffix('')
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,ROOT/'src/mamahaha.cpp',ROOT/'src/auxiliary_objects.cpp',ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,ROOT/'src/mamahaha.cpp',ROOT/'src/auxiliary_objects.cpp',ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         out=subprocess.run([exe,ASSETS],input='\n'.join(lines)+'\n',capture_output=True,text=True,check=True)
         for lab,actual,ref in zip(labels,out.stdout.splitlines(),expect,strict=True):
             row=list(map(int,actual.split()));assert row==ref,(lab,[(hex(j*4),hex(v),hex(w)) for j,(v,w) in enumerate(zip(row,ref)) if v!=w])

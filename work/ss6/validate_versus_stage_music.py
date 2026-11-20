@@ -78,7 +78,7 @@ def main():
     rounds=original_round_calls()
     with tempfile.TemporaryDirectory() as td:
         tmp=Path(td);source=tmp/'compare.cpp';source.write_text(CPP)
-        subprocess.run(['c++','-std=c++20','-O2','-I',SOURCE,source,*(SOURCE/s for s in
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',SOURCE,source,*(SOURCE/s for s in
                         ('combat_audio.cpp','combat_music.cpp','combat_sound_bank.cpp')),'-o',tmp/'mixer'],check=True)
         with ProcessPoolExecutor(max_workers=opt.workers) as pool:
             cases=list(pool.map(stage_case,[(tmp,opt.assets,stage) for stage in range(10)]))

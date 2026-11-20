@@ -8,7 +8,8 @@ FIELDS=[0x24,0x28,0x2c,0xc0,0x3c,0x38,0x104,0x108,0xc4,0xfe,*range(0x4c,0x64,4),
 
 def main(fall_state=64,probe=BINARY,scenarios=None):
  p,a,o,b=fixture();commands=[];expected=[];instructions=0;traces=[];dusts=0;float_logs=0
- callbacks={0:0,0x1715b0:1,0x171640:2,0x170cd8:4,0x1706c0:5,0x170758:6,0x170de8:7,0x170ef8:8}
+ # Type 2 (state 68) runs the same steps as type 0 under its own callbacks 1719a8/171a38.
+ callbacks={0:0,0x1715b0:1,0x171640:2,0x1719a8:1,0x171a38:2,0x170cd8:4,0x1706c0:5,0x170758:6,0x170de8:7,0x170ef8:8}
  def original(fn,args=()):
   nonlocal instructions
   v,n=p.run(fn,[signed(v&0xffffffff,32) for v in args],limit=500000);instructions+=n;return v
@@ -129,6 +130,10 @@ def main(fall_state=64,probe=BINARY,scenarios=None):
  report=dict(status='passed',traces=traces,states=len(expected),selector_cases=selector_cases,original_instructions=instructions,whole_first_landing_effects=dusts,float_formatted_logs=float_logs,
   native_sha256=hashlib.sha256(BINARY.read_bytes()).hexdigest(),
   scope='Whole171418 variant2,1715b0 INCLUDING real170fa0/1242c0/124620 effect allocation,171640,169a50 case5,170c60/170cd8/170de8/170ef8,170690/1706c0/1706d8/170758,16fd90 and object wrappers. Initialized resident effect/task pools and cached libc Bigint/FILE; no patched/skipped callees. Both armed states/mirrors/deltas128/256/512,system8 delayed get-up including timeout health request and KO hold. Finite FP model,not hardware proof. Upstream AI/special recovery predicates and full state-entry/contact scheduler excluded.')
- (ROOT/'outputs/ss6-feasibility/knockdown_validation.json').write_text(json.dumps(report,indent=2)+'\n')
+ name='knockdown_validation.json' if fall_state==64 else f'knockdown_{fall_state}_validation.json'
+ report['fall_state']=fall_state
+ (ROOT/'outputs/ss6-feasibility'/name).write_text(json.dumps(report,indent=2)+'\n')
  print(json.dumps({k:len(v) if k=='traces' else v for k,v in report.items()},indent=2))
-if __name__=='__main__':main()
+if __name__=='__main__':
+ import sys
+ main(int(sys.argv[1]) if len(sys.argv)>1 else 64)

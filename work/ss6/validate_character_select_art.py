@@ -24,8 +24,10 @@ int main(int argc,char**argv){
     std::vector<uint8_t> pixels(640*480*4);
     while(std::cin>>state.drawFrame>>state.drawRemaining){
         for(auto& seat:state.seats){
-            std::cin>>seat.cell>>seat.drawPhase>>seat.drawCount>>seat.controls>>seat.selected;
-            seat.character=state.roster.at(seat.cell);
+            int kuroko;
+            std::cin>>seat.cell>>seat.drawPhase>>seat.drawCount>>seat.controls>>seat.selected>>kuroko;
+            seat.kurokoFaces=kuroko>0;seat.kurokoColumns=kuroko;
+            seat.character=seat.kurokoFaces&&state.kurokoCell(unsigned(&seat-state.seats.data()),seat.cell)?48:state.roster.at(seat.cell);
         }
         art.paint(state,pixels);
         std::cout.write(reinterpret_cast<const char*>(pixels.data()),pixels.size()).flush();
@@ -77,35 +79,43 @@ def main():
         (7,'bup_00',512,False,256),(8,'bup_01',512,False,256)]})
     cases=[]
     def add(t,c,n,k=0,s=0):
-        cases.append((t,1800-t,(c,n,t,k,0),((c+7)%42,n,t,s,1)))
+        cases.append((t,1800-t,(c,n,t,k,0),((c+7)%48,n,t,s,1)))
     for t in range(0,60,3):add(t,2,1)
-    for cell in range(42):
+    for cell in range(48):
         for n,t in [(2,83+cell),(3,cell%10),(4,cell%10),(5,cell%15),(6,cell%10)]:add(t,cell,n)
     for n in (7,8,9,10,11):
-        for t in range(15 if n!=7 else 6):add(t,(t+3)%42,n)
+        for t in range(15 if n!=7 else 6):add(t,(t+3)%48,n)
     for c in (2,3,12,36):add(32,c,2,1,4)
     # Both slots can hold any roster portrait. Populate their actual source
-    # CLUTs and compare all named confirmations, including the random-only 42.
-    roster=[p.read(0x4c82a8+4*i,4) for i in range(42)]
-    portraits={i:upload(p,f'bup_{i:02}',512,False,256) for i in (*range(40),42)}
-    for cell,next_cell in zip(range(42),list(range(1,42))+[0]):
+    # CLUTs and compare all named confirmations of the unlocked grid.
+    roster=[p.read(0x4c82a8+4*i,4) for i in range(48)]
+    assert 53 in roster and 42 in roster and 40 in roster
+    portraits={i:upload(p,f'bup_{i:02}',512,False,256) for i in (*range(43),44,45,46,47,48)}
+    for cell,next_cell in zip(range(48),list(range(1,48))+[0]):
         portraits_here=[42 if roster[i]==53 else roster[i] for i in (cell,next_cell)]
         cases.append((84,1716,(cell,8,8,0,portraits_here[0]),(next_cell,8,8,0,portraits_here[1])))
+    # Kuroko view (12db80): face 0x31 for the first n columns from the cursor's column.
+    for n,cell,ph,t in [(1,2,2,30),(3,9,2,41),(8,40,2,55),(8,41,2,70),(5,47,3,4),(8,13,5,7)]:
+        cases.append((90+n,1700,(cell,ph,t,0,48,n),((cell+11)%48,2,t,0,0,0)))
     with tempfile.TemporaryDirectory() as temp:
         d=Path(temp);src=d/'driver.cpp';src.write_text(DRIVER);exe=d/'driver'
-        subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',src,ROOT/'src/character_select_art.cpp',
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',src,ROOT/'src/character_select_art.cpp',
                         ROOT/'src/versus_result_art.cpp','-o',exe],check=True)
         proc=subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE);count=0
         try:
             for frame,remain,p0,p1 in cases:
-                for side,(c,ph,t,key,char) in enumerate((p0,p1)):p.write(0x4c82a0+4*side,c,4)
+                p0=tuple(p0)+(0,)*(6-len(p0));p1=tuple(p1)+(0,)*(6-len(p1))
+                for side,(c,ph,t,key,char,kn) in enumerate((p0,p1)):
+                    p.write(0x4c82a0+4*side,c,4)
+                    for i in range(48):  # face[seat]: identity, or 0x31 over the Kuroko columns
+                        p.write(0x4c8370+200*side+4*i,0x31 if kn and (i//6-c//6)%8<kn else i,4)
                 atlases[7]=portraits[p0[4]];atlases[8]=portraits[p1[4]]
                 p.write(0x4c8280,0,4);p.write(0x4c8288,remain,4);p.run(0x114e80);q=[]
-                for side,(c,ph,t,key,char) in enumerate((p0,p1)):
+                for side,(c,ph,t,key,char,kn) in enumerate((p0,p1)):
                     q+=calls(p,0x12a418,side,ph,t,int(ph in (2,5)),key)[0]
                 q+=calls(p,0x135438,frame)[0];q+=calls(p,0x128a68)[0];count+=len(q)
                 expected=render(q,atlases)
-                proc.stdin.write((' '.join(map(str,(frame,remain,*p0,*p1)))+'\n').encode());proc.stdin.flush()
+                proc.stdin.write((' '.join(map(str,(frame,remain,*p0[:5],p0[5],*p1[:5],p1[5])))+'\n').encode());proc.stdin.flush()
                 got=np.frombuffer(proc.stdout.read(expected.size),np.uint8).reshape(expected.shape)
                 if not np.array_equal(got,expected):
                     ys,xs=np.where(np.any(got!=expected,axis=2));x,y=xs[0],ys[0]
@@ -116,7 +126,7 @@ def main():
         finally:proc.stdin.close();proc.wait()
         assert proc.returncode==0
     report=dict(status='passed',original_sha256=ORIGINAL,frames=len(cases),confirmed_portraits=len(portraits),original_quads=count,all_rgba_pixels=640*480*len(cases),
-                scope='Factory two-seat character screen, 42 real roster cells, entrance, motion, cursor pulses, confirm, Japanese names, original CLUTs, both dimensional portrait panels, animated scrolling backdrop and countdown. Native display compared to original geometry; no GS hardware or BIOS.')
+                scope='Fully unlocked two-seat character screen (unlock bytes 40..48 = 0): 48 cells in 8 columns, Kuroko Start view, entrance, motion, cursor pulses, confirm, Japanese names, original CLUTs, both dimensional portrait panels, animated scrolling backdrop and countdown. Native display compared to original geometry; no GS hardware or BIOS.')
     (OUT/'character-select-art-validation.json').write_text(json.dumps(report,indent=2)+'\n');print(report)
 
 if __name__=='__main__':main()

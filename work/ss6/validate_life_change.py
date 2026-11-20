@@ -44,7 +44,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         driver, exe = Path(temp)/'probe.cpp', Path(temp)/'probe'
         driver.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',driver,
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',driver,
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         raw = '\n'.join(' '.join(map(str,row)) for row in rows)
         actual = subprocess.run([exe],input=raw,text=True,capture_output=True,check=True)

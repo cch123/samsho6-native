@@ -61,7 +61,7 @@ def main():
  assert digest(ELF)==PIN
  with tempfile.TemporaryDirectory() as td:
     driver=Path(td)/'probe.cpp';exe=Path(td)/'probe';driver.write_text(DRIVER)
-    subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',driver,ROOT/'src/cpu_execution.cpp',ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
+    subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',driver,ROOT/'src/cpu_execution.cpp',ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
     for side in range(2):
         rows,wants=cases(side)
         result=subprocess.run([exe,ASSETS],input=''.join(' '.join(map(str,row))+'\n' for row in rows),text=True,capture_output=True,check=True)

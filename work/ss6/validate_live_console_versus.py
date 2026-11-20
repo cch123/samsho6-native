@@ -90,7 +90,7 @@ def validate():
         identity=digest(viewer)
         sdl=shlex.split(subprocess.check_output(['pkg-config','--cflags','--libs','sdl3'],text=True))
         source=tmp/'backdrop.cpp';source.write_text(BACKDROP_DRIVER);backdrop=tmp/'backdrop'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',source,BUILD/'libss6-runtime.a',*sdl,'-o',backdrop],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',source,BUILD/'libss6-runtime.a',*sdl,'-o',backdrop],check=True)
         first,r=first_menu([],winning_inputs(0))
         assert r[33:37]==['1','0','0','1'] and r[12]=='2' and r[22]=='0'
         pictures=compare_menu_art(tmp,first,viewer,backdrop)
@@ -129,7 +129,7 @@ def validate():
         assert rows[0][24]=='1'  # first rendered update is already at the menu
         seq=tmp/'controls';seq.write_text('\n'.join(steps+['KR+ KR- N1'])+'\n')
         harness=tmp/'pads'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',
                         BUILD/'libss6-runtime.a',*sdl,'-o',harness],check=True)
         log=subprocess.check_output([harness,ASSETS,setup,seq],text=True,env=DUMMY,timeout=90)
         lines=[line.split()[1:] for line in log.splitlines() if line.startswith('menu ')]

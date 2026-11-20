@@ -540,7 +540,8 @@ So row types 8, 0x14, 0x17, 0x1f and 0x23 are projectile-spawn modifiers.
          *(o+4)[0] = 0x165610            // task callback word of o's task
      }
      (1fdea8 consumes one RNG draw only when both flag tests pass.)
-  36 if (!(opp.244 & 0x01000000)) reg[2] = var + 0x24a
+  36 if (!(actor.244 & 0x01000000)) reg[2] = var + 0x24a   (165180 reads s2 = actor, the same
+     register event 37 decrements f1d through; an earlier draft said opp.244)
   37 actor.f1d -= 1 (byte, wraps)
   39 1493c0(opp, 0x62a, 1)                         // forced action on opponent
   40 if (112300(16) == 0) { aux.130 = 1; s = 0xcd } else { aux.130 = 0; s = 0xcc }

@@ -26,6 +26,47 @@ void countParry(StateEntryActor& a) {
 }
 }
 
+bool resolveCounterStance(StateEntryActor& attacker,uint32_t attackerFlags108,StateEntryActor& defender,
+                          uint8_t& defenderConsumed,const std::function<void()>& catchSound) {
+    if(defender.stateTable()!=1)return false;
+    const int k=defender.stateIndex()-0x40;
+    if(k<0)return false;
+    const bool air=attacker.flags23c&0x20;
+    const auto mark=[&]{defenderConsumed|=4;return true;}; // target +100 |= 4
+    int index=-1;bool sound=false;
+    switch(defender.character) {
+    case 6:return unsigned(k-10)<2&&mark(); // states 74/75
+    case 12: // Jubei: one airborne and two grounded catches
+        if(k==9){if(!air)return false;index=0x10;sound=true;}
+        else if(k==10){if(air||(attackerFlags108&8))return false;index=0x11;sound=true;}
+        else if(k==11){if(air||(attackerFlags108&4))return false;index=0x12;sound=true;}
+        else if(k==15) {
+            // Records the deflection without consuming the contact.
+            defender.fieldF10=defender.fieldA30;defenderConsumed|=4;
+            defender.flags23c|=0x2000000u;defender.flags248|=0x4000u;
+            return false;
+        } else return false;
+        break;
+    case 13:if(k!=9||air)return false;index=0x10;break;
+    case 16:return k==14&&mark();
+    case 17:return k==0x12&&mark();
+    case 32:if(k!=4&&k!=0x11)return false;index=0;break;
+    case 41:return k==14&&mark();
+    case 46:if(k!=0x10||air||(attackerFlags108&4))return false;index=0x10;break;
+    default:return false;
+    }
+    if(sound&&catchSound)catchSound();
+    attacker.pendingCharacter254=uint8_t(defender.character);attacker.bodyField124=0;
+    request(attacker,2,0x50+index);
+    return true;
+}
+bool deflectionApplies(StateEntryActor& defender) {
+    // 1500d0 < 0x40 for any table; otherwise only character 32's state 1/0x53,
+    // which deflects as variant 3.
+    if(defender.stateIndex()<0x40)return true;
+    if(defender.character==32&&defender.state194==0x530001){defender.variantA48=3;return true;}
+    return false;
+}
 bool resolveWeaponDeflection(const ContactEvent& event,PlayerObject& attackerBody,StateEntryActor& attacker,
                              PlayerObject& defenderBody,StateEntryActor& defender) {
     if(attacker.flags23c&0x20||attackerBody.timeline.clock().flags108&8)return false;
@@ -49,7 +90,8 @@ bool resolveWeaponDeflection(const ContactEvent& event,PlayerObject& attackerBod
         const auto& target=defenderBody.timeline.motion();
         attackerBody.timeline.setPosition(target.x,target.y);
         request(attacker,2,14);
-    } else throw std::runtime_error("Unexpected weapon deflection variant");
+    }
+    // Other variants only stop the attacker's retained voice (158030).
     return true;
 }
 

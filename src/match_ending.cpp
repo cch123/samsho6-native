@@ -30,7 +30,7 @@ int MatchEndingRules::select(BattleRoundState& b,const std::array<RoundPlayerRef
     if(b.match.result.result==2)return 5; //Preserve battle+2c on timeout/draw early returns.
     const auto hit=stats.outcome1c;int fallback=5;
     if(stats.outcome20==0)fallback=high?0:1;
-    else if(a.character==other.character)fallback=6;
+    else if(selectedCharacter(a)==selectedCharacter(other))fallback=6; // 1455f4 compares a14
     else if(stats.outcome20==1)fallback=high?2:3;
     else if(high)fallback=4;
     b.endingParameter2c=(hit==-1||hit==5)?0:70;
@@ -48,7 +48,7 @@ int MatchEndingRules::select(BattleRoundState& b,const std::array<RoundPlayerRef
     if(choice<0)return fallback;
     //The fallback7/8 is returned directly even if its own table slot is
     //empty. A second availability check would alter the original decision.
-    return available(int(a.character),unsigned(choice),b.matchEnd.characterVersion43d052)?choice:high?7:8;
+    return available(selectedCharacter(a),unsigned(choice),b.matchEnd.characterVersion43d052)?choice:high?7:8;
 }
 void MatchEndingRules::recordFinal(BattleRoundState& b,const std::array<RoundPlayerRef,2>& players) const {
     if(b.gameMode!=3||b.matchEnd.profileActive123a168)

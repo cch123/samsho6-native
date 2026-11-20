@@ -70,6 +70,7 @@ void record(StateEntryActor& source,PlayerMatchStats& stats,const ContactEvent* 
     if(guard)source.flags244|=0x10000000;
 }
 }
+int contactFinishCategory(const StateEntryActor& a,const InputBindings& bindings){return actorCategory(a,bindings);}
 int projectileFinishCategory(const AuxiliaryObject& object,const StateEntryActor& owner,const StateEntryActor& opponent,
                              const InputBindings& bindings) {
     const auto kind=object[0xcc/4];

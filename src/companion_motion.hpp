@@ -5,6 +5,7 @@
 namespace ss6 {
 struct CompanionSteering {
     ScalarFloat gain,maximum,arrivalRadius,turnDistance;
+    ScalarFloat retainX{0x3e4ccccd},retainY{0x3e4ccccd}; // p[8]/p[0xc]: 0.2 for Mamahaha and Konru
 };
 
 // 1a39b8 stores velocity in the companion's local facing, even when its
@@ -28,13 +29,12 @@ inline bool steerCompanion(AuxiliaryObject& object,ScalarFloat targetX,
     dx=dx.mul(scale).mul(fixed);
     dy=dy.mul(scale).mul(fixed);
     if(left!=bool(object[0x38/4]&mirror))dx.bits^=0x80000000;
-    const ScalarFloat retain{0x3e4ccccd}; // 0.2 in both companion parameter records.
-    auto blend=[&](uint32_t oldValue,ScalarFloat desired) {
+    auto blend=[&](uint32_t oldValue,ScalarFloat desired,ScalarFloat retain) {
         auto old=ScalarFloat::integer(std::bit_cast<int32_t>(oldValue));
         return uint32_t(desired.mul(one.sub(retain)).add(old.mul(retain)).truncate());
     };
-    object[0x50/4]=blend(object[0x50/4],dx);
-    object[0x5c/4]=blend(object[0x5c/4],dy);
+    object[0x50/4]=blend(object[0x50/4],dx,settings.retainX);
+    object[0x5c/4]=blend(object[0x5c/4],dy,settings.retainY);
     return false;
 }
 }

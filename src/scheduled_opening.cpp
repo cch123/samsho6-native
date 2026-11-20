@@ -56,48 +56,26 @@ ScheduledOpening::ScheduledOpening(const std::filesystem::path& assets,SoundSele
         if(d[26]||std::bit_cast<int32_t>(d[13])>=0||!actionCount(d))
             throw std::runtime_error("Ending descriptor outside admitted callbacks/actions");
     }
-    std::ifstream world(assets/"world_effects.bin",std::ios::binary|std::ios::ate);
-    constexpr auto worldSize=std::tuple_size_v<decltype(worldDescriptors_)>*108;
-    if(!world||world.tellg()!=worldSize)throw std::runtime_error("Invalid world-effect task tables");
-    std::array<uint8_t,worldSize> bytes{};world.seekg(0);
-    if(!world.read(reinterpret_cast<char*>(bytes.data()),bytes.size()))throw std::runtime_error("Truncated world-effect task tables");
-    for(unsigned i=0;i<worldDescriptors_.size();++i) {
-        auto& d=worldDescriptors_[i];
+    // 124430 (world) and 1242c0 (contact) index the same table at 4a2b30;
+    // effect_descriptors.bin holds all 67 entries. An entry is usable when
+    // it has actions; only 1 and 4 carry completion callbacks (11ef90/11f1c8).
+    std::ifstream effects(assets/"effect_descriptors.bin",std::ios::binary|std::ios::ate);
+    constexpr auto effectSize=std::tuple_size_v<decltype(effectDescriptors_)>*108;
+    if(!effects||effects.tellg()!=effectSize)throw std::runtime_error("Invalid effect descriptor table");
+    std::vector<uint8_t> bytes(effectSize);effects.seekg(0);
+    if(!effects.read(reinterpret_cast<char*>(bytes.data()),bytes.size()))throw std::runtime_error("Truncated effect descriptor table");
+    for(unsigned i=0;i<effectDescriptors_.size();++i) {
+        auto& d=effectDescriptors_[i];
         for(unsigned j=0;j<27;++j)for(unsigned b=0;b<4;++b)d[j]|=uint32_t(bytes[i*108+j*4+b])<<(b*8);
-        if(d[26]!=(i==8?0x11f1c8u:i==9?0x11ef90u:0u)||!(actionCount(d)+actionCount(d,13)))throw std::runtime_error("Unsupported world-effect descriptor");
+        effectUsable_[i]=(actionCount(d)+actionCount(d,13))!=0&&d[26]==(i==4?0x11f1c8u:i==1?0x11ef90u:0u);
     }
-    std::ifstream contact(assets/"contact_effects.bin",std::ios::binary);
-    if(!contact)throw std::runtime_error("Missing contact-effect task table");
-    while(contact.peek()!=std::char_traits<char>::eof()) {
-        const unsigned id=contact.get();std::array<uint8_t,108> record{};
-        if(!contact.read(reinterpret_cast<char*>(record.data()),record.size()))throw std::runtime_error("Truncated contact-effect group");
-        auto [it,inserted]=contactDescriptors_.try_emplace(id);
-        if(!inserted)throw std::runtime_error("Duplicate contact-effect group");
-        auto& d=it->second;
-        for(unsigned j=0;j<27;++j)for(unsigned b=0;b<4;++b)d[j]|=uint32_t(record[j*4+b])<<(8*b);
-        if(d[26]||!(actionCount(d)+actionCount(d,13)))throw std::runtime_error("Unexpected contact-effect groups or callback");
-    }
-
 }
 const std::array<uint32_t,27>& ScheduledOpening::descriptor(unsigned id) const {
     //Native IDs distinguish the two original descriptor tables without
     //retaining source pointers. A world12 task is not the opening12 task.
     if(id>=1&&id<=19)return descriptors_[id];
-    if(id==0x10c)return worldDescriptors_[0];
-    if(id==0x124)return worldDescriptors_[1];
-    if(id==0x11d)return worldDescriptors_[2];
-    if(id==0x103)return worldDescriptors_[3];
-    if(id==0x11e)return worldDescriptors_[4];
-    if(id==0x102)return worldDescriptors_[5];
-    if(id==0x10a)return worldDescriptors_[6];
-    if(id==0x105)return worldDescriptors_[7];
-    if(id==0x104)return worldDescriptors_[8];
-    if(id==0x101)return worldDescriptors_[9];
-    if(id==0x106)return worldDescriptors_[10];
-    if(id==0x129)return worldDescriptors_[11];
-    if(id==0x12a)return worldDescriptors_[12];
-    if(id>=0x100){auto it=contactDescriptors_.find(id-0x100);if(it!=contactDescriptors_.end())return it->second;}
-    throw std::runtime_error("Unsupported scheduled-effect descriptor");
+    if(id>=0x100&&id-0x100<effectDescriptors_.size()&&effectUsable_[id-0x100])return effectDescriptors_[id-0x100];
+    throw std::runtime_error("Unsupported scheduled-effect descriptor "+std::to_string(id));
 }
 void ScheduledOpening::preflight(unsigned descriptor,const TaggedTaskPools& pools,const EffectResidency& residency) {
     const auto& d=this->descriptor(descriptor);
@@ -152,8 +130,9 @@ uint32_t ScheduledOpening::startWorld(unsigned id,uint32_t flags,unsigned resour
     spawnAt(nativeId,owner,pools,residency,flags|0x08000000,x,y,z,scale,tag,&random);
     return owner;
 }
-void ScheduledOpening::startContact(unsigned id,float x,float y,float scale,TaggedTaskPools& pools,EffectResidency& residency,GameRandom& random) {
-    if(!contactDescriptors_.contains(id))throw std::runtime_error("Unsupported contact-effect group");
+void ScheduledOpening::startContact(unsigned id,float x,float y,float scale,TaggedTaskPools& pools,EffectResidency& residency,GameRandom& random,
+                                    uint32_t facing,float z) {
+    if(id>=effectDescriptors_.size()||!effectUsable_[id])throw std::runtime_error("Unsupported contact-effect group "+std::to_string(id));
     const auto nativeId=0x100u+id;
     preflight(nativeId,pools,residency);
     const auto owner=pools.allocateOwner();
@@ -161,7 +140,7 @@ void ScheduledOpening::startContact(unsigned id,float x,float y,float scale,Tagg
     pools.stacks.at(owner).flags|=2;
     // 1574f0 and the other callers pass target facing as the integer 0/1.
     // 124620 masks with 081c0000, so it does not mirror the effect image.
-    spawnAt(nativeId,owner,pools,residency,0x08000000,x,y,0,scale,0x1b5b,&random);
+    spawnAt(nativeId,owner,pools,residency,0x08000000|facing,x,y,z,scale,0x1b5b,&random);
 }
 uint32_t ScheduledOpening::start(unsigned label,TaggedTaskPools& pools,EffectResidency& residency,EffectPalettes& palettes) {
     if(label<1||label>10)throw std::runtime_error("Opening label outside1..10");

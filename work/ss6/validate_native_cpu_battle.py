@@ -85,7 +85,7 @@ def compile_probe(temp):
     assert source.count(target)==1
     instrument=Path(temp)/'cpu_decision.cpp'
     instrument.write_text(source.replace(target,'    extern void observeCpuStart(const StateEntryActor&,const StateEntryActor&,const CpuDecisionFrame&,const GameRandom&);\n    observeCpuStart(a,enemy,f,rng);\n'+target))
-    subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,instrument,
+    subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,instrument,
                     ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
     return exe
 

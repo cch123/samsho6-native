@@ -59,9 +59,14 @@ def commands(p,fn,args,overlay=False):
 
 def batch(task):
     group,choice,ph=task;p=prepare()
-    if group<2:
-        p.write(0x4c8d18+52*group+40,choice,4);limit=BASE[ph]
-        return [((group,choice,ph,t),commands(p,0x1309a8,[group,ph,t])) for t in range(limit+1)]
+    if group<2 or group>=5:
+        # Groups 5/6: the seven-entry list 12f8e8 builds for 44..47 (spirits 0..5 and 8).
+        side=group%5;seven=group>=5
+        for i,v in enumerate((7,0,1,2,3,4,5,8) if seven else (6,0,1,2,3,4,5,0)):p.write(0x4c8d18+side*52+4*i,v,4)
+        p.write(0x4c8d18+52*side+40,choice,4);limit=BASE[ph]
+        result=[((group,choice,ph,t),commands(p,0x1309a8,[side,ph,t])) for t in range(limit+1)]
+        for i,v in enumerate((6,0,1,2,3,4,5,0)):p.write(0x4c8d18+side*52+4*i,v,4)
+        return result
     if group<4:
         p.write(0x4c3828,choice,4);limit=PROMPT[ph];side=group-2
         return [((group,choice,ph,t),commands(p,0x1309a8,[side,ph,t],True)) for t in range(limit+1)]
@@ -85,6 +90,7 @@ def label_atlas(p):
 def extract():
     assert hashlib.sha256((ASSETS.parent/'SLPS_255.59').read_bytes()).hexdigest()==ORIGINAL
     tasks=[(s,c,ph) for s in range(2) for c in range(6) for ph in BASE]
+    tasks += [(s,c,ph) for s in (5,6) for c in range(7) for ph in BASE]
     tasks += [(s,c,ph) for s in (2,3) for c in range(2) for ph in PROMPT]
     tasks += [(4,c,ph) for c in range(11) for ph in STAGE]
     quads={};lists={};frames={}

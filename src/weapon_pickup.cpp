@@ -8,6 +8,13 @@ void beginWeaponPickup(PlayerObject& body, StateEntryActor& actor, TaggedTaskPoo
                        std::span<const uint32_t> ownTasks, float opponentX) {
     actor.opponentX = opponentX;
     actor.faceOpponent();
+    if (actor.character == 48) { // 16a6e8: Kuroko re-arms himself, ACT 0x27c, no weapon object
+        actor.flags23c |= 0x1000;
+        GroundStateRuntime::restoreBody(body,actor);
+        actor.queuedActionA3c = 0x27c;actor.flags248 &= ~0x800u;
+        actor.callbacks260[0] = 0x169a50;actor.callbacks260[1] = 0;actor.callbacks260[2] = 0xffffffff;actor.callbacks260[5] = 0;
+        return;
+    }
     for (const auto task : ownTasks) {
         if (!task) continue;
         auto& object = pools.objects.at(pools.tasks.at(task-1)[7]-1);

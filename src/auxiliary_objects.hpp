@@ -14,9 +14,10 @@ public:
     AuxiliaryObjects(const std::filesystem::path& assets,std::array<unsigned,3> resourceSlots);
     // 168ea0 indexes nine signed coordinate pairs per fighter; the first
     // anchors elemental damage to the victim's body.
-    std::array<int16_t,2> bodyAnchor(unsigned character) const {
+    std::array<int16_t,2> bodyAnchor(unsigned character) const {return anchor(character,0);}
+    std::array<int16_t,2> anchor(unsigned character,unsigned index) const { //168ea0(character, index)
         const auto& row=positions_.at(character);
-        return {row[0],row[1]};
+        return {row.at(2*index),row.at(2*index+1)};
     }
     void initialize(AuxiliaryObject&,const AuxiliaryObject& parent,unsigned kind); //11d9c8, kinds2/4/6
     uint32_t create(TaggedTaskPools&,std::span<uint32_t> registry,unsigned player,uint32_t actorFlags,

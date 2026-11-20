@@ -1,4 +1,6 @@
 #pragma once
+#include "input_bindings.hpp"
+#include <functional>
 #include "auxiliary_objects.hpp"
 #include "stage_camera.hpp"
 
@@ -32,6 +34,11 @@ struct ProjectileOwner {
     const StageCamera& camera;
     GameRandom& random;
     AuxiliaryObject* companion=nullptr; // Mina's Chample (group 17)
+    // 1491e0 on the owner inside the object's task (group 8 catch).
+    std::function<void()> enterStateNow;
+    // The opponent's actor and spirit (142120 for group 15).
+    const StateEntryActor* opponentActor=nullptr;
+    const InputSystemConfig* opponentConfig=nullptr;
 };
 // 16d9c8 for a running move script (mode-0 rows; Mina). Returns the object.
 uint32_t spawnScriptProjectile(const ProjectileTable&,ProjectileOwner&,const ScriptRow&);

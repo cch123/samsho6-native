@@ -72,7 +72,7 @@ def main():
     tracked=(BUILD/'libss6-runtime.a',)
     digest=sha256(tracked[0].read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory() as tmp:
-        exe=Path(tmp)/'trace';obj=Path(tmp)/'mina.o';cxx=['c++','-std=c++20','-O2','-I',ROOT/'src']
+        exe=Path(tmp)/'trace';obj=Path(tmp)/'mina.o';cxx=['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src']
         subprocess.run([*cxx,'-DupdateMinaAttack=tracedCast','-c',ROOT/'src/mina_special.cpp','-o',obj],check=True)
         subprocess.run([*cxx,ROOT/'work/ss6/mina_special_trace.cpp',obj,tracked[0],'-o',exe],check=True)
         jobs=[(exe,s,m) for s in (0,1) for m in MOVES]

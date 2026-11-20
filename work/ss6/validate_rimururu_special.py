@@ -152,7 +152,7 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--case',nargs=3);ap.add_argument('--assets',type=Path,default=RES)
     args=ap.parse_args()
     with tempfile.TemporaryDirectory() as folder:
-        d=Path(folder);exe=d/'fight';obj=d/'traced.o';cxx=['c++','-std=c++20','-O2','-I',str(ROOT/'src')]
+        d=Path(folder);exe=d/'fight';obj=d/'traced.o';cxx=['c++','-std=c++20','-ffp-contract=off','-O2','-I',str(ROOT/'src')]
         subprocess.run([*cxx,'-DupdateRimururuSpecial=tracedCast','-DupdateRimururuIce=tracedIce','-c',ROOT/'src/rimururu_special.cpp','-o',obj],check=True)
         subprocess.run([*cxx,ROOT/'work/ss6/rimururu_special_trace.cpp',obj,BUILD/'libss6-runtime.a','-o',exe],check=True)
         cases=[(side,state,mode) for side in (0,1) for state in range(64,91) for mode in ('near','guard','distance')]

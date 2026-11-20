@@ -3,11 +3,15 @@
 #include "tagged_tasks.hpp"
 
 namespace ss6 {
+struct StateEntryActor;
 struct StateEntryActor : PermissionActor {
     //These historical field names hold the weapon/range variant (0..3),
     //not a character ID.14b798 writes the main variant even in alias mode.
     int16_t stateCharacter198=0,aliasCharacter1a8=0;
     uint32_t damageCharacterA18=0;
+    // actor+a14: the selected id. 148df0 runs Purple Nakoruru (42) as Nakoruru (a10 = 1) but
+    // keeps 42 here for voices, the HUD, endings and the intro order; -1 = same as character.
+    int32_t characterA14=-1;
     uint32_t bodyFieldE4=0,bodyFieldE8=0,bodyField124=0;
     uint32_t bodyColor8c=0xff808080,bodyField20=0,fieldA28=0;
     int32_t queuedActionA3c=-1;
@@ -95,4 +99,6 @@ private:
     std::array<uint8_t,69*2> specialExceptions_;
     std::array<int32_t,9> swordLimits_;
 };
+inline int voiceCharacter(const StateEntryActor& a){return a.characterA14>=0?a.characterA14:int(a.character);} // 1e8298(seat, id, a14)
+inline int selectedCharacter(const StateEntryActor& a){return voiceCharacter(a);} // actor+a14 (endings, same-character tests)
 }

@@ -68,7 +68,7 @@ def main():
     y,x=np.mgrid[:480,:640]
     with tempfile.TemporaryDirectory() as d:
         d=Path(d);(d/'main.cpp').write_text(DRIVER);exe=d/'paint'
-        subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',d/'main.cpp',ROOT/'src/vs_curtain.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',d/'main.cpp',ROOT/'src/vs_curtain.cpp','-o',exe],check=True)
         with subprocess.Popen([exe,ASSETS],stdout=subprocess.PIPE) as proc:
             for t in range(33):
                 base=np.stack([x+t*3,y+(96 if t>=18 else 0),(x//23+y//17)*27,0*x+255],axis=-1).astype(np.uint8)

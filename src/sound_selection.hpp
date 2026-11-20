@@ -28,6 +28,8 @@ public:
     void bindPlayers(unsigned first,unsigned second);
     void enterBattleScene(bool victoryMusicGate);
     void stop(uint32_t& objectSound34);
+    // 120ee8: 1e7aa8(object+34 & 7) while bit 0x8000 is set; the word is kept.
+    void cutVoice(uint32_t objectSound34);
     void stopGroup(int group);
     void contact(unsigned group,unsigned defense,bool armed,bool finishing,bool counter,int attackerAction,GameRandom&);
     void beginFrame(){events_.clear();}

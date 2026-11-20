@@ -20,13 +20,14 @@ void fighter(ss6::PlayerObject& body,const ss6::StateEntryActor& actor) {
 }
 }
 namespace ss6 {
-void measuredCapture(PlayerObject&,StateEntryActor&,StateEntryContext&,const GroundStateFrame&);
-void updateFighterCapture(PlayerObject& b,StateEntryActor& a,StateEntryContext& ctx,const GroundStateFrame& frame) {
+bool measuredCapture(PlayerObject&,StateEntryActor&,StateEntryContext&,const GroundStateFrame&);
+bool updateFighterCapture(PlayerObject& b,StateEntryActor& a,StateEntryContext& ctx,const GroundStateFrame& frame) {
     const bool paired=a.callbacks260[0]==0x165cc0&&a.pendingCharacter254==3;
     auto snapshot=[&] {fighter(b,a);fighter(frame.weaponLock->opponentBody,frame.weaponLock->opponent);};
     if(paired){word(tick);snapshot();}
-    measuredCapture(b,a,ctx,frame);
+    const bool recover=measuredCapture(b,a,ctx,frame);
     if(paired){snapshot();std::cout<<'\n';}
+    return recover;
 }
 }
 int main(int argc,char** argv) {

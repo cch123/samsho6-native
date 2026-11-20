@@ -54,7 +54,7 @@ def main():
     stats=Counter();images=[];sets=[]
     with tempfile.TemporaryDirectory() as directory:
         tmp=Path(directory);source=tmp/'capture.cpp';source.write_text(CAPTURE);probe=tmp/'capture'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',source,LIB,'-o',probe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',source,LIB,'-o',probe],check=True)
         for lineup,seat in (((2,0),0),((0,2),1),((1,2),1),((2,2),0)):
             arena=int(lineup[0]!=0)
             first=choose(lineup,arena)

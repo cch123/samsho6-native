@@ -11,7 +11,7 @@ uint32_t ordinaryStateGates(uint32_t flags244,uint32_t flags23c,int table,int st
 // Returns a damage-table state, or -1. The caller owns timer15's reset.
 int knockoutRequest(uint32_t flags23c,uint32_t flags244,int table,int state,
                     int32_t timer15,bool inputLocked);
-enum class VictoryRequest { Wait, Queue, Ready, Dismount };
+enum class VictoryRequest { Wait, Queue, Ready, Dismount,Ride };
 // Ordinary branch of 0x145240(actor,52). Condition254 includes both the
 // three low-word condition flags and bit254 of the original bitset.
 VictoryRequest victoryRequest(uint32_t flags23c,uint32_t flags244,int table,int state,

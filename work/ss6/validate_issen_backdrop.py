@@ -163,7 +163,7 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         source, exe = (Path(td)/n for n in ('source.cpp','probe'))
         source.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-I',ROOT/'src',source,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-I',ROOT/'src',source,LIB,'-o',exe],check=True)
         cases=[run(exe,draw,slot,name) for slot in range(2) for name in ('late','guard','miss','skip')]
     report=dict(status='passed', elf_sha256=PIN, runtime_sha256=digest(LIB), cases=cases,
                 stage_strips=original_stage(), source_z=9995756,

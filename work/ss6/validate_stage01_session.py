@@ -95,7 +95,7 @@ def main():
         padfile.write_text(encode(one))
         flags=shlex.split(subprocess.check_output(['pkg-config','--cflags','--libs','sdl3'],text=True))
         probe=tmp/'stage-switch'
-        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
             HERE/'stage_switch_screen_test.cpp',BUILD/'libss6-runtime.a',*flags,'-o',probe],check=True)
         visited=subprocess.check_output([probe,assets,padfile,tmp/'stage.rgba'],text=True).splitlines()
         assert visited==['1 1','2 1','3 0','4 1'],visited

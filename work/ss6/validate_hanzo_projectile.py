@@ -88,7 +88,7 @@ def main():
     cases,want,ends,instructions,finish=samples()
     with tempfile.TemporaryDirectory() as td:
         folder=Path(td);cpp=folder/'objects.cpp';exe=folder/'objects';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/hanzo_projectile.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/hanzo_projectile.cpp',
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         data=subprocess.check_output([exe,ASSETS],input=''.join(' '.join(map(str,c))+'\n' for c in cases),text=True)
     raw=[list(map(int,row.split())) for row in data.splitlines()]

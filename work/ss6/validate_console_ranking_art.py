@@ -136,7 +136,7 @@ def main():
     hashes={};nonempty=0
     with tempfile.TemporaryDirectory() as tmp:
         tmp=Path(tmp);cpp=tmp/'ranking.cpp';cpp.write_text(DRIVER);exe=cpp.with_suffix('')
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/console_ranking_art.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/console_ranking_art.cpp','-o',exe],check=True)
         template=tmp/'input.rgba';template.write_bytes(base.tobytes())
         with subprocess.Popen([exe,args.assets,template],stdin=subprocess.PIPE,stdout=subprocess.PIPE) as proc:
             for phase,tick,first in cases:

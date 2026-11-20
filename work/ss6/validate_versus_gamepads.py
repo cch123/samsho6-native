@@ -311,7 +311,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='ss6-virtual-gamepads-') as temp:
         work=Path(temp);exe=work/'gamepads'
         sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3']))
-        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
              HERE/'sdl_gamepad_input_test.cpp',BUILD/'libss6-runtime.a',*sdl,'-o',exe])
         validate_zan(exe,work,original)
         if args.zan_only:return

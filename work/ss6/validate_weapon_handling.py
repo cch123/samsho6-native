@@ -150,7 +150,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         folder=Path(tmp);source=folder/'probe.cpp';exe=folder/'probe'
         source.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',source,lib,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',source,lib,'-o',exe],check=True)
         cases=[(exe,i,m) for i in range(2) for m in ('taunt','discard')]
         with ProcessPoolExecutor(4) as pool:
             results=list(pool.map(scenario,cases))

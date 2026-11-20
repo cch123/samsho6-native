@@ -13,37 +13,43 @@ void KnockdownPlayback::request(DownedState& a,int table,int index,bool force) {
     a.pendingTable=table;a.pendingIndex=index;
     if(force)a.forceState=true; //14ff80 itself leaves18c untouched.
 }
-bool KnockdownPlayback::supportsFall(int state) {
-    return state==59||state==60||state==62||state==63||state==64||state==65||state==67||state==71||state==72||state==73||backwardFall(state);
+namespace {
+// 4e8c50: 12-byte rows (type, armed ACT, lands on back) for damage states
+// 62..73 (rows 0..11) and 59/60 (rows 12/13). extract_script_tables.py checks
+// this transcription against the ELF. The unarmed ACT is the next one.
+struct FallRow {int type;unsigned act;bool back;};
+constexpr FallRow fallRows[14]{{0,380,false},{0,382,false},{0,384,false},{0,386,true},{0,388,false},{3,390,true},
+    {2,394,false},{1,396,true},{1,398,true},{4,0xffff,false},{0,438,false},{0,440,false},{0,400,false},{0,402,true}};
+int fallRow(int state){return state>=62&&state<=73?state-62:state==59||state==60?state-47:-1;}
 }
-bool KnockdownPlayback::backwardFall(int state) {
-    return state==69||state==70;
-}
-bool KnockdownPlayback::landsOnBack(int state) {
-    // Row 13 runs the forward landing callbacks, then uses backward get-up.
-    // The trajectory and the direction on the ground are separate table fields.
-    return state==60||state==65||state==67||backwardFall(state);
-}
-unsigned KnockdownPlayback::fallVariant(int state) {
-    return unsigned(state==59||state==60 ? state-47 : state-62);
-}
-unsigned KnockdownPlayback::fallAction(int state,bool armed) {
-    // Table 4e8c50 pairs each armed ACT with the following unarmed ACT.
-    switch(state) {
-    case 59:return 400+!armed;
-    case 60:return 402+!armed;
-    case 62:return 380+!armed; // Row zero uses the forward fall and normal down/get-up callbacks.
-    case 63:return 382+!armed;
-    case 64:return 384+!armed;
-    case 65:return 386+!armed;
-    case 67:return 390+!armed;
-    case 69:return 396+!armed;
-    case 70:return 398+!armed;
-    case 71:return 1294+!armed;
-    case 72:return 438+!armed;
-    case 73:return 440+!armed;
+int KnockdownPlayback::fallType(int state) {const int r=fallRow(state);return r<0?-1:fallRows[r].type;}
+std::pair<uint32_t,uint32_t> KnockdownPlayback::landingCallbacks(int state) {
+    switch(fallType(state)) {
+    case 0:return {0x1715b0,0x171640};
+    case 1:return {0x1717a0,0x171838};
+    case 2:return {0x1719a8,0x171a38};
+    case 3:return {0x171c80,0x171d60};
+    case 4:return {0x171eb0,0x171f58};
     default:throw std::runtime_error("Unsupported knockdown state");
     }
+}
+bool KnockdownPlayback::supportsFall(int state) {return fallType(state)>=0;}
+bool KnockdownPlayback::backwardFall(int state) {return fallType(state)==1;}
+bool KnockdownPlayback::landsOnBack(int state) {
+    // The trajectory and the direction on the ground are separate fields:
+    // row 13 runs the forward landing callbacks, then the backward get-up.
+    const int r=fallRow(state);return r>=0&&fallRows[r].back;
+}
+unsigned KnockdownPlayback::fallVariant(int state) {
+    const int r=fallRow(state);
+    if(r<0)throw std::runtime_error("Unsupported knockdown state");
+    return unsigned(r);
+}
+unsigned KnockdownPlayback::fallAction(int state,bool armed) {
+    const int r=fallRow(state);
+    if(r<0)throw std::runtime_error("Unsupported knockdown state");
+    // Type 4 (171eb0) queues its own launch ACT; its row ACT is -1.
+    return (fallRows[r].type==4?1294u:fallRows[r].act)+!armed;
 }
 void KnockdownPlayback::beginHeavy(PlayerObject& o,DownedState& a,ActorTimers& timers,int32_t* actorAction) {
     const auto action=fallAction(a.index,a.flags23c&0x1000);
@@ -51,8 +57,9 @@ void KnockdownPlayback::beginHeavy(PlayerObject& o,DownedState& a,ActorTimers& t
     if(landsOnBack(a.index))a.flags244|=0x8000u;
     else a.flags244&=~0x8000u;
     queueBody(o,action,actorAction);
-    phase=a.index==67?DownedPhase::WallApproach:DownedPhase::FirstLanding;
-    if(a.index==67)a.flags244&=~0x20000u; // 171ae8 restores ordinary stage clamping.
+    const bool wall=fallType(a.index)==3;
+    phase=wall?DownedPhase::WallApproach:DownedPhase::FirstLanding;
+    if(wall)a.flags244&=~0x20000u; // 171ae8 restores ordinary stage clamping.
 
 }
 void KnockdownPlayback::beginDown(PlayerObject& o,DownedState& a,int32_t* actorAction) {
@@ -128,12 +135,12 @@ DownedEvents KnockdownPlayback::update(PlayerObject& o,DownedState& a,ActorTimer
     }
     case DownedPhase::FirstLanding:
         chooseRecovery(o,a,input,random);
-        if(a.index==71?touchedGround(o):landingReady(o)) {
-            if(a.index!=71)stopAtGround(o);
+        if(fallType(a.index)==4?touchedGround(o):landingReady(o)) {
+            if(fallType(a.index)!=4)stopAtGround(o);
             events.dust=true;a.landingCount253=(a.landingCount253+1)&15;
             if(!requestRecovery(o,a,input)) {
                 // 171eb0 gives this launch its own bounce ACT at ground contact.
-                if(a.index==71){stopAtGround(o);queueBody(o,1296+!(a.flags23c&0x1000),actorAction);}
+                if(fallType(a.index)==4){stopAtGround(o);queueBody(o,1296+!(a.flags23c&0x1000),actorAction);}
                 phase=DownedPhase::SecondLanding;
             }
         }

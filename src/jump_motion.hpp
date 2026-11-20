@@ -24,7 +24,7 @@ void updateAirGuard(PlayerObject&, StateEntryActor&);
 void beginAirBlockReaction(PlayerObject&, StateEntryActor&);
 
 void beginAirHurt(PlayerObject&, StateEntryActor&);
-void updateAirLanding(PlayerObject&, StateEntryActor&);
+bool updateAirLanding(PlayerObject&, StateEntryActor&); // 173880: true once it requested the landing
 
 void beginRecoveryRoll(PlayerObject&, StateEntryActor&);
 }

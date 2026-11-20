@@ -69,7 +69,8 @@ def original(seat,expected,counts):
         handler,words,flags,f17,left,right,top,c128=before
         if words[0xd0//4]==0x51 and after[1][0xd0//4]==0x51 and f17!=after[2]:
             counts['excluded_0x51_counter']+=1;continue
-        obj=list(words);obj[0x118//4]=actor
+        # Object +4 is the task pointer that 147530 (hold) writes through.
+        obj=list(words);obj[0x118//4]=actor;obj[1]=TASK
         if obj[47]:obj[47]+=act-1
         p.memory[OBJECT:OBJECT+320]=struct.pack('<80I',*obj)
         p.write(TASK,handler,4);p.write(actor+0x23c,flags,4);p.write(actor+0xf17,f17,1)
@@ -77,7 +78,7 @@ def original(seat,expected,counts):
         p.write(BODY+0x2000+0x128,c128,4)
         _,n=p.run(handler,[TASK],limit=60000);counts['ee_instructions']+=n;counts[hex(handler)]+=1
         got=list(struct.unpack_from('<80I',p.memory,OBJECT))
-        got[0x118//4]=words[0x118//4]
+        got[0x118//4]=words[0x118//4];got[1]=words[1]
         if got[47] and act<=got[47]<act+0x100000:got[47]-=act-1
         ref=[p.read(TASK,4),got,p.read(actor+0xf17,1),p.read(BODY+0x2000+0x128,4)]
         mine=[after[0],after[1],after[2],after[3]]
@@ -137,9 +138,12 @@ def run(job):
 def main():
     with tempfile.TemporaryDirectory() as td:
         tmp=Path(td);obj=tmp/'projectile.o';exe=tmp/'trace'
-        cxx=['c++','-std=c++20','-O2','-I',ROOT/'src']
+        cxx=['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src']
         subprocess.run([*cxx,'-DupdateDescriptorProjectile=tracedProjectile','-DspawnScriptProjectile=tracedSpawn','-c',ROOT/'src/projectile_engine.cpp','-o',obj],check=True)
-        subprocess.run([*cxx,ROOT/'work/ss6/mina_projectile_trace.cpp',obj,BUILD/'libss6-runtime.a','-o',exe],check=True)
+        # The trace also wraps the script fighters' object callbacks (see validate_fighter_projectiles.py).
+        fighter=Path(td)/'fighter.o'
+        subprocess.run([*cxx,'-DupdateScriptFighterObject=tracedFighterObject','-c',ROOT/'src/script_fighter.cpp','-o',fighter],check=True)
+        subprocess.run([*cxx,ROOT/'work/ss6/mina_projectile_trace.cpp',obj,fighter,BUILD/'libss6-runtime.a','-o',exe],check=True)
         jobs=[(exe,s,m) for s in (0,1) for m in MOVES]
         with ThreadPoolExecutor(8) as pool:results=list(pool.map(run,jobs))
     counts=Counter();outcomes=[];wrong=[]

@@ -67,7 +67,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as tmp:
         src=Path(tmp)/'test.cpp';exe=Path(tmp)/'test';src.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,ROOT/'src/cpu_decision.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,ROOT/'src/cpu_decision.cpp',
                         ROOT/'src/cpu_tactics.cpp',ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         for char in range(4):
             for seat in range(2):

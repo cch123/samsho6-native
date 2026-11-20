@@ -64,7 +64,7 @@ def phases(job):
 
 
 def phase_trace(directory):
-    exe=directory/'phase';obj=directory/'capture.o';flags=['c++','-std=c++20','-O2','-I',ROOT/'src']
+    exe=directory/'phase';obj=directory/'capture.o';flags=['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src']
     subprocess.run([*flags,'-DupdateFighterCapture=measuredCapture',
                     '-c',ROOT/'src/nakoruru_capture.cpp','-o',obj],check=True)
     subprocess.run([*flags,ROOT/'work/ss6/hanzo_capture_trace.cpp',obj,BUILD/'libss6-runtime.a','-o',exe],check=True)
@@ -87,7 +87,7 @@ def main():
     assert sha256(ELF.read_bytes()).hexdigest()==PIN
     with tempfile.TemporaryDirectory() as tmp:
         d=Path(tmp);cpp=d/'capture.cpp';exe=d/'capture';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
         rows=subprocess.check_output([exe,ASSETS,'3'],input=''.join(' '.join(map(str,s[:6]))+'\n' for s in specs),text=True).splitlines()
     with ProcessPoolExecutor(4) as pool:expected=list(pool.map(compare,specs))
     for spec,row,(values,_) in zip(specs,rows,expected,strict=True):

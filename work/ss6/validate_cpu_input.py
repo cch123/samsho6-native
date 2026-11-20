@@ -79,7 +79,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         driver=Path(tmp)/'probe.cpp';binary=Path(tmp)/'probe'
         driver.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',driver,ROOT/'src/cpu_input.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',driver,ROOT/'src/cpu_input.cpp',
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',binary],check=True)
         result=subprocess.run([binary],input=''.join(' '.join(map(str,row))+'\n' for row in rows),
                               text=True,capture_output=True,check=True)

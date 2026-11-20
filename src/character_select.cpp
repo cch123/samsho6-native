@@ -10,7 +10,21 @@ void CharacterSelect::characterTick(unsigned side,const NormalizedPadSample& pad
     auto& s=seats[side];
     s.controls=0;
     if(s.phase==2 && !s.committed) {
-        const auto button=std::find_if(paletteButtons.begin(),paletteButtons.end(),
+        // 12db80: PadStart toggles the Kuroko view (Kuroko's unlock byte is 0).
+        if(pad.pressed&8)s.kuroko=!s.kuroko;
+        bool wiping=false;
+        if(s.kuroko) {
+            // Each update refills kurokoColumns whole columns from the cursor's column;
+            // until all eight show, the divider advances and every other input is ignored.
+            s.kurokoFaces=true;
+            if(s.kurokoColumns<columns) {
+                if(++s.kurokoDivider%3==0)++s.kurokoColumns;
+                wiping=true;
+            }
+        } else if(s.kurokoFaces) { // 12ecb8: restore the faces and reset K = {0, 0, 1, 0}
+            s.kurokoFaces=false;s.kurokoDivider=0;s.kurokoColumns=1;
+        }
+        const auto button=wiping?paletteButtons.end():std::find_if(paletteButtons.begin(),paletteButtons.end(),
             [&](uint32_t bit){return (pad.pressed&bit)!=0;});
         // The five face/auxiliary confirmations encode both the palette and
         // the alternate pose. Character choice takes priority over movement.
@@ -21,16 +35,17 @@ void CharacterSelect::characterTick(unsigned side,const NormalizedPadSample& pad
             s.controls=(0x10u<<index)<<shift;
             s.palette=0x40000+int(index)+(custom?(side?0x20000:0x10000):0);
             s.selected=s.character;
-            if(s.selected==53) {
-                // 128c78 includes hidden ID 42 at the end of the factory
-                // random pool, despite it having no dedicated cell.
-                int index=int(((random.nextLibrary()&0x7fff)*41)>>15);
-                s.selected=index==40?42:index;
+            // 129db0: a Kuroko face selects 48 (no RNG, even on the random cell).
+            if(kurokoCell(side,s.cell))s.selected=48;
+            else if(s.selected==53) {
+                // 129e2c: randomList[((library & 0x7fff) * randomCount) >> 15].
+                const int index=int(((random.nextLibrary()&0x7fff)*int(randomPool.size()))>>15);
+                s.selected=randomPool[index];
             }
             s.committed=true;s.count=0;s.phase=8;
             if(firstChooser<0)firstChooser=int(side);
             audio.push_back(s.selected<20?SelectVoice{0,s.selected+3}:SelectVoice{1,s.selected-20});
-        } else {
+        } else if(!wiping) {
             if(repeat&0x30) {
                 const bool up=repeat&0x10;
                 s.cell=(s.cell/6)*6+(s.cell%6+(up?5:1))%6;
@@ -39,21 +54,23 @@ void CharacterSelect::characterTick(unsigned side,const NormalizedPadSample& pad
             if(repeat&0xc0) {
                 const bool left=repeat&0x40;
                 const int step=(left^bool(side))?-6:6;
-                s.cell=(s.cell+step+42)%42;
+                s.cell=(s.cell+step+cells)%cells;
                 s.controls|=left?4:8;s.phase=left?3:4;s.count=0;
                 audio.push_back({0,2});
             }
             s.character=roster[s.cell];
         }
+        if(kurokoCell(side,s.cell))s.character=48; // 1293d0(seat, 48, 3): the Kuroko preview
     }
     s.drawPhase=s.phase;s.drawCount=s.count;s.drawPortrait=s.phase==2;
     if(s.phase==0)return;
     ++s.count;
     switch(s.phase) {
     case 1:
-        // 12aa78 cues each of the 42 portrait tiles at its own offset.
-        for(int cell=0;cell<42;++cell) {
-            static const auto spacing=ScalarFloat::integer(50).div(ScalarFloat::integer(42));
+        // 12aa78 cues each drawn portrait tile at its own offset (50 / cell count);
+        // with 8 columns its drum skips column 0 (12ab90), so cells 0..5 never cue.
+        for(int cell=columns==8?6:0;cell<cells;++cell) {
+            static const auto spacing=ScalarFloat::integer(50).div(ScalarFloat::integer(cells));
             if(s.drawCount==11+ScalarFloat::integer(cell).mul(spacing).truncate())audio.push_back({-1,24});
         }
         if(s.count==60){s.phase=2;remaining=1739;}
@@ -76,9 +93,14 @@ void CharacterSelect::characterTick(unsigned side,const NormalizedPadSample& pad
     }
 }
 void CharacterSelect::startSpirits() {
-    for(auto& s:spirits) {
+    // 12f8e8: spirits 0..5 plus, for the companion fighters 44..47, spirit 8 with the cursor
+    // on it (option bytes 43d0d6..d8 for spirits 6/7/8 keep their factory 0).
+    for(unsigned side=0;side<2;++side) {
+        auto& s=spirits[side];
         s.phase=1;s.count=0;s.choiceCount=6;
         for(int i=0;i<s.choiceCount;++i)s.choices[i]=i;
+        const int c=seats[side].selected;
+        if(c>=44&&c<=47){s.choices[s.choiceCount++]=8;s.cursor=s.choiceCount-1;}
     }
 }
 void CharacterSelect::spiritTick(unsigned side,uint32_t repeat) {
@@ -92,6 +114,9 @@ void CharacterSelect::spiritTick(unsigned side,uint32_t repeat) {
     switch(s.phase) {
     case 2:
         if(confirm)choose(5,1);
+        // 134e48: the companion fighters 44..47 keep their single spirit-8 cursor; the
+        // move sound still plays.
+        else if((left||right)&&unsigned(seats[side].selected-44)<4)audio.push_back({0,2});
         else if(left||right)choose(left?3:4,2);
         break;
     case 13:
@@ -114,7 +139,7 @@ void CharacterSelect::spiritTick(unsigned side,uint32_t repeat) {
         if(s.count==60){s.phase=2;s.count=0;remaining=1200;}
         break;
     case 3:case 4:
-        if(s.count==10){s.cursor=(s.cursor+(s.phase==3?5:1))%6;s.phase=2;s.count=0;}
+        if(s.count==10){s.cursor=(s.cursor+(s.phase==3?s.choiceCount-1:1))%s.choiceCount;s.phase=2;s.count=0;}
         break;
     case 5:
         if(s.count==6) {

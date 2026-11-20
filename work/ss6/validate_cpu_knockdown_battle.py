@@ -192,7 +192,7 @@ def completed_battles():
     with tempfile.TemporaryDirectory(prefix='ss6-cpu-knockdown-') as tmp:
         src, exe = Path(tmp)/'battle.cpp', Path(tmp)/'battle'
         src.write_text(BATTLE_DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,BUILD/'libss6-runtime.a',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,BUILD/'libss6-runtime.a',
                         '-o',exe], check=True)
         for seat, spirit in product(range(2), range(6)):
             rows = subprocess.check_output([exe, ASSETS, str(seat), str(spirit)], text=True).splitlines()

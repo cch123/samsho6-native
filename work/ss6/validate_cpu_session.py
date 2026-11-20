@@ -71,7 +71,7 @@ def validate(assets,viewer,package):
     with tempfile.TemporaryDirectory() as folder:
         work=Path(folder);out=work/'cpu.bmp'
         harness=work/'window';libs=shlex.split(run(['pkg-config','--cflags','--libs','sdl3']))
-        run(['c++','-std=c++20','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',BUILD/'libss6-runtime.a',*libs,'-o',harness])
+        run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',BUILD/'libss6-runtime.a',*libs,'-o',harness])
         window_routes=[play_window(assets,viewer,work,harness,seat) for seat in (0,1)]
         def snap(command,tick):return screenshot(command,assets,out,tick)
         cpu_command=[ROOT/'cpu.command'] if package else [viewer,'--mode','versus','--cpu','p2']

@@ -134,7 +134,7 @@ def main():
     lib = BUILD / 'libss6-runtime.a'
     with tempfile.TemporaryDirectory() as folder:
         exe = Path(folder) / 'guard'
-        subprocess.run(['c++', '-std=c++20', '-O2', '-I', ROOT/'src', HERE/'cpu_guard_followup_trace.cpp',
+        subprocess.run(['c++', '-std=c++20','-ffp-contract=off', '-O2', '-I', ROOT/'src', HERE/'cpu_guard_followup_trace.cpp',
                         lib, '-o', exe], check=True)
         inputs = ''.join(' '.join(map(str, case)) + '\n' for case in CASES)
         raw = subprocess.check_output([exe, ASSETS], input=inputs, text=True)

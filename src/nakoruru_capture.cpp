@@ -1,11 +1,13 @@
 #include "nakoruru_capture.hpp"
 #include "hanzo_capture.hpp"
 #include "knockout.hpp"
+#include "battle_round.hpp"
 #include <algorithm>
 #include <bit>
+#include <stdexcept>
 
 namespace ss6 {
-namespace {
+namespace capture {
 void callback(StateEntryActor& a,uint32_t pc,unsigned table,unsigned mode) {
     a.callbacks260[0]=pc;a.callbacks260[1]=table;a.callbacks260[2]=0xffffffff;
     a.callbacks260[5]=mode;
@@ -19,6 +21,14 @@ void oppositeFacing(PlayerObject& target,PlayerObject& source) {
     if(x<from)s.objectFlags|=0x80000;else if(x>from)s.objectFlags&=~0x80000u;
     source.timeline.setObjectFlags(s.objectFlags,s.flags104,s.flags108);
     target.timeline.setObjectFlags((t.objectFlags&~0x80000u)|(~s.objectFlags&0x80000u),t.flags104,t.flags108);
+}
+// Attacker characters listed at 1687bc..168864.
+bool weaponLossShakes(unsigned character) {
+    switch(character) {
+    case 0:case 3:case 5:case 14:case 17:case 18:case 23:case 25:case 26:case 28:case 29:case 30:
+    case 32:case 34:case 36:case 37:case 40:case 43:case 45:case 46:case 48:return true;
+    default:return false;
+    }
 }
 float shifted(float x,float offset) {
     // EE rounds toward zero after each offset, including the 0.2-unit split.
@@ -35,9 +45,48 @@ void constrain(PlayerObject& o) {
     const auto c=o.timeline.clock();
     o.setFlags(c.flags104|0x2000,c.flags108);
 }
+void loseWeapon(PlayerObject& body,StateEntryActor& a,StateEntryContext& context,const GroundStateFrame& frame) {
+    auto& world=*frame.weaponLock;const auto& source=world.opponent;
+    const auto parent=body.childParentWords();
+    // 168750: 14fa18 accepts the attacker's systems 1 and 7 (custom 6
+    // descriptors are not admitted here); attacker 43 also takes this drop.
+    if(frame.opponentSystem==1||frame.opponentSystem==7||source.character==43)
+        world.objects.dropSpecial(context.tasks,world.objectTasks,*frame.random,context.player,a.character,a.flags23c,parent);
+    else
+        world.objects.drop(context.tasks,world.objectTasks,*frame.random,context.player,a.character,a.flags23c,parent);
+    a.flags244&=~0x20000u;
+    // 1687a0: while the victim lives, these attackers also shake the
+    // screen through 140930 (timer6 = 12, timer5 = 6).
+    if(a.fieldA30>0&&weaponLossShakes(source.character)) {
+        if(!frame.battle)throw std::runtime_error("Weapon-loss shake requires the live battle timers");
+        const int divisor=frame.battle->gauges.paused46a940?8:1;
+        frame.battle->timers.set(6,12,divisor);frame.battle->timers.set(5,6,divisor);
+    }
 }
+bool sourceInvalid(StateEntryActor& a,StateEntryContext& context,const GroundStateFrame& frame) {
+    // 168220: the delivering object must still be registered to its seat
+    // with kind 2 or 3; a body contact needs an undamaged attacker.
+    auto& world=*frame.weaponLock;const auto& source=world.opponent;
+    // 168700: a Sugoroku victim of Sugoroku's own state-0x60 row is always valid.
+    if(a.character==0x21&&a.pendingCharacter254==0x21&&a.stateIndex()==0x60)return false;
+    auto* child=a.bodyField124?&context.tasks.objects.at(a.bodyField124-1):nullptr;
+    bool invalid=source.stateTable()==2;
+    if(child&&(*child)[0xc/4]!=2) {
+        const auto owner=(*child)[0xc/4];
+        const auto tasks=owner==context.player?std::span<const uint32_t>(world.objectTasks):frame.opponentObjectTasks;
+        const auto kind=(*child)[0xcc/4];
+        const bool registered=std::any_of(tasks.begin(),tasks.end(),[&](auto task) {
+            return task&&context.tasks.tasks.at(task-1)[7]==a.bodyField124;
+        });
+        invalid=owner>1||!registered||(kind!=2&&kind!=3);
+    }
+    if(invalid){a.pendingTable=2;a.pendingIndex=74;a.request18c=1;}
+    return invalid;
+}
+}
+using namespace capture;
 
-void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContext& context,const GroundStateFrame& frame) {
+bool updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContext& context,const GroundStateFrame& frame) {
     auto& world=*frame.weaponLock;auto& source=world.opponent;
     auto& sourceBody=world.opponentBody;
     // Rimururu's sole victim row (4e2a40) performs the same weapon operation
@@ -52,7 +101,7 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
     const bool weaponLoss=mina?true:hanzo?slot==5:slot==4;
     auto& registry=a.registry28c;
     if(hanzo&&slot!=16&&a.callbacks260[0]==0x165cc0) {
-        advanceHanzoThrowPhase(body,a,context,frame);return;
+        advanceHanzoThrowPhase(body,a,context,frame);return false;
     }
     if(a.callbacks260[0]==0x165cc0) {
         // Row 16 waits independently for each actor's ground contact. Until
@@ -74,23 +123,14 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
             callback(source,0x174158,1,3);
         }
         GroundStateRuntime::captureBody(sourceBody,source);
-        return;
+        return false;
     }
     if(!mina&&(slot<0||(slot>(hanzo?7:4)&&slot!=16)))throw UnportedFighterState(a.character,2,a.stateIndex());
     const bool paired=hanzo?!weaponLoss:slot==0||slot==16;
     auto requestFallback=[&] {
         a.pendingTable=2;a.pendingIndex=74;a.request18c=1;
     };
-    auto loseWeapon=[&] {
-        const auto parent=body.childParentWords();
-        // 168750: 14fa18 accepts systems 1 and 7 (custom 6 descriptors are not
-        // admitted here); the older ports only ever met system 1.
-        if(frame.opponentSystem==1||(mina&&frame.opponentSystem==7))
-            world.objects.dropSpecial(context.tasks,world.objectTasks,*frame.random,context.player,a.character,a.flags23c,parent);
-        else
-            world.objects.drop(context.tasks,world.objectTasks,*frame.random,context.player,a.character,a.flags23c,parent);
-        a.flags244&=~0x20000u;
-    };
+    auto loseWeapon=[&]{capture::loseWeapon(body,a,context,frame);};
 
     // 1ec460 clears the entry callback even when a simultaneous grab causes
     // 1657b0 to abandon the row and preserve the existing request.
@@ -113,7 +153,7 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
         // 1688c8 runs the row's final weapon operation even when the pair
         // cannot take control. Only the ordinary completion requests 2/71.
         if(weaponLoss)loseWeapon();
-        return;
+        return false;
     }
 
     if(child) {
@@ -137,7 +177,7 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
     // 168318 runs after registration: a KO invalidates the paired row
     // after facing and the attacker's lock have already been committed.
     if(paired&&(source.stateTable()==2||source.fieldA30<=0||(source.flags23c&0x80))) {
-        requestFallback();GroundStateRuntime::captureBody(sourceBody,source);return;
+        requestFallback();GroundStateRuntime::captureBody(sourceBody,source);return false;
     }
     if(paired) {
         source.callbacks260={};source.override27c={};source.request18c=0;
@@ -153,12 +193,12 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
     if(weaponLoss) {
         loseWeapon();
         a.pendingTable=2;a.pendingIndex=mina?(slot==2?63:69):hanzo?62:iceBreak?69:71;a.request18c=1;a.flags248|=0x20;
-        return;
+        return false;
     }
     const int unarmed=!(a.flags23c&0x1000);
     if(hanzo&&slot!=16) {
         enterHanzoThrowPhase(body,a,context,frame);
-        GroundStateRuntime::captureBody(sourceBody,source);return;
+        GroundStateRuntime::captureBody(sourceBody,source);return false;
     }
     if(paired) {
         splitAnchor(body,sourceBody);registry[4]=registry[5]=0;
@@ -181,6 +221,7 @@ void updateFighterCapture(PlayerObject& body,StateEntryActor& a,StateEntryContex
         callback(a,0x169a50,slot==3?2:0,slot==3?5:4);
     }
     GroundStateRuntime::captureBody(sourceBody,source);
+    return false;
 }
 
 bool updateNakoruruThrowLanding(PlayerObject& body,StateEntryActor& a) {

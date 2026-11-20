@@ -118,7 +118,7 @@ def main():
     assert sha256(ELF.read_bytes()).hexdigest()==PIN
     with tempfile.TemporaryDirectory() as td:
         tmp=Path(td);path=tmp/'trace.cpp';exe=tmp/'trace';path.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',path,BUILD/'libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',path,BUILD/'libss6-runtime.a','-o',exe],check=True)
         with ProcessPoolExecutor(4) as pool:
             cases=[]
             for r in pool.map(trace,[(exe,s,i) for s in range(2) for i in range(64,70)]):cases.append(r);print(r['player'],r['state'],r['object_ticks'],flush=True)

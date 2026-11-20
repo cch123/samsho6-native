@@ -82,7 +82,7 @@ def main():
         cpp=Path(td)/'main.cpp';cpp.write_text(DRIVER);exe=Path(td)/'probe'
         # Call the same real strike resolver with the controlled simultaneous
         # states; keep its production visibility and the shipping binary intact.
-        subprocess.run(['c++','-std=c++20','-O2','-fno-access-control','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-fno-access-control','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
         raw=subprocess.check_output([exe,OUT/'native-viewer/assets'],text=True,input=''.join('%s %s %s %s\n'%c for c in cases))
     result=[]
     for case,row in zip(cases,raw.splitlines(),strict=True):

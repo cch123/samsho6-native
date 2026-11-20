@@ -99,7 +99,7 @@ def main():
  distinct=set();lengths=Counter();total=0;ss=None
  with tempfile.TemporaryDirectory() as td:
   td=Path(td);(td/'test.cpp').write_text(DRIVER);exe=td/'probe'
-  subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',td/'test.cpp',ROOT/'src/versus_draw_stage.cpp','-o',exe],check=True)
+  subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',td/'test.cpp',ROOT/'src/versus_draw_stage.cpp','-o',exe],check=True)
   proc=subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
   for i,ids in enumerate(timeline):
    frame=capture(p);total+=len(frame);assert len(frame)==len(ids)

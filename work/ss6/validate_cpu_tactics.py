@@ -88,7 +88,7 @@ int main(int argc,char** argv) {
 def build(tmp,name,source):
     cpp=tmp/(name+'.cpp');cpp.write_text(source)
     exe=tmp/name
-    subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
+    subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
     return exe
 
 def validate(assets):

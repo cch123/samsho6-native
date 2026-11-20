@@ -48,7 +48,7 @@ def main():
         driver=Path(temp)/'probe.cpp';exe=Path(temp)/'probe';driver.write_text(DRIVER)
         library=ROOT/'work/ss6/build-native/libss6-runtime.a'
         library_hash=digest(library)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',driver,library,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',driver,library,'-o',exe],check=True)
         assert digest(library)==library_hash, 'Runtime rebuilt while linking the verification driver'
         def run(case):
             proc=subprocess.run([exe,ASSETS,*map(str,case),str(args.level)],text=True,capture_output=True)

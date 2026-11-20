@@ -102,7 +102,7 @@ def main():
                 commands.append(' '.join(map(str,[st,flags,hp,ost,won,lost,mode,game,lib,*o,*own,*opp])))
     with tempfile.TemporaryDirectory() as td:
         tmp=Path(td);src=tmp/'chample.cpp';exe=tmp/'chample';src.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         got=subprocess.check_output([exe,ASSETS],input='\n'.join(commands)+'\n',text=True).splitlines()
     wrong=[]

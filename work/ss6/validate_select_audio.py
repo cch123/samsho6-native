@@ -20,7 +20,8 @@ def selection_cues():
     # Walk the complete factory grid with real pad edges. Branch each cursor
     # position by one tick to confirm it before continuing the grid walk.
     # The hidden random result is confirmed from the EE's chosen ID below.
-    seed=next(n for n in range(1000) if (((n*0x5851f42d4c957f2d+1)>>32)&0x7fff)*41>>15==40)
+    # The unlocked pool is 0..42,44..47; seed the random cell to pick 47 (the pool's last).
+    seed=next(n for n in range(1000) if (((n*0x5851f42d4c957f2d+1)>>32)&0x7fff)*47>>15==46)
     src=Source(1,seed)
     for _ in range(63):src.step((0,0))
     confirmations={}
@@ -29,7 +30,7 @@ def selection_cues():
         if any(pads):
             assert src.audio==[0,2,0,2],(pads,src.audio)
         return row
-    for column in range(7):
+    for column in range(8):
         for _ in range(6):
             trial=deepcopy(src);cells=[trial.p.read(0x4c82a0+i*4,4) for i in (0,1)]
             assert cells[0]==cells[1]
@@ -39,10 +40,10 @@ def selection_cues():
                 assert (bank,tone)==((0,index+3) if index<20 else (1,index-20))
                 confirmations[index]=(bank+1,tone)
             advance((32,32));advance((0,0))
-        if column<6:
+        if column<7:
             advance((128,64))
             for _ in range(10):advance((0,0))
-    assert set(confirmations)=={*range(40),42}
+    assert set(confirmations)=={*range(43),44,45,46,47},sorted(confirmations)
     return confirmations
 
 def main(assets):
@@ -79,7 +80,7 @@ def main(assets):
     def name_test(idx,slot):
         h,d=group('BVOICE1',idx);n=struct.unpack_from('<I',h,4)[0]
         q=o.ee.read(0x59d008,4)
-        op('V',49,100 if idx==42 else idx+2)
+        op('V',49,100 if idx==42 else idx+(2 if idx<44 else 45))
         tone=n-2-(8 if idx==29 else 0)
         size,offset=struct.unpack_from('<2I',h,16+8*tone)
         req=0x15539b0+q*16
@@ -109,7 +110,7 @@ def main(assets):
         assert o.registers[v|0x200]==0x3b0
         assert key in range(14,22)
         op('R',2200);op('G',1);op('R',7)
-    for idx in (*range(40),42):
+    for idx in (*range(43),*range(44,49)):
         h,d=group('BVOICE1',idx)
         if idx:assert (assets/f'vs_voice_{idx:02}.bin').read_bytes()==h+d
         for slot in range(2):
@@ -148,7 +149,7 @@ def main(assets):
         keysets[str(pair)]=True
     with tempfile.TemporaryDirectory() as d:
         w=Path(d);src=w/'audio.cpp';exe=w/'audio';out=w/'pcm';src.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',SOURCE,src,SOURCE/'combat_audio.cpp',SOURCE/'combat_music.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',SOURCE,src,SOURCE/'combat_audio.cpp',SOURCE/'combat_music.cpp',
                         SOURCE/'combat_sound_bank.cpp','-o',exe],check=True)
         p=subprocess.run([exe,assets,out],input='\n'.join(commands)+'\n',text=True,capture_output=True)
         if p.returncode:raise RuntimeError(p.stderr)
@@ -159,11 +160,11 @@ def main(assets):
             i=next((n for n,(a,b) in enumerate(zip(audio,o.pcm)) if a!=b),None)
             raise AssertionError(('PCM byte',i,'time frame',i//4 if i is not None else None,len(audio),len(o.pcm)))
     files=[assets/n for n in ('combat_sound_bank.bin','vs_sounds_01.bin','vs_sounds_51.bin','vs_sounds_52.bin')]
-    files.extend(assets/f'vs_voice_{i:02}.bin' for i in (*range(1,40),42))
+    files.extend(assets/f'vs_voice_{i:02}.bin' for i in (*range(1,43),*range(44,49)))
     report=dict(status='passed',asset_directory=str(assets),asset_sha256={f.name:sha(f.read_bytes()) for f in files},ee_sha256=PIN,irx_sha256=o.irx_hash,names=names,menu_confirmations=choices,seat_pairs=keysets,
                 ee_instructions=o.ee_steps,iop_instructions=o.iop_steps,rpc=o.ops,key_ons=o.keys,operations=events,
                 stereo_frames=len(audio)//4,pcm_sha256=sha(audio),mixer_source_sha256=sha((SOURCE/'combat_audio.cpp').read_bytes()),
-                scope='Japanese factory 0..39 and hidden random outcome 42, both seats. Menu bank51/52 click/confirm/spoken cues, character names from 213378(49,...), character29 resident/stream split, both Nakoruru SE and streamed slots and mirror priority. Original EE+IRX with original disc bytes, SPU2 model versus native mixer PCM; no hardware recording.')
+                scope='Fully unlocked grid: every cell and the random pick (0..42, 44..47) plus Kuroko 48, both seats. Menu bank51/52 click/confirm/spoken cues, character names from 213378(49,...), character29 resident/stream split, both Nakoruru SE and streamed slots and mirror priority. Original EE+IRX with original disc bytes, SPU2 model versus native mixer PCM; no hardware recording.')
     OUT.write_text(json.dumps(report,indent=2)+'\n');print(len(names),'name routes',o.keys,'key-ons',len(audio)//4,'stereo frames')
 
 if __name__=='__main__':

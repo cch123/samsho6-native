@@ -24,11 +24,10 @@ float value(ScalarFloat v) { return std::bit_cast<float>(v.bits); }
 const std::vector<EffectRecord>& EffectBank::action(unsigned bank,unsigned actionId) {
     const auto key=std::make_pair(bank,actionId);
     if(auto i=clips_.find(key);i!=clips_.end())return i->second;
-    // Admit original landing, round/fight UI, and ending UI descriptors.
-    // Parsing another bank does not by itself prove its runtime side effects.
-    if (!((bank==1&&(actionId<=19||actionId==21))||(bank==2&&actionId<=9)||(bank==3&&actionId>=6&&actionId<=25)||(bank==5&&actionId<32)||(bank==6&&actionId<6)||
-          (bank==4&&actionId<=18)||(bank==7&&(actionId<=17||(actionId>=24&&actionId<=26)))))
-        throw std::runtime_error("Effect action outside admitted battle subset");
+    // Every non-empty action of the seven banks (32 slots each) is admitted;
+    // validate_effect_quads.py compares all of them with the original 123330.
+    if(bank<1||bank>7||actionId>=32)
+        throw std::runtime_error("Effect action outside the original banks "+std::to_string(bank)+"/"+std::to_string(actionId));
     constexpr const char* files[]={"","01HitFlash.bin","02Guard.bin","03etc.bin","04tenso.bin","Display.bin","Display2.bin","Display3.bin"};
     const auto path=assets_/files[bank];
     std::ifstream in(path,std::ios::binary);

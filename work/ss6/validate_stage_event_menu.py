@@ -103,7 +103,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as temp:
         folder=Path(temp);cpp=folder/'menu.cpp';exe=folder/'menu';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
         with ProcessPoolExecutor(2) as workers:result=list(workers.map(case,[(exe,0),(exe,1)]))
     OUT.write_text(json.dumps(dict(status='passed',elf_sha256=PIN,lib_sha256=digest(LIB),validator_sha256=digest(Path(__file__)),
                    scope='Both first-to-two fights won by real heavy slash inputs, real console menu and CONTINUE. Execute full Japanese 1b4228 comparing all 82 submitted words on every tick through the rematch. Before menu use prior battle requests/actor motion as external input. During the menu the original model retains its private state including the first unfrozen visit. Check non-referee queue stays unchanged, original 1b4138 resets the next match, compare first 75 fresh updates.',cases=result),indent=2)+'\n')

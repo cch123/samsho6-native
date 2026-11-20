@@ -37,7 +37,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         driver=Path(temp)/'probe.cpp';binary=Path(temp)/'probe'
         driver.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',driver,
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',driver,
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',binary],check=True)
         for side,perception in ((0,False),(1,False),(0,True),(1,True)):
             source=cpu_actor(side)

@@ -49,7 +49,7 @@ def main():
         work=Path(folder);lib=work/'runtime.a';shutil.copy2(LIB,lib);shutil.copy2(viewer,work/'viewer')
         compile_driver(work,'queue',CAPTURE_DRIVER,lib);compile_driver(work,'stage',STAGE_DRIVER,lib)
         sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
-        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
                         HERE/'sdl_slash_input_test.cpp',lib,*sdl,'-o',work/'keys'],check=True)
         for side in ([args.seat-1] if args.seat else (0,1)):
             for name,seq,wanted,focus in scenarios(side):

@@ -7,6 +7,7 @@ struct PlayerMatchStats;
 struct ContactEvent;
 class InputBindings;
 
+int contactFinishCategory(const StateEntryActor&,const InputBindings&); //14dac8
 int projectileFinishCategory(const AuxiliaryObject&,const StateEntryActor& owner,const StateEntryActor& opponent,
                              const InputBindings&);
 

@@ -54,7 +54,7 @@ void CharacterSelectArt::loadPages(std::istream& in,unsigned count,unsigned list
         q.depth=int(read(in,4));q.x=shortValue();q.y=shortValue();q.right=shortValue();q.bottom=shortValue();
         q.u=shortValue();q.v=shortValue();q.endU=shortValue();q.endV=shortValue();
         q.slot=read(in,1);q.substitution=read(in,1);q.cell=read(in,1);q.blend=read(in,1);q.color=read(in,4);
-        if(q.cell>=42||q.substitution>3||q.blend!=1)throw std::runtime_error("Unsupported character select draw");
+        if(q.cell>=CharacterSelect::cells||q.substitution>3||q.blend!=1)throw std::runtime_error("Unsupported character select draw");
         quads_.push_back(q);
     }
     const unsigned firstList=unsigned(lists_.size());
@@ -151,12 +151,15 @@ void CharacterSelectArt::spiritSeat(const CharacterSelect& state,unsigned side,s
     };
     // The two factory seats share the stage carousel. The seat that owns the
     // stage choice draws it once, in front of the two locked-in spirit panels.
+    // 12f8e8 gives 44..47 a seventh entry (spirit 8); the panel layout differs for every cursor,
+    // so those seats use their own page family (extracted groups 5/6).
+    const unsigned family=side+(seat.choiceCount==7?5u:0u);
     if(phase<=5) {
         constexpr unsigned limits[]{0,10,69,9,9,5};
-        submit(side,cursor,phase,phase==2?pulse:std::min(tick,limits[phase]));
+        submit(family,cursor,phase,phase==2?pulse:std::min(tick,limits[phase]));
         return;
     }
-    submit(side,cursor,14,0);
+    submit(family,cursor,14,0);
     if(phase==13||phase==17)
         submit(2+side,unsigned(state.stageOption),phase,phase==13?pulse:std::min(tick,5u));
     else if(phase==20||phase==22||phase==23||phase==24||phase==25) {
@@ -183,7 +186,7 @@ void CharacterSelectArt::paint(const CharacterSelect& state,std::span<uint8_t> r
         const auto& seat=state.seats[side];
         const unsigned phase=unsigned(seat.drawPhase);
         if(!phase)continue;
-        if(phase>=lastCount.size()||seat.cell<0||seat.cell>=42)throw std::runtime_error("Invalid selection animation state");
+        if(phase>=lastCount.size()||seat.cell<0||seat.cell>=CharacterSelect::cells)throw std::runtime_error("Invalid selection animation state");
         int tick=std::max(0,seat.drawCount);
         // In phase 2 the third ring starts on tick 20. Subsequent frames use
         // the 50-update rings from 12bfa0 indefinitely while awaiting input.
@@ -193,11 +196,13 @@ void CharacterSelectArt::paint(const CharacterSelect& state,std::span<uint8_t> r
         for(auto index:lists_.at(page)) {
             auto q=quads_[index];const Atlas* atlas=nullptr;
             if(q.substitution==1) {
-                const unsigned cell=(q.cell+6*(seat.cell/6))%42;
-                const auto& off=faces_.at(state.roster[cell]);
+                const unsigned cell=(q.cell+6*(seat.cell/6))%CharacterSelect::cells;
+                // Faces draw 5e0530[cells[face]]; Kuroko's face 0x31 reads the word after
+                // the 48 cells, 0x30, so a Kuroko cell shows character 48's tile.
+                const auto& off=faces_.at(state.kurokoCell(side,int(cell))?48:state.roster[cell]);
                 q.u+=off[0];q.endU+=off[0];q.v+=off[1];q.endV+=off[1];
             } else if(q.substitution==2||q.substitution==3) {
-                const int id=state.roster[seat.cell];
+                const int id=state.kurokoCell(side,seat.cell)?48:state.roster[seat.cell];
                 if(id==53||seat.controls)continue;
                 if(q.substitution==3) {
                     const auto& off=names_.at(id);

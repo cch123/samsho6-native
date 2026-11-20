@@ -74,7 +74,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as tmp:
         cpp=Path(tmp)/'notice.cpp';cpp.write_text(DRIVER);exe=cpp.with_suffix('')
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/stage_item_notices.cpp',LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/stage_item_notices.cpp',LIB,'-o',exe],check=True)
         cases=list(inputs());cmd=''
         for new,delta,x0,x1,c0,c1,depth,full,cam in cases:cmd+=' '.join(map(str,[len(new),*(v for pair in new for v in pair),delta,x0,x1,c0,c1,depth,int(full),*cam]))+'\n'
         buf=subprocess.run([exe,ASSETS],input=cmd.encode(),capture_output=True,check=True).stdout

@@ -101,7 +101,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as tmp:
         folder=Path(tmp);cpp=folder/'driver.cpp';exe=folder/'driver';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
         with ProcessPoolExecutor(6) as pool:results=list(pool.map(case,[(exe,i) for i in range(18)]))
         doc=dict(status='passed',elf_sha256=PIN,runtime_sha256=digest(LIB),probe_sha256=digest(exe),validator_sha256=digest(Path(__file__)),
                  scope='Priority-20 1b4138/1b4228, all 15 requested states, both sequential weapon deliveries, source 170480 called unmodified, crossings, gauge delta 128/256, global pause, hidden draw, original AID/ACT51, complete first 78 raw object words before/after the draw and the 82-word submitted record each tick. Input positions and round requests are fixtures. The separate shared world effects helper 1b5e30 has inactive unrelated entries in these cases.',results=results)

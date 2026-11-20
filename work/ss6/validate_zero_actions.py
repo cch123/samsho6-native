@@ -221,7 +221,7 @@ def keyboard_checks():
         d=Path(tmp);shutil.copy2(PKG/'ss6-viewer',d/'viewer')
         viewer_hash=digest(d/'viewer')
         flags=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
-        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
              HERE/'sdl_slash_input_test.cpp',build/'libss6-runtime.a',*flags,'-o',d/'keys'])
         for side in (0,1):
             for move in [*MOVES,'sustain','release-A','release-B']:
@@ -244,7 +244,7 @@ def gamepad_checks():
     with tempfile.TemporaryDirectory(prefix='ss6-zero-pads-') as tmp:
         work=Path(tmp);harness=work/'pads'
         flags=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
-        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
              HERE/'sdl_gamepad_input_test.cpp',EXE.parent/'libss6-runtime.a',*flags,'-o',harness])
         for side in (0,1):
             for command in [*MOVES,'release-A','release-B','L1']:

@@ -196,7 +196,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         path=Path(d);driver=path/'rank.cpp';driver.write_text(DRIVER)
         exe=path/'rank'
-        subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',driver,
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',driver,
                         ROOT/'src/console_attract_ranking.cpp',ROOT/'src/scalar_float.cpp',
                         ROOT/'src/game_random.cpp','-o',exe],check=True)
         verify(exe,starts,want)

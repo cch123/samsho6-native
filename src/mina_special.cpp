@@ -1,4 +1,5 @@
 #include "mina_special.hpp"
+#include "soft_double.hpp"
 #include "battle_round.hpp"
 #include "ground_state.hpp"
 #include "knockout.hpp"
@@ -187,11 +188,9 @@ void updateMinaWeapon(TaggedTaskPools& pools,uint32_t task,const AuxiliaryObject
         AuxiliaryObjects::stop(o);
         o[0x50/4]=uint32_t(vx.truncate());o[0x5c/4]=uint32_t(vy.truncate());o[0x128/4]=1;
     } else {
-        // libgcc soft double (310be0/310fa0/311390/310ee0/311440): IEEE double,
-        // round to nearest, then truncation toward zero.
+        // libgcc fp-bit (310be0/310fa0/311390/310ee0/311440): see soft_double.hpp.
         const auto blend=[](F fresh,uint32_t old) {
-            const double v=double(std::bit_cast<float>(fresh.bits))*0.6+double(int32_t(old))*0.4;
-            return uint32_t(int32_t(v));
+            return uint32_t(softBlend(std::bit_cast<float>(fresh.bits),int32_t(old),0.6,0.4));
         };
         o[0x50/4]=blend(vx,o[0x50/4]);
         o[0x5c/4]=blend(vy,o[0x5c/4]);

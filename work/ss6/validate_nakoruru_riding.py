@@ -192,7 +192,7 @@ def main():
         lib=Path(tmp)/'libss6-runtime.a';shutil.copyfile(BUILD/'libss6-runtime.a',lib)
         lib_hash=sha256(lib.read_bytes()).hexdigest()
         cpp=Path(tmp)/'riding.cpp';cpp.write_text(DRIVER);exe=cpp.with_suffix('')
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,lib,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,lib,'-o',exe],check=True)
         with ProcessPoolExecutor(max_workers=6) as pool:
             rows=[];failures=[]
             jobs=[pool.submit(verify,(exe,seat,name)) for name in cases for seat in (0,1)]

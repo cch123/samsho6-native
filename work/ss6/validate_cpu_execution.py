@@ -157,7 +157,7 @@ def main():
     groups=[('chain cancels',*chains()),('direct',*direct()),('live P1',*live(0)),('live P2',*live(1)),('P1 with both perception passes',*live(0,True)),('P2 with both perception passes',*live(1,True))]
     with tempfile.TemporaryDirectory() as temp:
         driver=Path(temp)/'probe.cpp';binary=Path(temp)/'probe';driver.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',driver,ROOT/'src/cpu_execution.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',driver,ROOT/'src/cpu_execution.cpp',
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',binary],check=True)
         for name,rows,expected in groups:
             out=subprocess.run([binary,ASSETS],input=''.join(' '.join(map(str,r))+'\n' for r in rows),

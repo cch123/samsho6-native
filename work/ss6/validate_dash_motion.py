@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Compare native armed Haohmaru 66/44 to the original input and actor callbacks."""
+"""Compare native armed 66/44 (normal 23/36 and 24) to the original input and actor callbacks.
+
+--character selects the fighter; 168bf8 bit 4 fighters take the single step dash (169f10)."""
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 import hashlib
@@ -20,6 +22,8 @@ ELF = ASSETS.parent / 'SLPS_255.59'
 PIN = '72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf'
 PROBE = ROOT / 'work/ss6/build-native/ss6-ground-state-probe'
 REPORT = ROOT / 'outputs/ss6-feasibility/dash_motion_validation.json'
+def report_path(character):
+    return REPORT if character==0 else REPORT.with_name(f'dash_motion_{character:02}_validation.json')
 
 
 def digest(path):
@@ -111,11 +115,26 @@ class Original:
         return values
 
 
-def trajectories(player):
+def trajectories(player,step=False):
     forward, back, down = (0x40,0x80,0x20) if player else (0x80,0x40,0x20)
     run = [0,forward,0,forward]
     backstep = [0,back,0,back]
     neutral = [0]*70
+    if step:
+        # 169e00 with 168bf8 bit 4: ACT 30 once, then 169f10 / 169a50.
+        yield 'step-tap', run+neutral, {30}
+        yield 'step-hold', run+[forward]*42+neutral, {30}
+        yield 'step-down', run+[down]*40+neutral, {30}
+        yield 'step-back', run+[back]*20+neutral, {30}
+        yield 'backstep-neutral', backstep+neutral, {36}
+        yield 'backstep-crouch', backstep+[down]*40+neutral, {36}
+        yield 'single-forward', [forward]*30+neutral, set()
+        for direction,prefix,action in ((forward,'forward',30),(back,'back',36)):
+            for gap,required in ((11,{action}),(12,set())):
+                yield f'{prefix}-gap-{gap}',[0,direction]+[0]*gap+[direction]+neutral,required
+        for index, button in enumerate((0x100,0x200,0x400,0x800)):
+            yield f'step-button-{index}', run+[forward]*6+[forward|button]+neutral, {30}
+        return
     yield 'run-long-hold', run+[forward]*42+neutral, {28,34}
     yield 'run-tap', run+neutral, {28,34}
     yield 'run-reverse', run+[forward]*12+[back]*14+neutral, {28,34}
@@ -134,8 +153,8 @@ def trajectories(player):
 
 
 def original_trace(case):
-    player,label,held,required=case
-    oracle=Original(player)
+    player,label,held,required,character=case
+    oracle=Original(player,character)
     commands=[f'reset {player} {player} {500 if player else 120} {120 if player else 500}','combat']
     expected=[]
     for bits in held:
@@ -143,8 +162,8 @@ def original_trace(case):
         expected.append(oracle.frame(bits))
     actions={row[54] for row in expected}
     assert required <= actions,(player,label,required,actions)
-    if not required:assert not actions & {28,34,36},(player,label,actions)
-    summary=dict(player=player,case=label,frames=len(expected),actions=sorted(actions),
+    if not required:assert not actions & {28,30,34,36},(player,label,actions)
+    summary=dict(character=character,player=player,case=label,frames=len(expected),actions=sorted(actions),
                  peak_y=max(struct.unpack('<f',struct.pack('<I',r[69]))[0] for r in expected),
                  final_x=struct.unpack('<f',struct.pack('<I',expected[-1][68]))[0],
                  original_instructions=oracle.instructions)
@@ -153,7 +172,7 @@ def original_trace(case):
 
 def check_native(probe,trace):
     summary,commands,expected=trace
-    result=subprocess.run([probe,ASSETS],text=True,capture_output=True,input='\n'.join(commands)+'\n')
+    result=subprocess.run([probe,ASSETS,str(summary['character'])],text=True,capture_output=True,input='\n'.join(commands)+'\n')
     assert result.returncode==0,(summary,result.stderr)
     rows=result.stdout.splitlines()[2:]
     assert len(rows)==len(expected)
@@ -165,8 +184,11 @@ def check_native(probe,trace):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--original-only',action='store_true');parser.add_argument('--case')
+    parser.add_argument('--character',type=int,default=0)
     args=parser.parse_args();assert digest(ELF)==PIN
-    cases=[(i,name,masks,required) for i in range(2) for name,masks,required in trajectories(i) if args.case in (None,name)]
+    # 168bf8: bit 4 of the fighter's movement byte at 4e5420 selects the step dash.
+    step=bool((Original(0,args.character).p.read(0x4e5420+args.character,1)>>4)&1)
+    cases=[(i,name,masks,required,args.character) for i in range(2) for name,masks,required in trajectories(i,step) if args.case in (None,name)]
     assert cases
     # Generate independent original traces before taking the native binary
     # snapshot. An ordinary parallel build can replace the executable path.
@@ -187,7 +209,7 @@ def main():
                       'Compares all 171 input features, actor state/conditions/callbacks, timers, body flags, '
                       'animation clock, fixed-point motion, X/Y. Independent actor fixtures with fixed opponent '
                       'position; stage clamps, contact resolution and sound are separate.')
-    REPORT.write_text(json.dumps(report,indent=2)+'\n');print(f"{len(results)} cases, {report['snapshots']} snapshots PASS")
+    report_path(args.character).write_text(json.dumps(report,indent=2)+'\n');print(f"{len(results)} cases, {report['snapshots']} snapshots PASS")
 
 
 if __name__=='__main__':

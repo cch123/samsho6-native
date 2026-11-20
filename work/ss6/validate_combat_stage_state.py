@@ -268,7 +268,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         src=ROOT/'src';cpp=Path(tmp)/'stage.cpp';driver=Path(tmp)/'stage'
         cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',src,cpp,src/'combat_stage_state.cpp',src/'game_random.cpp',src/'stage_camera.cpp',src/'scalar_float.cpp','-o',driver],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',src,cpp,src/'combat_stage_state.cpp',src/'game_random.cpp',src/'stage_camera.cpp',src/'scalar_float.cpp','-o',driver],check=True)
         tested=synthetic(driver)
     live=actual()
     moving=camera_motion()

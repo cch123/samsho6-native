@@ -14,10 +14,10 @@ int alphaMode(int32_t action) {
     return action>=529?1:0;
 }
 }
-void updateActorColor(StateEntryActor& a,const InputSystemConfig& config) {
-    //Characters11/33 also mutate registered objects/visibility. Do not
-    //silently omit those branches when admitting another playable actor.
-    if(!playableFighter(a.character)||a.character!=config.character||config.system>5)
+void updateActorColor(StateEntryActor& a,const InputSystemConfig& config,uint32_t* kind4Flags38) {
+    //Character33 also mutates registered objects/visibility (14b240). Do not
+    //silently omit that branch when admitting it.
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8))
         throw std::runtime_error("Invalid fighter or spirit for actor color");
     ActorTimers timers{a.timerDelta,a.timers};
     a.bodyFlags38&=~0x40810000u;
@@ -51,6 +51,10 @@ void updateActorColor(StateEntryActor& a,const InputSystemConfig& config) {
             rgb=0x808080+(channel<<16)+(channel<<8)+red;
             a.bodyFlags38|=0x40000000;
         }
+    }
+    if(a.character==11) { // 14b2f8: Amakusa's alternate stance marks his body and first kind-4 object
+        if(a.flags23c&0x400000){a.bodyFlags38|=0x80000000u;if(kind4Flags38)*kind4Flags38|=0x80000000u;}
+        else{a.bodyFlags38&=~0x80000000u;if(kind4Flags38)*kind4Flags38&=~0x80000000u;}
     }
     int targetAlpha=255;
     if(timers.values[17]>0) {

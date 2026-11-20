@@ -94,7 +94,7 @@ def main():
                              *[p.read(0x3ebf30+2*i,2) for i in (511,512,1023)]])
     with tempfile.TemporaryDirectory() as td:
         folder=Path(td);cpp=folder/'test.cpp';exe=folder/'test';cpp.write_text(CPP)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/battle_gauges.cpp',ROOT/'src/damage.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/battle_gauges.cpp',ROOT/'src/damage.cpp',
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         proc=subprocess.run([exe,ASSETS],input=''.join(' '.join(map(str,r))+'\n' for r in rows),text=True,capture_output=True,check=True)
     values=[list(map(int,line.split())) for line in proc.stdout.splitlines()]

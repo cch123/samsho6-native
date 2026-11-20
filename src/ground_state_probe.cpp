@@ -13,8 +13,10 @@
 
 int main(int argc,char** argv) {
  try {
-    if(argc!=2)throw std::runtime_error("Expected assets directory");
-    ss6::ActionBank bank(argv[1],true);ss6::GroundStateRuntime ground(argv[1]);ss6::HumanInputPipeline human(argv[1]);
+    if(argc!=2&&argc!=3)throw std::runtime_error("Expected assets directory and optional fighter");
+    // Optional argv[2]: the fighter resource (default resource 00).
+    const unsigned fighter=argc==3?unsigned(std::stoul(argv[2])):0;
+    ss6::ActionBank bank(argv[1],true,fighter);ss6::GroundStateRuntime ground(argv[1]);ss6::HumanInputPipeline human(argv[1]);
     ss6::ReactionTables reactions(argv[1]);
     ss6::RoundInitialization roundInitialization(argv[1]);ss6::RoundActorStorage roundStorage;
     ss6::SoundSelection sounds(argv[1]);
@@ -51,7 +53,7 @@ int main(int argc,char** argv) {
             object->timeline.setPosition(x,0);
             a.flags23c=0x1000;a.flags248=2;a.stateFlags19a=0x9e;a.state1a4=0xffffffff;
             a.fieldA30=200;a.swordCurrent134=a.swordMaximum138=25600;a.conditions15c[1]=1;
-            a.registry28c[2]=0xffffffff;
+            a.registry28c[2]=0xffffffff;a.character=fighter;config.character=fighter;
             opponent.flags23c=0x1000;opponent.x=other;
             frame.player=entry.player=player;frame.expectedFacing=mirror;frame.battleState=4;
             groundFrame.opponentX=other;threat.distance=int(other>x?other-x:x-other);

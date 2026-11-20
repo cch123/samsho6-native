@@ -1,4 +1,5 @@
 #pragma once
+#include "kazuki_fire.hpp"
 #include "projectile_engine.hpp"
 #include "round_dispatcher.hpp"
 #include "human_input.hpp"
@@ -128,6 +129,7 @@ private:
     MatchEndingRules ending_;
     WeaponLock lock_;
     AuxiliaryObjects aux_;
+    AngleTrig angleTrig_; // angle_trig.bin (Kazuki's fire)
     DamageTables damage_;
     ReactionTables reactions_;
     std::array<JudgmentData,3> judgments_;
@@ -154,12 +156,13 @@ private:
                       const AuxiliaryObject& image,ContactMarks& source,ContactMarks& target);
     enum class DamageOrigin { FighterRecord, ProjectileRecord, CaptureScript };
     void interruptConcentration(unsigned target);
+    void updateTakeLoser(unsigned player,uint32_t task);
     void scriptDamage(unsigned target,int base,DamageOrigin,int projectileCategory=10);
     bool resolveStrike(const ContactEvent&,const CollisionPlayer&,const CollisionPlayer&,ContactMarks&,ContactMarks&,uint32_t sourceHandle=0);
     void markOffscreen(); // 142f30
     void minaScriptEvent(unsigned player,uint8_t type); // 164c58 events 33/34
-    void minaProjectileTask(unsigned player,uint32_t task);
-    uint32_t spawnMinaProjectile(unsigned player,unsigned id,unsigned variant,const ScriptRow* row);
+    void scriptProjectileTask(unsigned player,uint32_t task);
+    uint32_t spawnScriptProjectileFor(unsigned player,unsigned id,unsigned variant,const ScriptRow* row);
     void updateStage();
     void visitActor(unsigned,const std::array<NormalizedPadSample,2>&);
 };

@@ -1,5 +1,9 @@
 #include "ground_state.hpp"
+#include <execinfo.h>
+#include <algorithm>
+#include <cstdlib>
 #include "fighter_roster.hpp"
+#include "poppy.hpp"
 #include "damage.hpp"
 #include "battle_round.hpp"
 #include "dash_motion.hpp"
@@ -16,6 +20,7 @@
 #include "haohmaru_special.hpp"
 #include "rimururu_special.hpp"
 #include "hanzo_special.hpp"
+#include "script_fighter.hpp"
 #include "mina_special.hpp"
 #include "chample.hpp"
 #include "nakoruru_eagle_attack.hpp"
@@ -35,16 +40,34 @@
 #include <stdexcept>
 
 namespace ss6 {
+struct StateEntryActor;struct GroundStateFrame;
+void launchPakuPaku(const StateEntryActor&,const GroundStateFrame&);
 namespace {
 bool unsupportedForm(const StateEntryActor& a) {
-    return (a.flags23c&(a.character==1?0x500000u:0xf00000u))!=0;
+    uint32_t mask=(a.character==1||a.character==45)?0x500000u:0xf00000u; // 1 and 45 ride (0x200000)
+    if(a.character==11)mask&=~0x400000u; // Amakusa's alternate stance (script events 21/22, 14bba8)
+    if(a.character==19)mask&=~0x800000u; // Rera riding Shikuru (1f8f10 / 1f94c0)
+    return (a.flags23c&mask)!=0;
 }
+}
+std::optional<WhirlwindRows> GroundStateRuntime::whirlwindRows(const StateEntryActor& v) const {
+    if(v.stateTable()!=2)return std::nullopt;
+    const int k=v.stateIndex()-80;const unsigned source=v.pendingCharacter254;
+    if(k<0||k>2||source>=51)return std::nullopt;
+    const auto address=victimTables_.find(source,unsigned(k));
+    if(!address)return std::nullopt;
+    const auto& row=victimTables_.row(address);
+    if(!(row.flags&0x40)||row.childAct!=0x217)return std::nullopt;
+    return WhirlwindRows{source,victimTables_.fighters().damageSource(source),address,victimTables_.row(address+40).type==0x08};
+}
+void UnportedFighterState::traceOrigin() {
+    if(!std::getenv("SS6_DEBUG_HANDLER"))return;
+    void* frames[8];const int n=backtrace(frames,8);backtrace_symbols_fd(frames,n,2);
 }
 bool GroundStateRuntime::supports(int table,int index) {
-    if(table==0)return (index>=0&&index<=14)||(index>=16&&index<=34)||
-                        index==35||(index>=37&&index<=60)||index==62||index==63;
-    if(table==1)return (index>=0&&index<=24)||index==26||index==29||index==31||index==33||(index>=35&&index<=54)||haohmaruSpecialSupports(index)||(index>=81&&index<=91);
-    return table==2&&((index>=0&&index<=7)||(index>=10&&index<=16)||
+    if(table==0)return (index>=0&&index<=60)||index==62||index==63;
+    if(table==1)return (index>=0&&index<=24)||index==26||index==29||index==31||index==33||(index>=35&&index<=54)||(index>=64&&index<96);
+    return table==2&&((index>=0&&index<=7)||(index>=10&&index<=16)||(index>=20&&index<=26)||
         index==30||index==31||(index>=32&&index<=49)||(index>=52&&index<=58)||KnockdownPlayback::supportsFall(index)||index==61||index==74||index==75||(index>=80&&index<=87)||index==96);
 }
 void GroundStateRuntime::prepareInput(StateEntryActor& a,const PermissionActor& opponent,
@@ -53,6 +76,10 @@ void GroundStateRuntime::prepareInput(StateEntryActor& a,const PermissionActor& 
         throw std::runtime_error("Ground input phases require a supported ordinary fighter");
     a.flags244=ordinaryStateGates(a.flags244,a.flags23c,a.stateTable(),a.stateIndex(),
         a.effectiveFlags(),a.bodyFlags108,a.timers[5],ordinary_.far(distance,a.flags23c&0x1000,opponent.flags23c&0x1000,a.character,opponent.character));
+    // 151b00 table-1 branch: Rasetsu Galford with the replica out (244:2000).
+    if(a.character==41&&a.stateTable()==1&&(a.flags244&0x2000))a.flags244=((a.flags244|1)&~2u&~4u)&~8u;
+    // 151c24: the weaponless fighters 43..47 (169388) are re-armed on every visit.
+    if(a.character>=43&&a.character<=47)a.flags23c|=0x1000;
     //151b00 also transfers the one-visit248:04000000 flag and clears24c:4.
     //The opponent41 forced-direction branch is excluded by the resource check.
     a.flags248=(a.flags248&0x04000000)?a.flags248|0x08000000:a.flags248&~0x08000000u;
@@ -61,6 +88,27 @@ void GroundStateRuntime::prepareInput(StateEntryActor& a,const PermissionActor& 
     if(timers.advanceActor({a.state194,a.stateTable(),bool(a.flags23c&0x10),
             bool(input.sampledFeatures[0xd8/4]),bool(input.sampledFeatures[0x100/4])}))objects.releaseAttackGates();
     a.timers=timers.values;
+}
+void GroundStateRuntime::enterStateNow(PlayerObject& o,StateEntryActor& a,ActorCommandInput& input,const InputSystemConfig& config,
+                                       StateEntryContext& context,unsigned player,uint32_t& opponentFlagsB8) const {
+    const unsigned saved=context.player;const auto flags=context.opponentFlagsB8;
+    context.player=player;context.opponentFlagsB8=opponentFlagsB8;
+    captureBody(o,a);entries_.transition(a,input,config,context);restoreBody(o,a);
+    opponentFlagsB8=context.opponentFlagsB8;context.player=saved;context.opponentFlagsB8=flags;
+}
+void GroundStateRuntime::seizeOpponent(StateEntryActor& a,StateEntryContext& context,const GroundStateFrame& frame) const {
+    if(!frame.weaponLock||!frame.opponentInput)throw std::runtime_error("Seizing the opponent requires its live controls");
+    auto& world=*frame.weaponLock;auto& victim=world.opponent;
+    victim.pendingCharacter254=uint8_t(a.character);victim.bodyField124=0;
+    victim.pendingTable=2;victim.pendingIndex=96;victim.request18c=1;
+    // 1491e0 runs immediately on the other seat. The victim registers its
+    // callback on its own actor turn, even if it ran first.
+    const unsigned player=context.player;const auto flags=context.opponentFlagsB8;
+    context.player=1-player;context.opponentFlagsB8=a.flagsB8;
+    InputSystemConfig opponent{frame.opponentSystem,victim.character,{}};
+    captureBody(world.opponentBody,victim);
+    entries_.transition(victim,*frame.opponentInput,opponent,context);restoreBody(world.opponentBody,victim);
+    a.flagsB8=context.opponentFlagsB8;context.player=player;context.opponentFlagsB8=flags;
 }
 void GroundStateRuntime::captureBody(const PlayerObject& o,StateEntryActor& a) {
     const auto c=o.timeline.clock();const auto m=o.timeline.motion();
@@ -132,17 +180,32 @@ void GroundStateRuntime::begin(PlayerObject& o,StateEntryActor& a,const InputSys
     if(state>=32&&state<=34) {
         if(a.character==1)beginNakoruruDismount(a);
         else {
-            // 173cb4 resumes the falling clip directly and preserves the teleport height.
-            a.jumpDirectionA44=state-32;
-            a.queuedActionA3c=16+4*a.jumpDirectionA44+!armed;
-            a.flags248&=~0x800u;
-            a.callbacks260[0]=0x173b18;a.callbacks260[1]=0;a.callbacks260[2]=0xffffffff;
+            // 173c78(cb, dir): the falling clip resumes directly and preserves the
+            // current height. Several fighters fall through their own clips,
+            // which carry the descent motion (Suija's hover ends in 0x216..0x218).
+            const int dir=state-32;a.jumpDirectionA44=dir;
+            auto pair=[&](int d0,int d1,int d2){a.queuedActionA3c=(dir==1?d1:dir==2?d2:d0)+!armed;a.flags248&=~0x800u;};
+            uint32_t handler=0x173b18;
+            switch(a.character) {
+            case 0x13:pair(0x2cd,0x2cf,0x2d1);break;
+            case 0x15:a.queuedActionA3c=dir==1?0x217:dir==2?0x218:0x216;a.flags248&=~0x800u;break; // 1493c0, not a pair
+            case 8:pair(0x242,0x240,0x244);break;
+            case 0x20:break; // the current clip continues
+            case 0x1f:handler=0x173a68;break; // the ascending callback, current clip
+            case 0x2d:pair(0x246,0x247,0x248);break;
+            default:
+                if(a.character==0x17&&(a.flags244&0x100000)){a.flags244&=~0x100000u;pair(0x250,0x252,0x254);break;}
+                if(a.character==0x23&&dir==1){pair(0x23c,0x23c,0x23c);break;}
+                // 4e9888: 16, 20, 24 by direction.
+                a.queuedActionA3c=16+4*dir+!armed;a.flags248&=~0x800u;
+            }
+            a.callbacks260[0]=handler;a.callbacks260[1]=0;a.callbacks260[2]=0xffffffff;
         }
         return;
     }
     if(state>=17&&state<=22){beginJump(o,a);return;}
     if(state==8||state==16||state==38){beginAirGuard(o,a);return;}
-    if(state==23||state==24){beginDash(o,a);return;}
+    if(state==23||state==24||state==36){beginDash(o,a,ordinary_.movementFlags(a.character));return;}
     if(state==54||state==55){beginRecoveryRoll(o,a);return;}
     if(state==37){beginGroundThrow(o,a,context,frame);return;}
     if(state==49||state==50){beginWeaponHandling(a);return;}
@@ -160,6 +223,7 @@ void GroundStateRuntime::begin(PlayerObject& o,StateEntryActor& a,const InputSys
         action=(state==4?44:46)+!armed;break;
     case 6:case 7:a.controlCounterC0=2;action=(state==6?286:290)+!armed;break;
     case 9:case 10:action=(state==9?6:8)+!armed;break;
+    case 15:action=0x22a+!armed;break; // 1745b0 (Rera landing on her wolf): 169a50 mode 1
     case 11:case 13:a.controlCounterC0=1;action=(state==11?278:282)+!armed;break;
     case 12:case 14:a.controlCounterC0=4;action=(state==12?280:284)+!armed;break;
     case 25:case 26:case 27:case 28:case 29:case 30: {
@@ -219,7 +283,7 @@ void GroundStateRuntime::begin(PlayerObject& o,StateEntryActor& a,const InputSys
         // directions for the two starting sides.
         a.opponentX=frame.opponentX;a.faceOpponent();restoreBody(o,a);
         stopAtGround(o);captureBody(o,a);
-        if(config.system==5&&(state==56||state==58)) {
+        if((config.system==5||config.system==8)&&(state==56||state==58)) { // 14f9b8: systems 5 and 8
             action=(state==56?92:84)+!armed;
             a.flags248&=~0x800u;
             frame.spawnMikiri(action+2);
@@ -230,7 +294,7 @@ void GroundStateRuntime::begin(PlayerObject& o,StateEntryActor& a,const InputSys
         // The forward dive fixes facing at takeoff. Low evasion keeps the
         // current facing. Both release their held animation record on landing.
         if(state==59){a.opponentX=frame.opponentX;a.faceOpponent();restoreBody(o,a);}
-        const bool lowSlide=state==60&&config.system==5;
+        const bool lowSlide=state==60&&(config.system==5||config.system==8);
         if(lowSlide)frame.spawnMikiri(102+!armed);
         stopAtGround(o);captureBody(o,a);
         a.queuedActionA3c=(lowSlide?100:state==59?68:66)+!armed;a.flags248&=~0x800u;
@@ -245,8 +309,11 @@ void GroundStateRuntime::begin(PlayerObject& o,StateEntryActor& a,const InputSys
     a.queuedActionA3c=int(action); //1493c0 queues actorA3c, not bodyC4 yet.
     if(state>=4) {
         a.callbacks260[0]=0x169a50;a.callbacks260[1]=0;a.callbacks260[2]=0xffffffff;
-        a.callbacks260[5]=(state==6||state==7||state==52)?4:(state==11||state==13)?2:0;
+        a.callbacks260[5]=(state==6||state==7||state==52)?4:(state==11||state==13)?2:state==15?1:0;
     }
+}
+void GroundStateRuntime::recoverStanding(PlayerObject& o,StateEntryActor& a,float opponentX) {
+    GroundStateFrame frame;frame.opponentX=opponentX;recover(o,a,frame);
 }
 void GroundStateRuntime::recover(PlayerObject& o,StateEntryActor& a,const GroundStateFrame& frame) {
     const auto c=o.timeline.clock();const float x=o.timeline.motion().x;
@@ -289,6 +356,46 @@ void GroundStateRuntime::beginDamage(PlayerObject& o,StateEntryActor& a,const Ac
         return;
     }
     if(state==58){beginIssenVictim(o,a,frame);return;}
+    if(state>=24&&state<=26) { // 172580(cb, k): launched 64 back, 48 up, ACT 0x1aa/0x1ab
+        const unsigned k=unsigned(state-24);
+        a.bodyState128=k; // body+128
+        if(frame.battle)frame.battle->flags138|=4;
+        a.flags244&=~0x20000u;
+        a.flags244&=~0x10u; // 13a858 (byte 43d05e) is 0 under console VS
+        auto m=o.timeline.motion();
+        const ScalarFloat x{std::bit_cast<uint32_t>(m.x)},d=ScalarFloat::integer(64);
+        m.x=std::bit_cast<float>(((o.timeline.clock().objectFlags&0x80000)?x.add(d):x.sub(d)).bits);
+        m.y=48.0f;
+        m.vx=int32_t(k==0?0xfffb0000u:k==1?0xfff80000u:0xfff50000u);m.ax=0;m.ay=-0x3d70;m.vy=0x80000;
+        o.timeline.setMotion(m);o.pendingFlags|=8;
+        a.queuedActionA3c=0x1aa+!(a.flags23c&0x1000);a.flags248&=~0x800u;
+        a.callbacks260[0]=0x1726b0;a.callbacks260[1]=2;a.callbacks260[2]=0xffffffffu;
+        return;
+    }
+    if(state==22) { // 172408: ACT 0x1ac/0x1ad, landing as state 20
+        a.queuedActionA3c=0x1ac+!(a.flags23c&0x1000);a.flags248&=~0x800u;
+        a.callbacks260[0]=0x172288;a.callbacks260[1]=2;a.callbacks260[2]=0xffffffffu;
+        return;
+    }
+    if(state==23) { // 172458: ACT 0x186/0x187 until a wall, then state 21's 0x1aa
+        if(frame.battle)frame.battle->flags138|=4;
+        a.queuedActionA3c=0x186+!(a.flags23c&0x1000);a.flags248&=~0x800u;
+        a.callbacks260[0]=0x1724c8;a.callbacks260[1]=2;a.callbacks260[2]=0xffffffffu;
+        a.flags244&=~0x20000u;
+        return;
+    }
+    if(state==21) { // 1722e0: blown back toward a wall, ACT 0x1aa/0x1ab
+        if(frame.battle)frame.battle->flags138|=4; // 140630(2)
+        a.flags244&=~0x20000u;
+        a.queuedActionA3c=0x1aa+!(a.flags23c&0x1000);a.flags248&=~0x800u;
+        a.callbacks260[0]=0x172350;a.callbacks260[1]=2;a.callbacks260[2]=0xffffffffu;
+        return;
+    }
+    if(state==20) { // 172238: thrown into the air (Enja's flame), ACT 0x1a8/0x1a9
+        a.queuedActionA3c=0x1a8+!(a.flags23c&0x1000);a.flags248&=~0x800u;
+        a.callbacks260[0]=0x172288;a.callbacks260[1]=2;a.callbacks260[2]=0xffffffffu;
+        return;
+    }
     if(state==74||state==75){beginAirHurt(o,a);return;}
     if(state==6){beginAirBlockReaction(o,a);return;}
     if(state==15) {
@@ -325,20 +432,22 @@ DownedEvents GroundStateRuntime::downedCallback(PlayerObject& o,StateEntryActor&
     if(entering) {
         if(KnockdownPlayback::supportsFall(down.index)) {
             if(down.index==70&&a.fieldA30>0&&!(a.flags23c&0x80)&&frame.sound)
-                frame.sound->act(155,context.player,a.character,a.flags23c,3,0,*frame.random);
-            if(down.index==67)frame.battle->flags138|=4;
+                frame.sound->act(155,context.player,voiceCharacter(a),a.flags23c,3,0,*frame.random);
+            if(KnockdownPlayback::fallType(down.index)==3)frame.battle->flags138|=4;
             playback.beginHeavy(o,down,timers,&a.queuedActionA3c);a.callbacks260[6]=KnockdownPlayback::fallVariant(down.index);
         } else if(down.index==16)playback.beginDown(o,down,&a.queuedActionA3c);
         else playback.beginRise();
     } else {
         switch(a.callbacks260[0]) {
         case 0x171b98:playback.phase=DownedPhase::WallApproach;break;
-        case 0x171eb0:case 0x171c80:case 0x1715b0:case 0x1717a0:playback.phase=DownedPhase::FirstLanding;break;
-        case 0x171f58:case 0x171d60:case 0x171640:case 0x171838:playback.phase=DownedPhase::SecondLanding;break;
+        case 0x171eb0:case 0x171c80:case 0x1715b0:case 0x1717a0:case 0x1719a8:playback.phase=DownedPhase::FirstLanding;break;
+        case 0x171f58:case 0x171d60:case 0x171640:case 0x171838:case 0x171a38:playback.phase=DownedPhase::SecondLanding;break;
         case 0x169a50:
             if(a.callbacks260[5]!=5&&a.callbacks260[5]!=6)throw std::runtime_error("Unsupported downed finish mode");
             playback.phase=DownedPhase::Finish;break;
         case 0x170cd8:playback.phase=DownedPhase::DownWait;break;
+        case 0x170de8:playback.phase=DownedPhase::StayDown;break; // system 8 (and custom 6) hold-down
+        case 0x170ef8:playback.phase=DownedPhase::RiseDelay;break;
         case 0x1706c0:playback.phase=DownedPhase::RiseQueued;break;
         case 0x170758:playback.phase=DownedPhase::Rising;break;
         default:throw std::runtime_error("Unsupported downed callback");
@@ -355,7 +464,7 @@ DownedEvents GroundStateRuntime::downedCallback(PlayerObject& o,StateEntryActor&
             controls.wallBounds={{frame.battle->camera.left,frame.battle->camera.right}};
         }
         events=playback.update(o,down,timers,controls,*frame.random,&a.queuedActionA3c);
-        if(down.index==67) {
+        if(KnockdownPlayback::fallType(down.index)==3) {
             bool impact=false;
             if(previous==DownedPhase::WallApproach&&playback.phase==DownedPhase::FirstLanding) {
                 a.bodyState128=0;
@@ -368,24 +477,26 @@ DownedEvents GroundStateRuntime::downedCallback(PlayerObject& o,StateEntryActor&
             } else if(previous==DownedPhase::SecondLanding&&playback.phase==DownedPhase::Finish) {
                 impact=true;
             }
-            if(impact&&frame.sound)frame.sound->act(31,context.player,a.character,a.flags23c,3,0,*frame.random);
+            if(impact&&frame.sound)frame.sound->act(31,context.player,voiceCharacter(a),a.flags23c,3,0,*frame.random);
             if(previous==DownedPhase::FirstLanding&&!events.dust&&o.timeline.clock().step==2&&!a.bodyState128) {
                 a.bodyState128=1;
                 if(frame.sound&&a.fieldA30>0&&!(a.flags23c&0x80))
-                    frame.sound->act(155,context.player,a.character,a.flags23c,3,0,*frame.random);
+                    frame.sound->act(155,context.player,voiceCharacter(a),a.flags23c,3,0,*frame.random);
             }
         }
         if(down.index==70&&frame.sound&&((previous==DownedPhase::FirstLanding&&playback.phase==DownedPhase::SecondLanding)||
             (previous==DownedPhase::SecondLanding&&playback.phase==DownedPhase::Finish)))
-            frame.sound->act(31,context.player,a.character,a.flags23c,3,0,*frame.random);
+            frame.sound->act(31,context.player,voiceCharacter(a),a.flags23c,3,0,*frame.random);
     }
     uint32_t handler=0;
     switch(playback.phase) {
     case DownedPhase::WallApproach:handler=0x171b98;break;
-    case DownedPhase::FirstLanding:handler=down.index==71?0x171eb0:down.index==67?0x171c80:KnockdownPlayback::backwardFall(down.index)?0x1717a0:0x1715b0;break;
-    case DownedPhase::SecondLanding:handler=down.index==71?0x171f58:down.index==67?0x171d60:KnockdownPlayback::backwardFall(down.index)?0x171838:0x171640;break;
+    case DownedPhase::FirstLanding:handler=KnockdownPlayback::landingCallbacks(down.index).first;break;
+    case DownedPhase::SecondLanding:handler=KnockdownPlayback::landingCallbacks(down.index).second;break;
     case DownedPhase::Finish:handler=0x169a50;a.callbacks260[5]=KnockdownPlayback::landsOnBack(down.index)?6:5;break;
     case DownedPhase::DownWait:handler=0x170cd8;break;
+    case DownedPhase::StayDown:handler=0x170de8;break;
+    case DownedPhase::RiseDelay:handler=0x170ef8;break;
     case DownedPhase::RiseQueued:handler=0x1706c0;break;
     case DownedPhase::Rising:handler=0x170758;break;
     case DownedPhase::Holding:handler=0x169a50;a.callbacks260[5]=7;break;
@@ -398,7 +509,12 @@ DownedEvents GroundStateRuntime::downedCallback(PlayerObject& o,StateEntryActor&
     if(down.pendingTable!=-1){a.pendingTable=int16_t(down.pendingTable);a.pendingIndex=int16_t(down.pendingIndex);}
     if(down.forceState)a.request18c=1;
     if(events.dust)frame.effects->landing(o.timeline.motion().x,o.timeline.clock().objectFlags&0x80000);
-    if(events.lifeAdjustment)throw std::runtime_error("Downed health request outside system0");
+    // 14a8d0(-10): the system-8 delayed rise heals through the pending-damage queue (game-mode,
+    // time-out (140788) and opponent-KO gates as in queueLifeChange).
+    if(events.lifeAdjustment) {
+        if(!frame.battle)throw std::runtime_error("The delayed-rise heal needs the battle");
+        frame.battle->queueLifeChange(a,frame.opponentFlags23c,events.lifeAdjustment);
+    }
     return events;
 }
 DownedEvents GroundStateRuntime::knockoutCallback(PlayerObject& o,StateEntryActor& a,
@@ -428,7 +544,16 @@ DownedEvents GroundStateRuntime::knockoutCallback(PlayerObject& o,StateEntryActo
 }
 void GroundStateRuntime::beginAttack(PlayerObject& o,StateEntryActor& a,const GroundStateFrame& frame) {
     const int state=a.stateIndex();
-    if(isJumpAttack(state)){beginJumpAttack(o,a);return;}
+    if(isJumpAttack(state)&&state==16&&a.character==32&&o.timeline.motion().y>0) {
+        // 16aec8 -> 200c50: the puppet joins the air kick (aux 7), ACT 0xd9/0xda, then 173880.
+        if(!a.auxiliaryObject04||!frame.pools)throw std::runtime_error("200c50 commands the puppet");
+        frame.pools->objects.at(a.auxiliaryObject04-1)[0x128/4]=7;
+        a.flags244|=0x400;
+        a.queuedActionA3c=0xd9+!(a.flags23c&0x1000);a.flags248&=~0x800u;
+        a.callbacks260[0]=0x200cc0;a.callbacks260[1]=1;a.callbacks260[2]=0xffffffffu;
+        return;
+    }
+    if(isJumpAttack(state)){beginJumpAttack(o,a);launchPakuPaku(a,frame);return;}
     const bool armed=a.flags23c&0x1000;
     if(state==22) {
         // 4e5420 bits 2 (armed) and 3 (unarmed) both enable the aerial
@@ -471,8 +596,73 @@ void GroundStateRuntime::beginAttack(PlayerObject& o,StateEntryActor& a,const Gr
     a.flags248&=~0x800u;
     a.callbacks260[0]=0x16ae60;a.callbacks260[1]=1;a.callbacks260[2]=0xffffffff;
     a.callbacks260[4]=armed?parameter:0;
-    //16f948 returns immediately for resource00;16b1e8 in this executable
-    //is also an empty function. Neither is an omitted character00 effect.
+    //16f948 (PakuPaku only) launches its 0xa8 object; 16b1e8 is an empty function.
+    launchPakuPaku(a,frame);
+}
+// 16f948: tail of the attack entries 16ad88 / 16afcc / 16b288. Only PakuPaku (47) in attack
+// states < 64 launches its first own kind-6 object of descriptor 0xa8 as a kind-2 projectile
+// with the velocities of the 0x4e8808 row (each float * 65536.0, truncated).
+void launchPakuPaku(const StateEntryActor& a,const GroundStateFrame& frame) {
+    if(a.character!=47||a.stateTable()!=1||a.stateIndex()>=64)return;
+    static constexpr uint32_t rows[][4]{
+        {0x3fcccccdu,0x0u,0x0u,0x0u},
+        {0x3fe66666u,0x0u,0x404ccccdu,0xbda3d70au},
+        {0x3f99999au,0xbc23d70au,0x3f99999au,0xbe4ccccdu},
+        {0x3fcccccdu,0x3ca3d70au,0x3f99999au,0xbe4ccccdu},
+        {0x4019999au,0x0u,0x0u,0x0u},
+        {0x402ccccdu,0x0u,0x4099999au,0xbdf5c28fu},
+        {0x4019999au,0xbd23d70au,0xc019999au,0x3ca3d70au},
+        {0x3fe66666u,0x3ca3d70au,0xc019999au,0x3ca3d70au},
+        {0x404ccccdu,0x0u,0x0u,0x0u},
+        {0x40666666u,0x0u,0x40cccccdu,0xbe75c28fu},
+        {0x4099999au,0xbd23d70au,0xc04ccccdu,0x0u},
+        {0x4099999au,0x0u,0xc04ccccdu,0xbdcccccdu},
+        {0x3fcccccdu,0x0u,0x3fcccccdu,0x0u},
+        {0x40b33333u,0xbd75c28fu,0x404ccccdu,0xbdcccccdu},
+        {0x3f800000u,0x3d4ccccdu,0x0u,0x3dcccccdu},
+        {0xbf4ccccdu,0x3dcccccdu,0x0u,0x3ca3d70au},
+        {0xbf19999au,0x3e4ccccdu,0xbe4ccccdu,0xbdcccccdu},
+        {0xbf19999au,0x3e4ccccdu,0x0u,0x3d23d70au},
+        {0xbf99999au,0x3ecccccdu,0x3f99999au,0xbd23d70au},
+        {0xbfe66666u,0x3f4ccccdu,0x0u,0x0u},
+        {0x40800000u,0x3ecccccdu,0x3f4ccccdu,0x3da3d70au},
+        {0x0u,0x0u,0x0u,0x0u},
+        {0x40000000u,0xbca3d70au,0x41000000u,0xbe8f5c29u}
+    };
+    const int idx=a.stateIndex();
+    if(idx<0||idx>=int(std::size(rows)))return; // rows 23..63 are all zero
+    const auto& row=rows[idx];
+    if(!(row[0]&0x7fffffffu)&&!(row[1]&0x7fffffffu)&&!(row[2]&0x7fffffffu))return;
+    if(!frame.pools||!frame.weaponLock)throw std::runtime_error("16f948 scans the own registry");
+    for(auto task:frame.ownObjectTasks) {
+        if(!task)continue;
+        auto& o=frame.pools->objects.at(frame.pools->tasks.at(task-1)[7]-1);
+        if(o[0xcc/4]!=6||o[0xd0/4]!=0xa8)continue;
+        o[0xcc/4]=2;frame.pools->tasks.at(task-1)[0]=0x16def0;
+        frame.weaponLock->objects.request(o,0x250,false,false);
+        o[0x38/4]=(o[0x38/4]&~0x80000u)|(a.bodyFlags38&0x80000u); //11dbb8
+        const auto v=[&](unsigned k){return uint32_t(ScalarFloat{row[k]}.mul(ScalarFloat{0x47800000u}).truncate());};
+        o[0x50/4]=v(0);o[0x54/4]=v(1);o[0x5c/4]=v(2);o[0xfc/4]|=8u<<16;o[0x60/4]=v(3);
+        return;
+    }
+}
+// 20a9a0 "TAKE LOSER": a referee object (Kuroko's kind 6, ACT 0x20a) enters 80 beyond the camera edge
+// on the loser's side; native_match drives its tasks 20aac0..20ad70 and the carried body 20ad78.
+void GroundStateRuntime::takeLoser(PlayerObject& o,StateEntryActor& a,StateEntryContext& context,const GroundStateFrame& frame) {
+    if(!frame.weaponLock||!frame.pools)throw std::runtime_error("20a9a0 needs the opponent and pools");
+    auto& w=*frame.weaponLock;
+    if(!(w.opponent.flags23c&0x80))return; // only a KO'd loser
+    const auto h=w.objects.create(*frame.pools,frame.ownObjectTasks,context.player,a.flags23c,o.childParentWords(),0x1396,6,0);
+    if(!h)throw std::runtime_error("Original 16c408 writes through a null object");
+    auto& r=frame.pools->objects.at(h-1);
+    w.objects.request(r,0x20a,false,true);r[0x108/4]|=0x2000;
+    using F=ScalarFloat;
+    if(F{std::bit_cast<uint32_t>(w.opponentBody.timeline.motion().x)}.less(F{r[0x40/4]})) {
+        r[0x38/4]|=0x80000;r[0x40/4]=F::integer(w.camera.right).add(F::integer(80)).bits;
+    } else {
+        r[0x38/4]&=~0x80000u;r[0x40/4]=F::integer(w.camera.left).sub(F::integer(80)).bits;
+    }
+    frame.pools->tasks.at(r[1]-1)[0]=0x20aac0;r[0x108/4]&=~0x2000u;
 }
 void GroundStateRuntime::endingCallback(PlayerObject& o,StateEntryActor& a,StateEntryContext& context,
         const GroundStateFrame& frame,bool entering) {
@@ -483,24 +673,41 @@ void GroundStateRuntime::endingCallback(PlayerObject& o,StateEntryActor& a,State
             // All four dispatchers clear readiness before their character switch.
             // Konru keeps hovering; only Mamahaha receives a new command.
             (*companion)[0x108/4]&=~0x100000u;
-            if(a.character==1)(*companion)[0x128/4]=a.stateTable()==2?11u:a.stateIndex()==41?9u:a.stateIndex()==42?10u:12u;
+            if(a.character==1||a.character==45)(*companion)[0x128/4]=a.stateTable()==2?11u:a.stateIndex()==41?9u:a.stateIndex()==42?10u:12u;
         }
         // 14e000 tests 1fde18 before its tail 1a3400 commands Chample state 34.
         const bool champleBusy=a.character==24&&companion&&!champleAvailable(*companion);
         // 1a3400 (win 34), 1a34c0 (draw 35), 1a3580 (loss 36), 1a3640 (surviving loser 37).
         if(a.character==24&&companion&&(a.stateTable()==2||a.stateIndex()!=39))
             commandChamplePresentation(*companion,a.stateTable()==2?36u:a.stateIndex()==41?34u:a.stateIndex()==42?35u:37u);
+        // Poppy: 1a3400 win 0x2f, 1a34c0 draw 0x30, 1a3580 loss 0x31, 1a3640 surviving loser 0x32.
+        if(a.character==4&&companion&&(a.stateTable()==2||a.stateIndex()!=39))
+            commandPoppy(*companion,a.stateTable()==2?0x31u:a.stateIndex()==41?0x2fu:a.stateIndex()==42?0x30u:0x32u);
+        // Chamcham's pet: win 0x14, draw 0x15, loss 0x16, surviving loser 0x17.
+        if((a.character==34||a.character==19)&&companion&&(a.stateTable()==2||a.stateIndex()!=39))
+            commandPoppy(*companion,a.stateTable()==2?0x16u:a.stateIndex()==41?0x14u:a.stateIndex()==42?0x15u:0x17u);
         if(a.stateTable()==2)playback.beginLoser(o,a.flags23c,a.flags244,&a.queuedActionA3c);
         else if(a.stateIndex()==39) {
-            playback.beginIntroduction(o,a.flags244,context.player,&a.queuedActionA3c,a.character==frame.opponentCharacter);a.flags248|=0x1000;
+            playback.beginIntroduction(o,a.flags244,context.player,&a.queuedActionA3c,
+                selectedCharacter(a)==(frame.opponentSelected>=0?frame.opponentSelected:int(frame.opponentCharacter)));a.flags248|=0x1000;
         } else {
             a.opponentX=frame.opponentX;a.faceOpponent();restoreBody(o,a);
             if(a.stateIndex()==41&&champleBusy) {
                 // Same non-forced 1494c0 request as the generic winner clips.
                 a.queuedActionA3c=508+!(a.flags23c&0x1000);
                 a.flags244&=~0x40000000u;playback.phase=EndingPhase::Playing;
-            } else if(a.stateIndex()==41)
-                playback.beginWinner(o,a.flags23c,a.flags244,a.fieldA30,frame.matchStats->complete(),&a.queuedActionA3c);
+            } else if(a.stateIndex()==41) {
+                const bool final=frame.matchStats->complete();
+                playback.beginWinner(o,a.flags23c,a.flags244,a.fieldA30,final,&a.queuedActionA3c);
+                if(a.character==48&&final) {
+                    // 14e000: Kuroko's full-life final pose 0x201 + 2 * GameRandom(4), then 20a9a0 before the queue.
+                    if(a.fieldA30>=100) {
+                        if(!frame.random)throw std::runtime_error("14e000 draws the game RNG");
+                        a.queuedActionA3c=0x201+2*frame.random->bounded(4)+!(a.flags23c&0x1000);
+                    }
+                    takeLoser(o,a,context,frame);
+                }
+            }
             else {
                 // A surviving loser and a draw each have a separate clip.
                 // Both signal readiness through the same 14e320 callback.
@@ -513,7 +720,7 @@ void GroundStateRuntime::endingCallback(PlayerObject& o,StateEntryActor& a,State
         //14e320 is authoritative; no persistent parallel EndingPhase may
         //survive a new hit or a round-controller state request.
         playback.phase=EndingPhase::Playing;ActorTimers timers{a.timerDelta,a.timers};
-        playback.update(o,a.flags244,&timers,context.player,&a.queuedActionA3c,(a.character!=1&&a.character!=24)||!companion||((*companion)[0x108/4]&0x100000));a.timers=timers.values;
+        playback.update(o,a.flags244,&timers,context.player,&a.queuedActionA3c,(a.character!=1&&a.character!=4&&a.character!=19&&a.character!=24&&a.character!=34&&a.character!=45)||!companion||((*companion)[0x108/4]&0x100000));a.timers=timers.values;
         //Only timer34's expiry queues a clip here;1493c0 explicitly forces492.
         if(a.queuedActionA3c!=-1)a.flags248|=0x1000;
     }
@@ -604,6 +811,11 @@ void GroundStateRuntime::callback(PlayerObject& o,StateEntryActor& a,const Groun
     if(!actionEnded(o,a.queuedActionA3c))return;
     const auto mode=a.callbacks260[5];
     if(mode==0) {recover(o,a,frame);a.request18c=1;}
+    else if(mode==1) { // 169918: the crouch bit follows held down (feature 63), then 169810
+        if(!frame.ownInput)throw std::runtime_error("169918 reads the actor's held down");
+        if(frame.ownInput->sampledFeatures[63])a.flags23c|=8;else a.flags23c&=~8u;
+        recover(o,a,frame);a.request18c=1;
+    }
     else if(mode==2)recoverGuard(o,a);
     else if(mode==4) {
         //Corpse15 shares this hold with normal victory/guard states. Only
@@ -614,15 +826,38 @@ void GroundStateRuntime::callback(PlayerObject& o,StateEntryActor& a,const Groun
 DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorCommandInput& input,
         const InputSystemConfig& config,StateEntryContext& context,const GroundStateFrame& frame) {
     DownedEvents events;
-    if(!playableFighter(a.character)||a.character!=config.character||config.system>5)
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8))
         throw std::runtime_error("Invalid ground fighter or spirit");
     if(unsupportedForm(a))throw std::runtime_error("Transformed ground callbacks require their own dispatcher");
+    // 1493c0 runs 14d788 on every queued ACT: a form (Amakusa's 23c 0x400000)
+    // substitutes its own ACT. Native code queues by assignment, so the
+    // outermost visit applies the substitution to every ACT it queued, for
+    // both fighters (victim scripts queue the attacker too).
+    struct FormQueue {
+        const FighterTables& tables;StateEntryActor* actors[2];int32_t before[2];int& depth;const GroundStateFrame& frame;
+        ~FormQueue() {
+            if(--depth)return;
+            for(unsigned k=0;k<2;++k)if(actors[k]&&actors[k]->queuedActionA3c!=before[k]&&actors[k]->queuedActionA3c>=0) {
+                auto& x=*actors[k];
+                int companion=-1;
+                const int mapped=tables.formAction(x.character,x.flags23c,x.queuedActionA3c,&companion);
+                if(mapped!=-1)x.queuedActionA3c=mapped;
+                // 14e6d8: riding Rera's ACT also gives the wolf its companion ACT, 11d908(wolf, act, 0, 0).
+                if(companion!=-1&&x.auxiliaryObject04&&frame.pools&&frame.weaponLock)
+                    frame.weaponLock->objects.request(frame.pools->objects.at(x.auxiliaryObject04-1),unsigned(companion),false,false);
+            }
+        }
+    };
+    StateEntryActor* opponentActor=frame.weaponLock?&frame.weaponLock->opponent:nullptr;
+    ++formQueueDepth_;
+    FormQueue formQueue{victimTables_.fighters(),{&a,opponentActor},{a.queuedActionA3c,opponentActor?opponentActor->queuedActionA3c:-1},formQueueDepth_,frame};
     const int table=a.pendingTable==-1?a.stateTable():a.pendingTable;
     const int state=a.pendingIndex==-1?a.stateIndex():a.pendingIndex;
-    const bool pendingRide=a.character==1&&(a.flags23c&0x200000)&&a.aliasPendingTable>=0&&a.pendingTable==-1;
+    const bool pendingRide=(a.character==1||a.character==45)&&(a.flags23c&0x200000)&&a.aliasPendingTable>=0&&a.pendingTable==-1;
     // 1fb970 handles every captured state 80..111 of a Mina victim, recovering
     // through 169810 where 4e3a80 has no row (e.g. the shared throw type 45).
-    const bool minaVictim=table==2&&state>=80&&state<=111&&a.pendingCharacter254==24;
+    // The plain table-B stubs (victim_script.cpp) behave the same way.
+    const bool minaVictim=table==2&&state>=80&&state<=111&&(a.pendingCharacter254==24||victimTables_.handler(a.pendingCharacter254));
     if(!pendingRide&&!minaVictim&&!supports(table,state))throw UnportedFighterState(a.character,table,state);
     if(table==1&&(!frame.objects||(a.character==0&&state>=64&&state!=77&&!(a.flags23c&0x1000))))
         throw std::runtime_error("Ground attacks require armed actor and explicit object context");
@@ -669,7 +904,7 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
         } else if(a.stateTable()==0)StateCallbacks::registerNormal(a);
         else if(a.stateTable()==1) {callbacks_.registerAttack(a,config,*frame.objects);context.opponentFlagsB8|=2;}
         else {
-            StateCallbacks::registerOrdinaryDamage(a,config);
+            callbacks_.registerOrdinaryDamage(a,config);
             const int damage=a.stateIndex();
             // 1731d4 and 173240 terminate an active concentration on a throw,
             // blade catch or character-specific capture. Ordinary hitstun does
@@ -764,6 +999,7 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
                 a.callbacks260[5]=0;
             }
         }
+        else if(handler==0x200cc0)updateAirLanding(o,a); // character 32's air kick: 173880
         else if(handler==0x16afd8||handler==0x16b050||handler==0x16b0c0) {
             if(updateJumpAttack(o,a))recover(o,a,frame);
         } else if(a.stateTable()==1&&((a.character==1&&a.stateIndex()==79)||(a.character==3&&a.stateIndex()==78))&&handler==0x174158) {
@@ -781,23 +1017,23 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             }
         } else if(a.stateTable()==1&&((a.character==1&&a.stateIndex()==79&&handler==0x1ec2f0)||
                   (a.character==3&&a.stateIndex()==78&&handler==0x1ee4a0))) {
-            auto& world=*frame.weaponLock;auto& victim=world.opponent;
-            if(!frame.opponentInput)throw std::runtime_error("Air throw requires the opponent's live controls");
             a.callbacks260[0]=0;
-            victim.pendingCharacter254=a.character;victim.bodyField124=0;
-            victim.pendingTable=2;victim.pendingIndex=96;victim.request18c=1;
-            // 1ecc58 calls 1491e0 immediately on the other seat. The victim
-            // registers its callback on its own actor turn, even if it ran first.
-            const unsigned player=context.player;const auto flags=context.opponentFlagsB8;
-            context.player=1-player;context.opponentFlagsB8=a.flagsB8;
-            InputSystemConfig opponent{frame.opponentSystem,victim.character,{}};
-            captureBody(world.opponentBody,victim);
-            entries_.transition(victim,*frame.opponentInput,opponent,context);restoreBody(world.opponentBody,victim);
-            a.flagsB8=context.opponentFlagsB8;context.player=player;context.opponentFlagsB8=flags;
+            seizeOpponent(a,context,frame); // 1ecc58
         } else if(a.character==1&&a.stateTable()==1&&nakoruruEagleAttackSupports(a.stateIndex())&&handler!=0x169a50) {
             if(updateNakoruruEagleAttack(o,a,input,context,frame))recover(o,a,frame);
         } else if(a.character==24&&a.stateTable()==1&&isMinaAttackCallback(handler)) {
             if(updateMinaAttack(o,a,input,frame,context,scripts_))recover(o,a,frame);
+        } else if(a.stateTable()==1&&handler==0x174158&&a.callbacks260[5]==0&&victimTables_.handler(a.character)) {
+            // End op 11 of the victim's table-B script: 174158 mode 0 waits
+            // for the landing, then 169a50 (table kept) or 169810.
+            if(updateGroundThrow(o,a,frame))recover(o,a,frame);
+        } else if(handler==0x166e10&&victimTables_.handler(a.character)) {
+            updateLifeHold(o,a,context,frame);
+        } else if(a.stateTable()==1&&handler==0x174158&&victimTables_.handler(a.character)) {
+            // Other modes from end ops 12..22 on the attacker's slot.
+            if(updateLanding174158(o,a,context,frame))recover(o,a,frame);
+        } else if(a.stateTable()==1&&isScriptFighterAttack(victimTables_.fighters(),a.character,handler)) {
+            if(updateScriptFighterAttack(o,a,input,frame,context,scripts_))recover(o,a,frame);
         } else if(a.character==3&&a.stateTable()==1&&isHanzoSpecialCallback(handler)) {
             if(updateHanzoSpecial(o,a,input,frame))recover(o,a,frame);
         } else if(a.character==2&&(handler==0x1edf30||handler==0x163610)) {
@@ -864,6 +1100,14 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             if(updateMinaVictim(o,a,context,frame,scripts_))recover(o,a,frame);
             if(a.flags248&0x20)return visit(o,a,input,config,context,frame);
         }
+        else if(a.stateTable()==2&&victimTables_.handler(a.pendingCharacter254)&&!whirlwindRows(a)&&
+                (handler==victimTables_.handler(a.pendingCharacter254)||handler==0x165cc0||handler==0x174158||
+                 (victimTables_.fighters().victimK4Routine(a.pendingCharacter254)&&
+                  (handler==0x1f3db8||handler==0x1f4010||handler==0x1f4098||handler==0x1f7c30||handler==0x2064a8||handler==0x206548||
+                   handler==0x1f3a70||handler==0x1fedc8||handler==0x1fee40||handler==0x1fef00||handler==0x207150||handler==0x2015e0||handler==0x20b4d0||handler==0x20b588||handler==0x20b648||handler==0x20b7b8||handler==0x20b870||handler==0x20b930||handler==0x20baa0||handler==0x202b28||handler==0x202ca8||handler==0x202d98||handler==0x202f50||handler==0x2030a0||handler==0x203130||handler==0x203408||handler==0x2034f0||handler==0x201708||handler==0x201818||handler==0x201928||handler==0x201a20||handler==0x207620||handler==0x207880||handler==0x2078f8||handler==0x2079b0||handler==0x207a20||handler==0x207b70||handler==0x205c18||handler==0x200228||handler==0x2003d0||handler==0x200560||handler==0x200710||(handler>=0x1f1890&&handler<=0x1f1c88&&(handler==0x1f1890||handler==0x1f1900||handler==0x1f1b90||handler==0x1f1c88)))))) {
+            if(updateVictimScript(o,a,context,frame,victimTables_,scripts_))recover(o,a,frame);
+            if(a.flags248&0x20)return visit(o,a,input,config,context,frame);
+        }
         else if(handler==0x1ec420||handler==0x1edfa0||handler==0x1ee658||
                 (a.stateTable()==2&&(a.pendingCharacter254==1||a.pendingCharacter254==3)&&handler==0x165cc0)) {
             updateFighterCapture(o,a,context,frame);
@@ -891,25 +1135,62 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             a.pendingTable=2;a.pendingIndex=71;a.request18c=1;a.flags248|=0x20;
             return visit(o,a,input,config,context,frame);
         }
-        else if(handler==0x1ec248||handler==0x165cc0||handler==0x174158)
-            updateWhirlwindVictim(o,a,input,context,frame);
+        else if(const auto rows=whirlwindRows(a);rows&&(handler==rows->entry||handler==0x165cc0||handler==0x174158))
+            updateWhirlwindVictim(o,a,input,context,frame,*rows);
         else if(handler==0x174fe0)beginDamage(o,a,input,config,context,frame);
         else if(handler==0x14e320)endingCallback(o,a,context,frame);
         else if(handler==0x14e470&&a.character==24)minaWinnerHold(o,a,context);
         else if(handler==0x170640) {a.controlCounterC0=3;if(actionEnded(o,a.queuedActionA3c))recoverGuard(o,a);}
+        else if(handler==0x172350||handler==0x1724c8||handler==0x1726b0) {
+            if(frame.battle)frame.battle->flags138|=4;
+            // 14aad8(a,(int)(14adf0+2.0),0,0): either camera edge, X truncated.
+            if(!frame.battle)throw std::runtime_error("Damage state 21 needs the live camera");
+            auto& camera=frame.battle->camera;
+            const int m=(a.character==46?8:a.character==47?16:34)+2;
+            const int x=int(o.timeline.motion().x);
+            const auto hold=[&]{ // 1699f8 clears the hold bit and returns the old one or the clip end
+                const auto c=o.timeline.clock();const bool done=actionEnded(o,a.queuedActionA3c)||(c.flags104&0x100);
+                o.setFlags(c.flags104&~0x100u,c.flags108);return done;};
+            if((x>=camera.right-m||x<=camera.left+m)&&hold()) {
+                if(handler==0x1726b0) { // 1726b0: the rebound speed follows 172580's k
+                    auto m=o.timeline.motion();const auto k=a.bodyState128;
+                    m.vx=k==0?0x19999:k==1?0x33333:0x4cccc;o.timeline.setMotion(m);
+                }
+                if(handler==0x1724c8) { // 1724c8: the wall turns it into state 21's reel
+                    a.queuedActionA3c=0x1aa+!(a.flags23c&0x1000);a.flags248&=~0x800u;
+                    a.callbacks260[0]=0x172350;a.callbacks260[1]=2;a.callbacks260[2]=0xffffffffu;
+                } else {
+                camera.commands.clear();camera.appendCommand(3,0x14); // 1414b8, 1414f8(3,0x14)
+                a.callbacks260[0]=0x172288;a.callbacks260[1]=2;a.callbacks260[2]=0xffffffffu;
+                }
+            }
+        }
+        else if(handler==0x172288) { // on the ground: crouching recovery, then 1727f8's voice
+            if(touchedGround(o,a.queuedActionA3c)) {
+                a.flags23c|=8;recover(o,a,frame);
+                constexpr unsigned quiet[]{10,13,25,32,36,37,38,40}; // 1727a0
+                const bool loud=std::find(std::begin(quiet),std::end(quiet),a.character)==std::end(quiet);
+                if(frame.sound&&frame.random)frame.sound->act(loud?0x9c:0x9d,int(context.player),voiceCharacter(a),a.flags23c,3,0,*frame.random);
+            }
+        }
         else if(handler==0x170890) {if(updateGroundReaction(o))recover(o,a,frame);}
         else if(handler==0x172be8||handler==0x172c50||handler==0x172cb0)
             events=knockoutCallback(o,a,frame);
-        else if(handler==0x171eb0||handler==0x171f58||handler==0x171b98||handler==0x171c80||handler==0x171d60||handler==0x1715b0||handler==0x171640||handler==0x1717a0||handler==0x171838||handler==0x169a50||handler==0x170cd8||handler==0x1706c0||handler==0x170758)
+        else if(handler==0x171eb0||handler==0x171f58||handler==0x171b98||handler==0x171c80||handler==0x171d60||handler==0x1715b0||handler==0x171640||handler==0x1717a0||handler==0x171838||handler==0x1719a8||handler==0x171a38||handler==0x169a50||handler==0x170cd8||handler==0x170de8||handler==0x170ef8||handler==0x1706c0||handler==0x170758)
             events=downedCallback(o,a,input,config,context,frame);
-        else throw UnportedFighterState(a.character,a.stateTable(),a.stateIndex());
+        else {if(getenv("SS6_DEBUG_HANDLER"))fprintf(stderr,"handler %x\n",handler);throw UnportedFighterState(a.character,a.stateTable(),a.stateIndex());}
     }
     //The tail can commit a new logical state while the displayed body and
     //saved descriptor still belong to the completed transition for one visit.
     captureBody(o,a);entries_.transition(a,input,config,context);restoreBody(o,a);
     //149f78 runs after the tail state transition but before149918 commits
     //a queued body. Fade classification must still observe the old action.
-    updateActorColor(a,config);restoreBody(o,a);
+    uint32_t* kind4=nullptr; // 140d78(seat, 0, 4)
+    if(a.character==11&&frame.pools)for(auto t:frame.ownObjectTasks)if(t) {
+        auto& obj=frame.pools->objects.at(frame.pools->tasks.at(t-1)[7]-1);
+        if(obj[0xcc/4]==4){kind4=&obj[0x38/4];break;}
+    }
+    updateActorColor(a,config,kind4);restoreBody(o,a);
     a.flags244&=~0x40000u;
     captureBody(o,a);
     return events;

@@ -92,10 +92,12 @@ LightReaction ReactionTables::applyGroundHit(ReactionTarget& target,ActorTimers&
                                           unsigned rawType,unsigned bodyPart,bool special,bool sourceAirborne,
                                           unsigned sourceStrength,uint32_t& sourceFlags248,bool sourceSpecialMove) const {
     // Raw 21 is Hanzo's CCD finisher. Its entire reaction row points to
-    // the forward fall (2/62), including an airborne target.
-    const bool ordinaryStrike=(rawType>=10&&rawType<=12)||(rawType>=16&&rawType<=21)||
+    // the forward fall (2/62), including an airborne target. Raw 22's row is
+    // entirely fall 66 (Charlotte's specials, among others).
+    const bool ordinaryStrike=(rawType>=10&&rawType<=12)||(rawType>=16&&rawType<=22)||
                               (rawType>=23&&rawType<=31)||rawType==34||rawType==35;
-    if(!ordinaryStrike||sourceStrength>2)throw std::runtime_error("Unsupported contact source");
+    if(!ordinaryStrike||sourceStrength>2)
+        throw std::runtime_error("Unsupported contact source raw "+std::to_string(rawType)+" strength "+std::to_string(sourceStrength));
     if (bodyPart>2)
         throw std::runtime_error("Reaction outside ordinary target subset");
     unsigned posture=(target.flags23c&0x10) ? 2 : (target.flags23c&0x40) ? 3 : bool(target.flags23c&8);

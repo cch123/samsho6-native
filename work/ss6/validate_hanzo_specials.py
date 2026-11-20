@@ -146,7 +146,7 @@ def check(job):
                 callbacks=src.calls,original_instructions=src.instructions)
 
 def build(directory):
-    exe=directory/'fight';obj=directory/'cast.o';cxx=['c++','-std=c++20','-O2','-I',ROOT/'src']
+    exe=directory/'fight';obj=directory/'cast.o';cxx=['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src']
     subprocess.run([*cxx,'-DupdateHanzoSpecial=tracedCast','-c',ROOT/'src/hanzo_special.cpp','-o',obj],check=True)
     color=directory/'color.o'
     subprocess.run([*cxx,'-DupdateActorColor=tracedColor','-c',ROOT/'src/actor_color.cpp','-o',color],check=True)
@@ -200,9 +200,9 @@ def verify_pixels(directory,assets,viewer,results):
         'b.paletteState,b.gauges.paletteTones,rgba,[&](const auto&){fill({67,29,71,255});});')
     source=directory/'draw.cpp';source.write_text(reference)
     exe=directory/'draw'
-    subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',source,BUILD/'libss6-runtime.a','-o',exe],check=True)
+    subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',source,BUILD/'libss6-runtime.a','-o',exe],check=True)
     ns=directory/'notice-input.cpp';ns.write_text(NOTICE_INPUTS.replace('session(argv[1],99,','session(argv[1],-1,'))
-    notice=directory/'notice-input';subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',ns,BUILD/'libss6-runtime.a','-o',notice],check=True)
+    notice=directory/'notice-input';subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',ns,BUILD/'libss6-runtime.a','-o',notice],check=True)
     texture=atlas()[10];report=[]
     for side,state in ((0,89),(1,89),(0,86),(1,86)):
         variant='near' if state==89 else 'unarmed'

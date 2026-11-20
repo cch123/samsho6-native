@@ -259,7 +259,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         cpp=Path(tmp)/'check.cpp';exe=Path(tmp)/'check'
         cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-I',ROOT/'src',cpp,ROOT/'src/console_versus_menu.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-I',ROOT/'src',cpp,ROOT/'src/console_versus_menu.cpp','-o',exe],check=True)
         with ProcessPoolExecutor(4) as pool:
             cases=list(pool.map(check,((exe,k,side) for k in ('rematch','select','title','repeat','both') for side in range(2))))
             matches=list(pool.map(live,(0,1,-1)))

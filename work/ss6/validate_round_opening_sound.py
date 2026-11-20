@@ -156,7 +156,7 @@ def main():
     cases.extend([(-19,0,volume,0,180),(-19,2,volume,1,230),(-18,2,volume,0,180)])
     with tempfile.TemporaryDirectory() as temp:
         temp=Path(temp);src=temp/'probe.cpp';src.write_text(DRIVER);exe=temp/'probe'
-        subprocess.run(['c++','-std=c++20','-O2','-I',str(ROOT/'src'),str(src),
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',str(ROOT/'src'),str(src),
                         *[str(ROOT/'src'/f) for f in ('round_control.cpp','scheduled_opening.cpp','sound_selection.cpp')],
                         str(ROOT/'work/ss6/build-native/libss6-runtime.a'),'-o',str(exe)],check=True)
         text=subprocess.check_output([str(exe),str(ASSETS)],input=''.join(' '.join(map(str,c))+'\n' for c in cases),text=True)

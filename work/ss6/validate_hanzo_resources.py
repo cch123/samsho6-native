@@ -23,14 +23,14 @@ def collision_and_depth(tmp,aid):
 #include "collision.hpp"
 #include <iostream>
 int main(int argc,char** argv) {
-    ss6::CollisionTables tables(argv[1]);
+    ss6::CollisionTables tables(argv[1]);ss6::FighterTables depth(argv[1]);
     for(unsigned raw=0;raw<64;++raw) {
         int cls;try{cls=tables.classFor(raw,3);}catch(std::runtime_error&){cls=-1;}
         std::cout<<cls<<" "<<tables.usesAttackDamage(raw,3)<<"\n";
     }
     std::array<unsigned,2> chars,acts,steps;uint32_t a,b;
     while(std::cin>>chars[0]>>acts[0]>>steps[0]>>chars[1]>>acts[1]>>steps[1]>>a>>b) {
-        ss6::applyFighterDepthOverride(chars,acts,steps,a,b);std::cout<<a<<" "<<b<<"\n";
+        ss6::applyFighterDepthOverride(depth,chars,acts,steps,a,b);std::cout<<a<<" "<<b<<"\n";
     }
 }''')
     subprocess.run([*COMPILE,cpp,LIB,'-o',exe],check=True)

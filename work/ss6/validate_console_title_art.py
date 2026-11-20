@@ -169,7 +169,7 @@ def main():
                           (0,5,0,0,50,0,1,level,white),(0,5,0,0,50,0,2,level,white)])
     with tempfile.TemporaryDirectory() as tmp:
         cpp=Path(tmp)/'title.cpp';cpp.write_text(DRIVER);exe=cpp.with_suffix('')
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/console_title_art.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/console_title_art.cpp','-o',exe],check=True)
         with subprocess.Popen([exe,args.assets],stdin=subprocess.PIPE,stdout=subprocess.PIPE) as proc:
             for case in cases:
                 expected,number,n=original_frame(p,tex,*case,cache=cache);count+=number;total+=n

@@ -174,7 +174,7 @@ def cpp_driver(tmp):
     cpp=Path(tmp)/'driver.cpp'
     cpp.write_text(DRIVER)
     exe=Path(tmp)/'page'
-    subprocess.run(['c++','-std=c++20','-I',str(ROOT/'src'),str(cpp),str(ROOT/'src/versus_result.cpp'),
+    subprocess.run(['c++','-std=c++20','-ffp-contract=off','-I',str(ROOT/'src'),str(cpp),str(ROOT/'src/versus_result.cpp'),
                     str(ROOT/'src/versus_result_text.cpp'),'-o',exe],check=True)
     return exe
 

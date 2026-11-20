@@ -147,7 +147,7 @@ def main():
     lib=EXE.parent/'libss6-runtime.a';replay_hash=digest(EXE);lib_hash=digest(lib)
     with tempfile.TemporaryDirectory() as folder:
         exe=Path(folder)/'dual'
-        subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',Path(__file__).with_name('zero_dual_probe.cpp'),
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',Path(__file__).with_name('zero_dual_probe.cpp'),
                         lib,'-o',exe],check=True)
         with ProcessPoolExecutor(3) as pool:cases=list(pool.map(case,[(exe,lag) for lag in (0,8,-8)]))
     assert replay_hash==digest(EXE) and lib_hash==digest(lib)

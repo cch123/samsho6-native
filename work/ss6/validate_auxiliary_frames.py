@@ -227,7 +227,7 @@ def main():
    traces.append(dict(player=side+1,source_record=start+1,action=action,records=len(steps),updates=t+1));flush()
   with tempfile.TemporaryDirectory() as tmp:
    exe=Path(tmp)/'live';library=BIN.parent/'libss6-runtime.a'
-   subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',Path(__file__).with_name('cpu_victory_attachment_probe.cpp'),library,'-o',exe],check=True)
+   subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',Path(__file__).with_name('cpu_victory_attachment_probe.cpp'),library,'-o',exe],check=True)
    first,last,count,n,ticks,wins,losses,visible,maxPixels=map(int,subprocess.check_output([exe,ASSETS],text=True).split())
   report=dict(status='passed',cases=traces,snapshots=total,original_instructions=instructions,
               live_level3_cpu_set=dict(first=first,last=last,draws=count,records=n,ticks=ticks,score=[wins,losses],visible_poses=visible,max_changed_pixels=maxPixels),

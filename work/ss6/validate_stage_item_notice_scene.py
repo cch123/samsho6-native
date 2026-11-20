@@ -190,7 +190,7 @@ def main():
     viewer=BUILD/'ss6-viewer'
     with tempfile.TemporaryDirectory() as temp:
         base=Path(temp);cpp=base/'match.cpp';exe=base/'match';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
         result=[verify(viewer,exe,base,'p1-food',P1,5103,[5120,5160],[(5118,0,173,176)]),verify(viewer,exe,base,'p2-food',P2,2914,[2931,2971],[(2929,1,156,171)]),verify(viewer,exe,base,'both-weapons',ARROWS,1250,[1351,1371,1434],[],False)]
     report=dict(status='passed',elf_sha256=PIN,library_sha256=digest(LIB),viewer_sha256=digest(viewer),replay_sha256=digest(BUILD/'ss6-match-replay'),cases=result,scope='Real character, spirit, stage and item option selection and normal gameplay inputs. Samples compare production viewer scene with actual Japanese 1b5e30 packets composited on the same combat view without notices. 1b5b80 sound submissions checked against 212fa0 bank/tone each examined live tick. Production WAV with and without just the heal sample is checked against the dry sample contribution from the Japanese EE and ADPCMST.IRX with separate software SPU2 interpolation model.')
     (OUT/'stage_item_notice_scene_validation.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(result,indent=2))

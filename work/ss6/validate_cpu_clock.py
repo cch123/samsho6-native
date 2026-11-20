@@ -159,7 +159,7 @@ def build(tmp):
     if(previous1)return command();'''))
     (tmp/'driver.cpp').write_text(DRIVER)
     exe = tmp/'clock'
-    subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',tmp/'driver.cpp',tmp/'cpu_match_control.cpp',
+    subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',tmp/'driver.cpp',tmp/'cpu_match_control.cpp',
                     tmp/'native_match.cpp',LIB,'-o',exe],check=True)
     return exe
 

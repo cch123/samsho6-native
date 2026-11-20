@@ -102,7 +102,7 @@ if __name__=='__main__':
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as td:
         path=Path(td);cpp=path/'probe.cpp';exe=path/'probe';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
         reports=[check(exe,i) for i in range(2)]
     report=dict(status='passed',source_sha256=PIN,sides=reports,
                 scope='Two real CCD pad matches. Source 16e218/16e2c8 constructors, 16e3b8, 147028/146ef8/1470a8 and common AID/ACT. Uses observed collision center and fighter transforms as inputs; compares independent ACT records, offsets, positions, flags, damage-state and generation, draw lifetime through removal.')

@@ -59,7 +59,7 @@ public:
     // The timer plate and its digits use the same two resident HUD atlases.
     void paintClock(const BattleClockState&,std::span<uint8_t> rgba640x448) const;
 private:
-    std::vector<uint8_t> gaugeAtlas_,commonAtlas_;
+    std::vector<uint8_t> gaugeAtlas_,commonAtlas_,slotOneAtlas_;
 };
 
 }

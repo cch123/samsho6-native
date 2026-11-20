@@ -86,7 +86,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as temp:
         path=Path(temp);driver=path/'driver';cpp=path/'driver.cpp';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/stage_item_delivery.cpp',LIB,'-o',driver],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/stage_item_delivery.cpp',LIB,'-o',driver],check=True)
         with ProcessPoolExecutor(6) as pool:rows=list(pool.map(case,[(driver,k) for k in (map(int,sys.argv[1:]) if sys.argv[1:] else range(19))]))
         for r in rows:print(r['kind'],r['first_pickup_tick'],r['idle_tick'])
         if not sys.argv[1:]:

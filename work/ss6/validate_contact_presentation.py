@@ -103,7 +103,7 @@ def main():
                for label,kind,part in [('parry',10,6),('catch-release',0,0)]]
     with tempfile.TemporaryDirectory() as tmp:
         srcpath=Path(tmp)/'probe.cpp';srcpath.write_text(DRIVER);exe=Path(tmp)/'probe';lib=ROOT/'work/ss6/build-native/libss6-runtime.a'
-        subprocess.run(['c++','-O2','-std=c++20','-I',str(ROOT/'src'),str(srcpath),str(ROOT/'src/contact_presentation.cpp'),str(ROOT/'src/scheduled_opening.cpp'),str(ROOT/'src/effect_runtime.cpp'),str(lib),'-o',str(exe)],check=True)
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',str(ROOT/'src'),str(srcpath),str(ROOT/'src/contact_presentation.cpp'),str(ROOT/'src/scheduled_opening.cpp'),str(ROOT/'src/effect_runtime.cpp'),str(lib),'-o',str(exe)],check=True)
         for seed,case in enumerate(cases):
             label,raw_type,group,variant,part,mirror,defense,chip,special,state=case
             x=230+seed%70;y=50+seed%39;target_x=279.75 if mirror else 301.375

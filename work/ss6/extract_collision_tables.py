@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Extract the original resource-00 routing data, with a pinned ELF baseline."""
+from fighter_roster import PLAYABLE
 import hashlib
 import json
 from pathlib import Path
@@ -29,7 +30,7 @@ def main():
     assert data[end]==255 and data[end+2:end+4]==b'\xff\xff'
     (ROOT/'work/ss6/extracted/resources/projectile_hitstop.bin').write_bytes(data[base:end])
     # 153090 uses the object's +18 profile for raw classes 36..67.
-    for profile in (1,2,3,24):
+    for profile in (c for c in PLAYABLE if c):  # every admitted fighter (fighter_roster.hpp)
         start=elf.offset(0x4d7278+64*profile)
         (ROOT/f'work/ss6/extracted/resources/collision_{profile:02}.bin').write_bytes(data[start:start+64])
     report = dict(elf_sha256=SOURCE_HASH,asset='collision_00.bin',size=len(result),

@@ -97,7 +97,7 @@ def pose_sheet(assets,path,viewer_sha):
         label(x,100,t,23,ink,'mm')
     with tempfile.TemporaryDirectory() as folder:
         exe=Path(folder)/'poses'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',root/'jump_light_poses.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',root/'jump_light_poses.cpp',
                         root/'build-native/libss6-runtime.a','-o',exe],check=True)
         for row,crouch in enumerate((False,True)):
             commands=''.join(f'{l} {r}\n' for l,r in masks(crouch))

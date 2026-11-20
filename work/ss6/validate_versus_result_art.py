@@ -88,7 +88,7 @@ def main():
  total=pixels=0;gallery=[]
  with tempfile.TemporaryDirectory() as td:
   td=Path(td);(td/'check.cpp').write_text(DRIVER);exe=td/'check'
-  subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',td/'check.cpp',ROOT/'src/versus_result_art.cpp','-o',exe],check=True)
+  subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',td/'check.cpp',ROOT/'src/versus_result_art.cpp','-o',exe],check=True)
   proc=subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
   for side,t,bg,h in cases:
    p.write(0x4c3810,side,4);p.write(0x3db8f8,0,4)

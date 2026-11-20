@@ -6,7 +6,7 @@
 
 namespace ss6 {
 namespace {
-constexpr uint32_t runStart = 0x169f98, runHeld = 0x169ff8, runBrake = 0x16a098;
+constexpr uint32_t runStart = 0x169f98, runHeld = 0x169ff8, runBrake = 0x16a098, stepDash = 0x169f10;
 constexpr uint32_t backstepFlight = 0x16a1e8, recoverOnEnd = 0x169a50;
 
 void registerDashCallback(StateEntryActor& actor,uint32_t routine) {
@@ -25,7 +25,7 @@ int32_t decrease(StateEntryActor& actor,unsigned index) {
 }
 }
 
-void beginDash(PlayerObject& body,StateEntryActor& actor) {
+void beginDash(PlayerObject& body,StateEntryActor& actor,uint8_t movementFlags) {
     if(!playableFighter(actor.character) || actor.stateTable()!=0)
         throw std::runtime_error("Unexpected fighter or state for dash callback");
 
@@ -33,9 +33,17 @@ void beginDash(PlayerObject& body,StateEntryActor& actor) {
         stopAtGround(body);
         actor.queuedActionA3c=36+!(actor.flags23c&0x1000);
         registerDashCallback(actor,backstepFlight);
-    } else if(actor.stateIndex()==23) {
-        // Characters 00–03 have bit 4 clear in the 168bf8 movement table. Their
-        // run loops action28 while the callback handles release independently.
+    } else if(actor.stateIndex()==23||actor.stateIndex()==36) {
+        // 169e00: 168bf8 bit 4 selects a single step (ACT 30/31) instead of
+        // the run; character 25 runs while its 23c bit 0x100000 is set.
+        bool step=(movementFlags>>4)&1;
+        if(actor.character==25&&(actor.flags23c&0x100000))step=false;
+        if(step) {
+            actor.queuedActionA3c=30+!(actor.flags23c&0x1000);
+            registerDashCallback(actor,stepDash);
+            return;
+        }
+        // The run loops action28 while the callback handles release independently.
         actor.queuedActionA3c=28+!(actor.flags23c&0x1000);
         actor.flags244|=0x10000;
         ActorTimers timers{actor.timerDelta,actor.timers};
@@ -50,7 +58,7 @@ void beginDash(PlayerObject& body,StateEntryActor& actor) {
 
 bool isDashCallback(const StateEntryActor& actor) {
     const auto handler=actor.callbacks260[0];
-    return handler==runStart || handler==runHeld || handler==runBrake || handler==backstepFlight ||
+    return handler==stepDash || handler==runStart || handler==runHeld || handler==runBrake || handler==backstepFlight ||
         (handler==recoverOnEnd && actor.state194==(24u<<16) && actor.callbacks260[5]==1);
 }
 
@@ -58,6 +66,16 @@ bool updateDash(PlayerObject& body,StateEntryActor& actor,const ActorCommandInpu
     const auto& features=input.sampledFeatures;
     const bool down=features[0xfc/4]!=0;
     switch(actor.callbacks260[0]) {
+    case stepDash:
+        // 169f10: at the end stop and recover through 169918; an earlier
+        // landing stops and waits for the end through 169a50 mode 0.
+        if(actionEnded(body,actor.queuedActionA3c)){stopAtGround(body);break;}
+        if(landingReady(body,actor.queuedActionA3c)) {
+            stopAtGround(body);
+            registerDashCallback(actor,recoverOnEnd);
+            actor.callbacks260[5]=0;
+        }
+        return false;
     case runStart:
         if(decrease(actor,11)==0) registerDashCallback(actor,runHeld);
         return false;

@@ -174,7 +174,7 @@ def main():
         tmp=Path(folder)
         flags=shlex.split(subprocess.check_output(['pkg-config','--cflags','--libs','sdl3'],text=True))
         exe=tmp/'audio-loop'
-        run(['c++','-std=c++20','-O2','-I',ROOT/'src',HERE/'sdl_audio_input_test.cpp',BUILD/'libss6-runtime.a',*flags,'-o',exe])
+        run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',HERE/'sdl_audio_input_test.cpp',BUILD/'libss6-runtime.a',*flags,'-o',exe])
         assert digest(VIEWER)==digest(BUILD/'ss6-viewer')
         start=tmp/'start.pad'
         neutral=[(500,0,0)]

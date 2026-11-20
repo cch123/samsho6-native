@@ -118,8 +118,9 @@ void beginNakoruruDismount(StateEntryActor& a) {
 }
 
 bool isNakoruruRidingCallback(const StateEntryActor& a) {
-    if(a.character!=1)return false;
     const auto h=a.callbacks260[0];
+    if(a.character==45)return (a.flags23c&0x200000)&&(h==0x2099e0||h==0x1ec848); // Shikuru & Mamahaha
+    if(a.character!=1)return false;
     if(h==0x1ec2f0||h==0x163610)return a.stateTable()==1&&a.stateIndex()>=80&&a.stateIndex()<=89;
     return h==0x1ecd20||h==0x1ecd90||h==0x1ec728||h==0x1ec848||h==0x1ecb10;
 }
@@ -151,6 +152,10 @@ bool updateNakoruruRiding(PlayerObject& body,StateEntryActor& a,const ActorComma
         body.timeline.stopMotion();
         if(int16_t(a.state1a4)==0){queuePose(a,581+bare);a.callbacks260[0]=0x1ec848;}
         else {queuePose(a,588+int16_t(a.state1a4>>16));a.callbacks260[0]=0x1ecb10;}
+    } else if(h==0x2099e0) { // 45: alias table 1 does not exist ("Hero2DFunc" assert)
+        a.callbacks260[0]=0;
+        if(int16_t(a.state1a4)!=0)throw std::runtime_error("ASSERT: Hero2DFunc (character 45 alias table)");
+        body.timeline.stopMotion();queuePose(a,0x240+bare);a.callbacks260[0]=0x1ec848;
     } else if(h==0x1ec848) {
         fly(body,a,input,frame.opponentX);
     } else if(h==0x1ecb10) {

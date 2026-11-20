@@ -113,7 +113,7 @@ def main():
         assert code.count(at)==1
         code=code.replace(at,'        extern void observeScriptRequest(StateEntryActor&,const CpuExecutionFrame&,int);\n        observeScriptRequest(a,f,script);')
         instrumented=tmp/'technique.cpp';instrumented.write_text(code)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',probe,instrumented,BUILD/'libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',probe,instrumented,BUILD/'libss6-runtime.a','-o',exe],check=True)
         result=subprocess.run([exe,PKG/'assets' if args.package else HERE/'extracted/resources'],
                               input=''.join(' '.join(map(str,row))+'\n' for row,_ in rows),text=True,capture_output=True,check=True)
     for line,(row,want) in zip(result.stdout.splitlines(),rows,strict=True):

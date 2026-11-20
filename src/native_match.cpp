@@ -1,4 +1,5 @@
 #include "native_match.hpp"
+#include "pakupaku_orbit.hpp"
 #include "cpu_decision.hpp"
 #include "thrown_stage_item.hpp"
 #include "mamahaha.hpp"
@@ -6,8 +7,16 @@
 #include "rimururu_special.hpp"
 #include "hanzo_projectile.hpp"
 #include "chample.hpp"
+#include "poppy.hpp"
+#include "rera_wolf.hpp"
+#include "karuta.hpp"
+#include "karakuri_puppet.hpp"
+#include "chamcham_pet.hpp"
+#include "kazuki_fire.hpp"
 #include "mina_special.hpp"
 #include "fighter_roster.hpp"
+#include "andrew_ammo.hpp"
+#include "script_fighter.hpp"
 #include "contact_presentation.hpp"
 #include "console_versus_session.hpp"
 #include "finishing_blow.hpp"
@@ -55,7 +64,7 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
      fromFaceoff_(selection && rematchFrom && rematchFrom->faceoff()),
      fighters_{MatchFighter(banks_[0]),MatchFighter(banks_[1])},ground_(path),human_(path),
      initialize_(path,resourceSlots_),gauges_(path),effects_(path),sounds_(path),captions_(path,&sounds_),stage_(path),ending_(path),lock_(path),
-     aux_(path,resourceSlots_),damage_(path),reactions_(path),judgments_{JudgmentData(path,resourceSlots_[0]),JudgmentData(path,resourceSlots_[1]),JudgmentData(path,51)},collisions_(path),projectiles_(path),
+     aux_(path,resourceSlots_),angleTrig_(path),damage_(path),reactions_(path),judgments_{JudgmentData(path,resourceSlots_[0]),JudgmentData(path,resourceSlots_[1]),JudgmentData(path,51)},collisions_(path),projectiles_(path),
      combat_(path),rounds_({initialize_,ground_,effects_,stage_,captions_,ending_,lock_,&sounds_}) {
     auto& b=battle_;
     // 1183f8 + 1b8bc0: the factory volume setting is 100, scaled by 0.25 * 512.
@@ -122,21 +131,24 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         // 1398c0 rebuilds each actor from the retained versus selections.
         // The initial fixed mirror assigns Haohmaru's second palette to P2.
         const auto& pick=lineup_[i];
-        if(pick.spirit>5||!playableFighter(pick.character))throw std::invalid_argument("Unsupported versus selection");
-        f.config.character=a.character=pick.character;
+        // 148df0: Purple Nakoruru (42) runs as Nakoruru (a10 = 1); her body keeps resource 42.
+        const unsigned logic=logicCharacter(pick.character);
+        if((pick.spirit>5&&pick.spirit!=8)||!playableFighter(logic))throw std::invalid_argument("Unsupported versus selection");
+        f.config.character=a.character=logic;a.characterA14=int32_t(pick.character);
         cpuSeats_[i]=std::move(cpuSeats[i]);
         if(cpuSeats_[i]){a.controlKindA20=1;a.controlModeC8=35;}
         // 148ea0 supplies the opposing character's damage descriptor bank.
-        a.damageCharacterA18=lineup_[1-i].character;
+        a.damageCharacterA18=logicCharacter(lineup_[1-i].character); // 148ea0 aliases 42 too
         f.config.system=pick.spirit;
         a.fieldA28=f.body.field20=pick.palette;
         if(rematchFrom)b.match.players[i].requiredWins=rematchFrom->battle_.match.players[i].requiredWins;
         f.body.timeline.setObjectFlags(0x10000000u|(i<<19),0x40000000,0x40);
         f.body.timeline.setSoundObserver([this,i](int16_t c,const ActionClock& clock){
             auto& f=fighters_[i];
-            const int channel=sounds_.record(c,clock,i,f.actor.character,f.actor.flags23c,battle_.gameMode,0,battle_.random);
+            const int channel=sounds_.record(c,clock,i,voiceCharacter(f.actor),f.actor.flags23c,battle_.gameMode,0,battle_.random);
             if(channel>=0&&(uint16_t(c)&0x4000))f.body.sound34=uint32_t(channel)|0xc000u;
         });
+        f.body.timeline.setVoiceCutObserver([this,i]{sounds_.cutVoice(fighters_[i].body.sound34);});
         f.body.timeline.setEffectObserver([this,i](unsigned id,uint32_t flags,float x,float y){
             captions_.startWorld(id,flags,i,x,y,-10,1,battle_.entry.tasks,battle_.effectResidency,battle_.random);
         });
@@ -186,6 +198,14 @@ bool NativeMatch::resolveStrike(const ContactEvent& e,const CollisionPlayer& fro
     const int amount=damage_.applyOrdinaryContact(e.auxiliary,am,bm,guard,a.stateTable()==1&&a.stateIndex()>=64,projectile!=nullptr);
     storeMeter(a,am);storeMeter(b,bm);
     if(!guard)interruptConcentration(to.owner);
+    if(!guard&&projectile&&a.character==48) { // 157e10: Kuroko collects the techniques that hit (f21)
+        switch((*projectile)[0xd0/4]) {
+        case 0xaa:a.characterBytesF14[13]|=0x01;break;case 0xab:a.characterBytesF14[13]|=0x02;break;
+        case 0xac:case 0xba:a.characterBytesF14[13]|=0x04;break;case 0xad:a.characterBytesF14[13]|=0x08;break;
+        case 0xae:a.characterBytesF14[13]|=0x10;break;case 0xaf:a.characterBytesF14[13]|=0x20;break;
+        case 0xb1:a.characterBytesF14[13]|=0x40;break;default:break;
+        }
+    }
     ReactionTarget t;static_cast<ActorContactHistory&>(t)=b;
     t.flags23c=b.flags23c;t.flags244=b.flags244;t.flags24c=b.flags24c;t.stateTable=int16_t(b.stateTable());
     ActorTimers at{a.timerDelta,a.timers},bt{b.timerDelta,b.timers};
@@ -294,6 +314,53 @@ void NativeMatch::interruptConcentration(unsigned target) {
     if(fighter.config.system==4 && fighter.actor.systemState13c==3)
         BattleGauges::endConcentration(battle_,fighter.actor,target);
 }
+// Kuroko's TAKE LOSER referee (owner i = Kuroko) and the loser's carried copy (owner i = loser).
+void NativeMatch::updateTakeLoser(unsigned i,uint32_t task) {
+    auto& pools=battle_.entry.tasks;auto& t=pools.tasks.at(task-1);auto& o=pools.objects.at(t[7]-1);
+    using F=ScalarFloat;
+    const bool done=o[0xc0/4]&&!(o[0x104/4]&1);
+    auto& loser=fighters_[1-i];
+    switch(t[0]) {
+    case 0x20aac0: { // walk in until past the loser
+        const F lx{std::bit_cast<uint32_t>(loser.body.timeline.motion().x)},x{o[0x40/4]};
+        const bool reached=(o[0x38/4]&0x80000)?x.less(lx):lx.less(x);
+        if(!reached)return;
+        AuxiliaryObjects::stop(o);o[0x40/4]=lx.bits;aux_.request(o,0x20e,false,true);t[0]=0x20ab88;
+        return;
+    }
+    case 0x20ab88:if(done){o[0x128/4]=0x3000;t[0]=0x20abc8;}return;
+    case 0x20abc8: { // pause 48 visits, then pick up a copy of the loser's body
+        o[0x128/4]-=o[0x30/4];
+        if(int32_t(o[0x128/4])>0)return;
+        o[0x128/4]=0x3000;t[0]=0x20acb0;
+        const auto lw=loser.body.childParentWords();
+        const auto h=aux_.create(pools,loser.storage.objectTasks,1-i,loser.actor.flags23c,lw,0x1396,6,0);
+        if(!h)throw std::runtime_error("Original 16c408 writes through a null object");
+        auto& p=pools.objects.at(h-1);
+        aux_.request(p,unsigned(loser.body.timeline.action().id()),false,true);p[0x108/4]|=0x2000;
+        p[0x104/4]|=0x4000;p[0x108/4]&=~0x2000u;pools.tasks.at(p[1]-1)[0]=0x20ad78;
+        p[0x128/4]=t[7]; // the referee object
+        p[0xb0/4]=std::bit_cast<uint32_t>(-5.0f);p[0x104/4]|=0x20000; //11dff8
+        const auto k=loser.body.timeline.clock();loser.body.setFlags(k.flags104|2,k.flags108); // hide the loser
+        return;
+    }
+    case 0x20acb0:
+        o[0x128/4]-=o[0x30/4];
+        if(int32_t(o[0x128/4])>0)return;
+        aux_.request(o,0x20f,false,true);t[0]=0x20ad08;
+        return;
+    case 0x20ad08:if(done){aux_.request(o,0x20a,false,true);o[0x38/4]^=0x80000;t[0]=0x20ad70;}return;
+    case 0x20ad70:return;
+    case 0x20ad78: { // the carried body follows the referee's x at a height by its ACT record
+        const auto& r=pools.objects.at(o[0x128/4]-1);
+        o[0x40/4]=r[0x40/4];
+        const auto act=r[0x24/4],rec=r[0x28/4];
+        const float y=act==0x20a?(rec==2?44.f:48.f):act==0x20f?(rec==2?44.f:rec==1?32.f:8.f):8.f;
+        o[0x44/4]=std::bit_cast<uint32_t>(y);
+        return;
+    }
+    }
+}
 void NativeMatch::scriptDamage(unsigned target,int base,DamageOrigin origin,int projectileCategory) {
     auto& source=fighters_[1-target].actor;
     auto& victim=fighters_[target].actor;
@@ -319,6 +386,7 @@ void NativeMatch::strikeMikiri(const ContactEvent& event,const CollisionPlayer& 
     b.flags23c|=0x08000000u;a.flags23c&=~0x08000000u;
     sounds_.sample(-1,57);
     const bool useStrength=event.auxiliary && collisions_.usesAttackDamage(event.a.fields.type,from.judgmentProfile);
+    if(defender.config.system!=8) // 14d9b8 skips 1a4708 for system 8
     damage_.gainKenSecret(useStrength?event.auxiliary:16,meter(a,attacker.config.system),meter(b,defender.config.system),
                           useStrength?0:2,b);
     auto& evaded=b.characterBytesF22[3];
@@ -439,7 +507,39 @@ void NativeMatch::resolveContacts() {
                 const int y=e.centerY+battle_.random.bounded(12)-6;
                 captions_.startContact(25,x,y,1,pools,battle_.effectResidency,battle_.random);
                 sounds_.sample(-1,14);
-            } else if(disposition!=ProjectileContact::None)throw std::runtime_error("Unsupported projectile interception route "+std::to_string(e.route));
+            } else if(disposition==ProjectileContact::Route4Player) {
+                // 156ca8 -> 1566e8: an object's command-throw class captures the
+                // player. The attacker is the object's owner (object +0x10),
+                // and the object itself becomes the victim's child (body +0x124).
+                auto& object=pools.objects.at(src.handle-1);
+                const auto index=collisions_.captureIndex(e.a.fields.type,src.snapshot.judgmentProfile);
+                if(index!=0xff) {
+                    auto& owner=fighters_.at(object[0x10/4]).actor;
+                    b.actor.pendingCharacter254=uint8_t(owner.character);b.actor.bodyField124=src.handle;
+                    b.actor.pendingTable=2;b.actor.pendingIndex=int16_t(80+index);b.actor.request18c=1;
+                    object[0x108/4]|=0x02000000;sm.flags108|=0x02000000;
+                    // 157b50: 14e838 awards nothing in local VS; class 11 marks the owner.
+                    if(projectileFinishCategory(object,owner,b.actor,human_.bindings())==11)owner.flags244|=0x80000000u;
+                    sounds_.stop(b.body.sound34); // 158030
+                }
+                // 1547a8 marks both sides whatever 1566e8 decided.
+                markContactConsumed(sm,which[0]);markContactConsumed(tm,which[1]);
+            } else if(disposition==ProjectileContact::Route1Player) {
+                // 156820 -> 155078 with an object source: the object is marked (104:02000000, plus
+                // 04000000 when 108:80) and paused by 11db00(o, 0x10); an Iroha (31) body target is marked.
+                auto& object=pools.objects.at(src.handle-1);
+                sm.flags104|=0x02000000;if(sm.flags108&0x80)sm.flags104|=0x04000000;
+                aux_.pauseWhirlwind(object,16,0);
+                sm.consumed|=0x10;
+                if(b.actor.character==31)tm.consumed|=4;
+                // 1547a8 marks both sides whatever 156820 decided.
+                markContactConsumed(sm,which[0]);markContactConsumed(tm,which[1]);
+            } else if(disposition!=ProjectileContact::None)
+                throw std::runtime_error("Unsupported projectile interception route "+std::to_string(e.route)+
+                    " (source kind "+std::to_string(src.snapshot.objectKind)+" profile "+std::to_string(src.snapshot.judgmentProfile)+
+                    " d0 "+std::to_string(src.snapshot.objectTypeD0)+" JDG type "+std::to_string(e.a.fields.type)+
+                    " class "+std::to_string(e.a.category)+"; target kind "+std::to_string(dst.snapshot.objectKind)+
+                    " JDG type "+std::to_string(e.b.fields.type)+" class "+std::to_string(e.b.category)+")");
             continue;
         }
         if(contactConsumed(sm,which[0])||contactConsumed(tm,which[1]))continue;
@@ -448,9 +548,18 @@ void NativeMatch::resolveContacts() {
             captions_.startContact(7,e.centerX,e.centerY,1,pools,battle_.effectResidency,battle_.random);
             sounds_.sample(-1,14);
             highestRoute=0;
-        } else if(e.route==2&&b.actor.stateTable()==1&&(b.actor.stateIndex()==23||b.actor.stateIndex()==24)) {
-            if(!resolveWeaponDeflection(e,a.body,a.actor,b.body,b.actor))continue;
-            if(b.actor.variantA48==3) {
+        } else if(e.route==2||e.route==3) {
+            // 154e10: counter stances (1561e8) first, then the deflection.
+            if(resolveCounterStance(a.actor,a.body.timeline.clock().flags108,b.actor,tm.consumed,[this]{sounds_.sample(-1,0x16);})) {
+                // 157a58: 14e838 awards nothing in local VS; class 11 marks the defender.
+                if(contactFinishCategory(b.actor,human_.bindings())==11)b.actor.flags244|=0x80000000u;
+                highestRoute=2;
+                markContactConsumed(sm,which[0]);markContactConsumed(tm,which[1]);
+                continue;
+            }
+            if(!deflectionApplies(b.actor)||!resolveWeaponDeflection(e,a.body,a.actor,b.body,b.actor))continue;
+            if(b.actor.variantA48!=3&&b.actor.variantA48!=4)sounds_.stop(a.body.sound34);
+            else if(b.actor.variantA48==3) {
                 captions_.startContact(9,e.centerX,e.centerY,1,pools,battle_.effectResidency,battle_.random);
                 sounds_.sample(-1,22);
                 sounds_.stop(a.body.sound34);
@@ -492,6 +601,21 @@ void NativeMatch::resolveContacts() {
                 presentWeaponClash(captions_,battle_,e);
                 sounds_.sample(-1,22);
             }
+        } else if(e.route==1) {
+            // 15498c -> 155078: the source is marked (104:02000000, plus 04000000 when 108:80) and its
+            // timer 0 restarts at 16; 13a858 (byte 43d05e) is 0 under console VS, so timers 0/1 clear first.
+            // An Iroha (31) body target is also marked (100 |= 4).
+            sm.flags104|=0x02000000;if(sm.flags108&0x80)sm.flags104|=0x04000000;
+            if(src.snapshot.objectKind<2){a.actor.timers[0]=0;a.actor.timers[1]=0;a.actor.timers[0]=16*256;}
+            else throw std::runtime_error("Route 1 object source needs 11db00");
+            sm.consumed|=0x10;
+            if(dst.snapshot.objectKind>=2)throw std::runtime_error("Original 155078 reads character a10 of a null target actor");
+            if(b.actor.character==31)tm.consumed|=4;
+            highestRoute=1;
+        } else if(e.route==6) {
+            // 1549cc: JDG class 12 against classes 0/5/6/7 only marks the
+            // source's contact byte (104 bit 0x40000 below), with no damage.
+            sm.consumed|=4;
         } else throw std::runtime_error("Battle contact route "+std::to_string(e.route)+" requires its original handler");
         markContactConsumed(sm,which[0]);markContactConsumed(tm,which[1]);
     }
@@ -513,27 +637,31 @@ void NativeMatch::resolveContacts() {
 namespace {
 // 146a98: true unless the point is inside the camera's horizontal span widened
 // by the margin and below its top plus the vertical margin. EE CVT.W.S truncates.
+// Owners whose descriptor projectiles (16d9c8/16def0) run in projectile_engine.
+bool scriptProjectiles(unsigned character){return character==24||scriptStubFighter(character);}
 bool outsideView(const StageCamera& camera,uint32_t x,uint32_t y,int32_t margin,int32_t vertical) {
     const int32_t ix=ScalarFloat{x}.truncate(),iy=ScalarFloat{y}.truncate();
     if(camera.left-margin<ix&&ix<camera.right+margin)return !(iy<camera.top+vertical);
     return true;
 }
 }
-void NativeMatch::minaProjectileTask(unsigned i,uint32_t task) {
+void NativeMatch::scriptProjectileTask(unsigned i,uint32_t task) {
     auto& b=battle_;auto& f=fighters_[i];
     const auto parent=f.body.childParentWords(),opponent=fighters_[1-i].body.childParentWords();
     auto* companion=f.actor.auxiliaryObject04?&b.entry.tasks.objects.at(f.actor.auxiliaryObject04-1):nullptr;
-    ProjectileOwner owner{aux_,b.entry.tasks,f.storage.objectTasks,i,f.actor,parent,opponent,b.camera,b.random,companion};
+    ProjectileOwner owner{aux_,b.entry.tasks,f.storage.objectTasks,i,f.actor,parent,opponent,b.camera,b.random,companion,{}};
+    owner.enterStateNow=[&]{ground_.enterStateNow(f.body,f.actor,f.input,f.config,b.entry,i,fighters_[1-i].actor.flagsB8);};
+    owner.opponentActor=&fighters_[1-i].actor;owner.opponentConfig=&fighters_[1-i].config;
     updateDescriptorProjectile(projectiles_,owner,task);
 }
-uint32_t NativeMatch::spawnMinaProjectile(unsigned i,unsigned id,unsigned variant,const ScriptRow* row) {
+uint32_t NativeMatch::spawnScriptProjectileFor(unsigned i,unsigned id,unsigned variant,const ScriptRow* row) {
     auto& b=battle_;auto& f=fighters_[i];
     auto parent=f.body.childParentWords();
     const auto& command=f.body.timeline.attachedEffect();
     parent[0x110/4]=uint32_t(command[1]);parent[0x114/4]=uint32_t(command[2]);
     const auto opponent=fighters_[1-i].body.childParentWords();
     auto* companion=f.actor.auxiliaryObject04?&b.entry.tasks.objects.at(f.actor.auxiliaryObject04-1):nullptr;
-    ProjectileOwner owner{aux_,b.entry.tasks,f.storage.objectTasks,i,f.actor,parent,opponent,b.camera,b.random,companion};
+    ProjectileOwner owner{aux_,b.entry.tasks,f.storage.objectTasks,i,f.actor,parent,opponent,b.camera,b.random,companion,{}};
     return row?spawnScriptProjectile(projectiles_,owner,*row):spawnDescriptorProjectile(projectiles_,owner,id,variant);
 }
 void NativeMatch::minaScriptEvent(unsigned i,uint8_t type) {
@@ -553,7 +681,7 @@ void NativeMatch::minaScriptEvent(unsigned i,uint8_t type) {
     // Event 33: ten distinct sky arrows, or five scattered 0x52 arrows while
     // two earlier volleys are still alive.
     for(unsigned n=0;n<(count<2?10u:5u);++n) {
-        const auto handle=spawnMinaProjectile(i,count<2?0x55+n:0x52,0,nullptr);
+        const auto handle=spawnScriptProjectileFor(i,count<2?0x55+n:0x52,0,nullptr);
         if(!handle)continue;
         auto& o=pools.objects.at(handle-1);o[0x108/4]|=0x40000;
         if(count>=2){if(b.random.bounded(2)==0)o[0x38/4]&=~0x80000u;else o[0x38/4]|=0x80000u;}
@@ -654,29 +782,67 @@ void NativeMatch::visitActor(unsigned i,const std::array<NormalizedPadSample,2>&
     if(cpuLevels_[i]>=0)decideCpu=[this,i,&permission,&threat]{return runCpu(i,permission,threat);};
     else if(cpuSeats_[i])decideCpu=[this,i]{return cpuSeats_[i](fighters_[i],fighters_[1-i],battle_);};
     human_.requests(a,other.actor,f.input,b.sampler,f.sampling,pads,mappings_,f.config,permission,threat,cancel,decideCpu);
+    if(a.character==16&&a.auxiliaryObject04) {
+        // 149980's 1f7638 launch writes Kazuki's fire through the projection: 134/130 and an 11d908 request.
+        auto& fire=b.entry.tasks.objects.at(a.auxiliaryObject04-1);
+        fire[0x134/4]=a.auxiliaryFlag134;fire[0x130/4]=a.auxiliaryTimer130;
+        fire[0xc4/4]=uint32_t(a.auxiliaryPendingC4);fire[0xc0/4]=a.auxiliaryFrameC0;fire[0x104/4]=a.auxiliaryFlags104;
+    }
+    // Rera's wolf is written through the same projection by the state-entry dismount (27 / ACT 776)
+    // and 1fa138 (104:100) in the input permissions; publish those words back to the object.
+    const auto publishWolf=[&](const std::array<uint32_t,4>& before) {
+        if(a.character!=19||!a.auxiliaryObject04)return;
+        auto& wolf=b.entry.tasks.objects.at(a.auxiliaryObject04-1);
+        const std::array<uint32_t,4> now{a.auxiliaryState128,uint32_t(a.auxiliaryPendingC4),a.auxiliaryFrameC0,a.auxiliaryFlags104};
+        if(now[0]!=before[0])wolf[0x128/4]=now[0];
+        if(now[1]!=before[1])wolf[0xc4/4]=now[1];
+        if(now[2]!=before[2])wolf[0xc0/4]=now[2];
+        if(now[3]!=before[3])wolf[0x104/4]=(wolf[0x104/4]&~(before[3]^now[3]))|(now[3]&(before[3]^now[3]));
+    };
+    if(a.character==19&&a.auxiliaryObject04) {
+        const auto& wolf=b.entry.tasks.objects.at(a.auxiliaryObject04-1);
+        publishWolf({wolf[0x128/4],wolf[0xc4/4],wolf[0xc0/4],wolf[0x104/4]});
+    }
     ground_.restoreBody(f.body,a);ground_.beforeCallbacks(f.body,a);
     WeaponLockActorContext shared{other.body,other.actor,b.camera,distance_,aux_,f.storage.objectTasks};
     GroundStateFrame frame;frame.remainingSeconds=b.remainingSeconds();frame.opponentX=a.opponentX;frame.opponentFlags23c=other.actor.flags23c;
-    frame.opponentCharacter=other.actor.character;frame.opponentSystem=other.config.system;
+    frame.opponentCharacter=other.actor.character;frame.opponentSelected=selectedCharacter(other.actor);frame.opponentSystem=other.config.system;
     frame.spawnMikiri=[&](unsigned action){
         f.storage.history.reset(ActorHistory::capture(f.body,f.body.historyOffsetEc,f.body.historyOffsetF0));
         aux_.spawnMikiri(b.entry.tasks,f.storage.objectTasks,i,a.flags23c,f.body.childParentWords(),action);
     };
     frame.captureDamage=[&](int base){scriptDamage(i,base,DamageOrigin::CaptureScript);};
-    frame.battle=&b;
+    frame.battle=&b;frame.config=&f.config;frame.pools=&b.entry.tasks;
+    frame.worldEffect=[this](unsigned id,uint32_t facing,float x,float y,float z){
+        captions_.startContact(id,x,y,1,battle_.entry.tasks,battle_.effectResidency,battle_.random,facing,z);
+    };
     frame.startExplosion=[&]{gauges_.startExplosion(b,a,i,f.config.system);};
+    frame.startWorld=[this](unsigned id,uint32_t flags,unsigned seat,float x,float y,float z,float scale){
+        captions_.startWorld(id,flags,seat,x,y,z,scale,battle_.entry.tasks,battle_.effectResidency,battle_.random);
+    };
     frame.issenMusic=[&](bool restart){
         if(restart)RoundControl::startStageMusic(b,&sounds_);
         else {sounds_.stopMusic();b.audio.musicActive123a174=0;b.audio.musicPreloaded123a178=false;}
     };
-    frame.opponentObjectTasks=other.storage.objectTasks;
+    frame.opponentObjectTasks=other.storage.objectTasks;frame.ownObjectTasks=f.storage.objectTasks;frame.seat=i;
     if(a.character==24)frame.scriptEvent=[this,i](uint8_t type){minaScriptEvent(i,type);};
     frame.suppressCaptureObjects=[this]{setCaptureObjectGates(true,true);};
+    frame.clearInputs=[this,i,&f]{battle_.sampler.clearPressLatches(i);f.input.clearBuffers();};
+    frame.ownInput=&f.input;
+    frame.spawnDescriptor=[this,i](unsigned id,unsigned variant){return spawnScriptProjectileFor(i,id,variant,nullptr);};
+    frame.seizeOpponent=[&]{ground_.seizeOpponent(a,b.entry,frame);};
     frame.opponentInput=&other.input;
     frame.sound=&sounds_;frame.objects=&f.objects;frame.random=&b.random;frame.effects=&effects_;frame.weaponLock=&shared;
     frame.matchStats=&b.match.players[i];frame.opponentStats=&b.match.players[1-i];
     b.entry.player=i;b.entry.opponentFlagsB8=other.actor.flagsB8;
+    std::array<uint32_t,4> wolfBefore{};
+    if(a.character==19&&a.auxiliaryObject04) {
+        const auto& wolf=b.entry.tasks.objects.at(a.auxiliaryObject04-1);
+        a.auxiliaryState128=wolf[0x128/4];a.auxiliaryPendingC4=int32_t(wolf[0xc4/4]);a.auxiliaryFrameC0=wolf[0xc0/4];a.auxiliaryFlags104=wolf[0x104/4];
+        wolfBefore={wolf[0x128/4],wolf[0xc4/4],wolf[0xc0/4],wolf[0x104/4]};
+    }
     ground_.visit(f.body,a,f.input,f.config,b.entry,frame);other.actor.flagsB8=b.entry.opponentFlagsB8;
+    publishWolf(wolfBefore);
     // 149788 runs after the actor callback. A hit that crosses the low-life
     // threshold affects the next input decision, and survives the gauge tick.
     damage_.updateCriticalRage(a,int(f.config.system));
@@ -687,7 +853,7 @@ void NativeMatch::auxiliaryPhase(ObjectPhase phase) {
     auto& b=battle_;auto& pools=b.entry.tasks;
     // 140120 prepares priority before submitting either fighter, including
     // on paused visits. The draw queue preserves submission order on ties.
-    if(phase==ObjectPhase::Draw)updateFighterDepths(b,players());
+    if(phase==ObjectPhase::Draw)updateFighterDepths(b,players(),ground_.fighterTables());
     std::array<AuxiliaryObject,2> parents;
     AuxiliaryFrame frame{b.gauges,auxiliaryJumpFlags_,int32_t(b.field140),{}};
     for(unsigned i=0;i<2;++i) {
@@ -727,17 +893,78 @@ void NativeMatch::auxiliaryPhase(ObjectPhase phase) {
                     updateChample(aux_,pools.objects.at(pools.tasks.at(task-1)[7]-1),world);
                     break;
                 }
+                case 0x1f7318: { // Kazuki's fire
+                    auto& opp=fighters_.at(1-i);
+                    const bool held=opp.actor.character==0x21&&(opp.body.timeline.action().id()==0x240||opp.body.timeline.action().id()==0x241);
+                    const KazukiFireWorld world{parents.at(i),fighters_.at(i).actor,parents.at(1-i),held,
+                        // 142120(owner seat): the opponent's 14eb78 system-effect state (actor+13c) is 3.
+                        StateCallbacks::hasSystemEffect(opp.config)&&opp.actor.systemState13c==3,angleTrig_};
+                    updateKazukiFire(aux_,pools.objects.at(pools.tasks.at(task-1)[7]-1),world);
+                    break;
+                }
+                case 0x1f96a0: { // Rera's wolf
+                    const auto& m=b.match.players;
+                    ReraWolfWorld world{parents.at(i),fighters_.at(i).actor,parents.at(1-i),m.at(i).complete(),m.at(1-i).complete()};
+                    updateReraWolf(aux_,pools.objects.at(pools.tasks.at(task-1)[7]-1),world);
+                    break;
+                }
+                case 0x20aac0:case 0x20ab88:case 0x20abc8:case 0x20acb0:case 0x20ad08:case 0x20ad70:case 0x20ad78:
+                    updateTakeLoser(i,task);
+                    break;
+                case 0x203920: // character 33's karuta
+                    updateKaruta(aux_,pools.objects.at(pools.tasks.at(task-1)[7]-1),parents.at(i),fighters_.at(i).actor,b.camera);
+                    break;
+                case 0x201b40: // character 32's puppet
+                    updateKarakuriPuppet(aux_,pools.objects.at(pools.tasks.at(task-1)[7]-1),parents.at(i),
+                                         fighters_.at(i).actor,fighters_.at(1-i).actor.character);
+                    break;
+                case 0x203ec0: { // Chamcham's pet
+                    ChamchamPetWorld world{parents.at(i),fighters_.at(i).actor,
+                        b.match.players.at(i).complete(),b.match.players.at(1-i).complete(),
+                        [this,i,&pools](unsigned id)->AuxiliaryObject*{
+                            const auto h=spawnScriptProjectileFor(i,id,0,nullptr);
+                            return h?&pools.objects.at(h-1):nullptr;}};
+                    updateChamchamPet(aux_,pools.objects.at(pools.tasks.at(task-1)[7]-1),world);
+                    break;
+                }
+                case 0x1efe78: { // Galford's Poppy
+                    const PoppyWorld world{parents.at(i),fighters_.at(i).actor,&fighters_.at(i).input,parents.at(1-i),b.camera,
+                        fighters_.at(i).storage.objectTasks,i,b.match.players.at(i).complete(),b.match.players.at(1-i).complete()};
+                    updatePoppy(aux_,pools,pools.objects.at(pools.tasks.at(task-1)[7]-1),world);
+                    break;
+                }
                 case 0x1fbfc8:case 0x1fc420:updateMinaWeapon(pools,task,parents.at(i),fighters_.at(i).actor);break;
                 case 0x145e30:lock_.task(b,players(),task);break;
                 case 0x16e3b8:updateElementHurt(aux_,b,task,players());break;
                 case 0x1415a8:updateThrownStageItem(aux_,pools,task);break;
                 case 0x16c700:case 0x16c760:case 0x16c7c0:
                     updateRimururuIce(aux_,pools,task,b.camera,parents.at(i)[0x24/4]);break;
-                case 0x16cac0:case 0x16c818:case 0x16c8d0:case 0x16c940:minaProjectileTask(i,task);break;
+                case 0x16cac0:case 0x16c818:case 0x16c8d0:case 0x16c940:
+                case 0x16ccb8:case 0x16cd60:case 0x16ce50:case 0x16cf40:case 0x16cb88:case 0x16cc70:case 0x16f088:case 0x16f510:case 0x16d1a0:case 0x16d270:case 0x16c9e0:
+                    scriptProjectileTask(i,task);break;
+                case 0x16ec48:updateAndrewAmmo(pools,task,fighters_[i].actor);break;
+                case 0x1f2c68:break; // Basara's shadow: an empty task callback (jr ra)
+                case 0x1f5860:case 0x1fe280:case 0x1f5bd0:case 0x1f5d08:case 0x1f5ea0:case 0x1f5f88:case 0x1f7ae0:
+                case 0x1f2290:case 0x1f2478:case 0x1f2500:case 0x1f25f0:case 0x16d020:case 0x1faa98:
+                case 0x1f3778:case 0x1f37c8:case 0x1f38d8:case 0x1f4838:case 0x1f48d8:case 0x1681c0:case 0x1fe6f0:case 0x1fe768:case 0x1febb0:case 0x16e9b8:case 0x2029d8:case 0x2091d8:case 0x209240:case 0x2094a8:case 0x208508:case 0x208580: {
+                    const auto body=fighters_[i].body.childParentWords();
+                    auto& f=fighters_[i];
+                    ScriptObjectOwner owner{f.storage.objectTasks,i,f.actor,body,&f.input};
+                    owner.camera=&battle_.camera;owner.opponent=&fighters_[1-i].actor;
+                    const auto opponentBody=fighters_[1-i].body.childParentWords();owner.opponentBody=&opponentBody;
+                    owner.enterStateNow=[&]{ground_.enterStateNow(f.body,f.actor,f.input,f.config,battle_.entry,i,fighters_[1-i].actor.flagsB8);};
+                    updateScriptFighterObject(aux_,pools,task,owner);
+                    break;
+                }
+                case 0x16ee10:case 0x16ee80: { // PakuPaku's orbiting objects
+                    auto& t=pools.tasks.at(task-1);
+                    updatePakuOrbit(aux_,pools.objects.at(t[7]-1),t[0],fighters_[i].storage.history,angleTrig_);
+                    break;
+                }
                 case 0x16def0: {
                     const auto& object=pools.objects.at(pools.tasks.at(task-1)[7]-1);
                     if(object[0xcc/4]==5)updateThrownStageItem(aux_,pools,task);
-                    else if(object[0x14/4]==24)minaProjectileTask(i,task);
+                    else if(scriptProjectiles(object[0x14/4]))scriptProjectileTask(i,task);
                     else if(object[0x14/4]==2)updateRimururuIce(aux_,pools,task,b.camera,parents.at(i)[0x24/4]);
                     else if(object[0x14/4]==3)updateHanzoProjectile(aux_,pools,task);
                     else if(object[0xd0/4]==1)updateHaohmaruFlask(aux_,pools,task);
@@ -771,7 +998,21 @@ void NativeMatch::auxiliaryPhase(ObjectPhase phase) {
         else if(b.flags138&0x10) {
             battleBackdropColor_=0xffffffff;
             for(auto& fighter:fighters_)fighter.actor.fieldA2c=7;
-        } else if((b.flags138&0x60)==0x20){referee_.hideNextDraw();b.stageItems.hideNextDraw();}
+        } else if((b.flags138&0x60)==0x20) {
+            // 141a48 (Iroha's scene): the fighter in raw table 1 (seat 0 first) has its
+            // zero-duration hold released here every frame, which restarts the other
+            // fighter's timer 23; a black rectangle (z 30 while that timer runs, else 50;
+            // drawn at the z-45 backdrop depth here) hides the stage, referee and items.
+            const unsigned att=fighters_[0].actor.stateTable()==1?0:1;
+            auto& A=fighters_[att];auto& V=fighters_[1-att];
+            const auto c=A.body.timeline.clock();
+            if(c.flags104&0x100){V.actor.timers[23]=10*256;A.body.setFlags(c.flags104&~0x100u,c.flags108);}
+            {ActorTimers t{V.actor.timerDelta,V.actor.timers};t.decrease(23);V.actor.timers=t.values;}
+            battleBackdropColor_=0xff000000;
+            referee_.hideNextDraw();b.stageItems.hideNextDraw(); //1b5078, 1b59a0
+            b.flags138|=4; //140630(2)
+            for(auto& fighter:fighters_)fighter.actor.fieldA2c=7; //1493b8(actor, 7)
+        }
         objectDraws_.sort();
     }
 }
@@ -1009,7 +1250,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
                 sounds_.stopMusic();sounds_.stopGroup(2);
                 auto random=battle_.random;
                 const auto stage=selectConsoleVersusStage(random,characterSelect_->stage);
-                if(!CombatStageState::supports(stage)||!playableFighter(characters[0])||!playableFighter(characters[1])||picks[0].spirit>5||picks[1].spirit>5) {
+                if(!CombatStageState::supports(stage)||!playableFighter(logicCharacter(characters[0]))||!playableFighter(logicCharacter(characters[1]))||(picks[0].spirit>5&&picks[0].spirit!=8)||(picks[1].spirit>5&&picks[1].spirit!=8)) {
                     unavailable_=true;unavailableStage_=stage;
                 }
                 else {
@@ -1153,6 +1394,21 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         // decision by a fractional tick even when its input is still polled.
         a.cpuTimerDelta08=a.timerDelta;
         ground_.prepareInput(a,fighters_[1-i].actor,f.input,f.objects,distance_);
+        {
+            // 151b00: while Rasetsu Galford (41) is in attack 0x50/0x51, the other fighter's facing
+            // follows its own pad left/right (118128), unless airborne (23c:10) or 244:2 is set.
+            const auto& r=fighters_[1-i].actor;
+            if(r.character==41&&(r.state194==0x00500001||r.state194==0x00510001)) {
+                if(!(a.flags23c&0x10)&&!(a.flags244&2)) {
+                    const auto pad=pads[i].held;
+                    const auto k=f.body.timeline.clock();
+                    if(pad&0x40){f.sampling.expectedFacing=true;f.body.timeline.setObjectFlags(k.objectFlags|0x80000u,k.flags104,k.flags108);}
+                    else if(pad&0x80){f.sampling.expectedFacing=false;f.body.timeline.setObjectFlags(k.objectFlags&~0x80000u,k.flags104,k.flags108);}
+                    ground_.captureBody(f.body,a);
+                }
+                a.flags244|=1;a.flags24c=uint8_t((a.flags24c&~2u)|4u);
+            }
+        }
         LifeState life{a.fieldA30,a.maximumLifeA34,a.pendingDamageA38,a.queuedActionA3c,a.flags23c,a.conditions15c[1],a.y};
         // 1519a0 issues the heal label before HP is capped. A full notice
         // pool suppresses only the label and its sound, never the recovery.
@@ -1190,10 +1446,11 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             if(f.actor.character==2)spawnRimururuIce(aux_,b.entry.tasks,f.storage.objectTasks,i,f.actor,parent);
             else spawnHanzoProjectile(aux_,b.entry.tasks,f.storage.objectTasks,i,f.actor,parent);
         }
-        // 16d9c8 reads the running script row at an ACT spawn marker. Mina's
-        // rows fire arrows even from ordinary crouching and jumping slashes.
-        if(f.actor.character==24&&f.actor.registry28c[11]&&(c.flags104&0x18002)==0x8000&&attachment==0)
-            if(const auto* row=ground_.scripts().current(f.actor))spawnMinaProjectile(i,0,0,row);
+        // 16d9c8 reads the running script row at an ACT spawn marker (Mina's
+        // rows fire arrows even from ordinary crouching and jumping slashes).
+        // Every fighter whose moves run through ScriptEngine uses it.
+        if(scriptProjectiles(f.actor.character)&&f.actor.registry28c[11]&&(c.flags104&0x18002)==0x8000&&attachment==0)
+            if(const auto* row=ground_.scripts().current(f.actor))spawnScriptProjectileFor(i,0,0,row);
         if(f.actor.character==0&&f.actor.stateTable()==1&&state>=64&&
            (c.flags104&0x18002)==0x8000&&attachment==0) {
             auto parent=f.body.childParentWords();

@@ -894,7 +894,7 @@ public:
                 color(r,255,255,255);const auto stage=match.unavailableStage();
                 if(!match.missingMove().empty())text(r,20,437,match.missingMove());
                 else if(stage>=0&&!ss6::CombatStageState::supports(stage))text(r,20,437,"STAGE "+std::to_string(stage)+" IS IN DEVELOPMENT / CHOOSE STAGE 0 OR 1");
-                else text(r,20,437,"FIGHTER IN DEVELOPMENT / CHOOSE HAOHMARU, NAKORURU, RIMURURU, HANZO OR MINA");
+                else text(r,20,437,"FIGHTER IN DEVELOPMENT / CHOOSE HAOHMARU, NAKORURU, RIMURURU, HANZO, RASETSUMARU, MINA, GAOH OR EARTHQUAKE");
                 text(r,20,459,"PRESS AN ATTACK BUTTON TO RETURN TO CHARACTER SELECT");
             }
             if(match.title())present(r,{},paused);

@@ -158,7 +158,7 @@ def main():
         assert sha(folder/'viewer')==sha(BUILD/'ss6-viewer')
         compile_driver(folder,'queue',CAPTURE_DRIVER,lib);compile_driver(folder,'stage',STAGE_DRIVER,lib)
         sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
-        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
                         HERE/'sdl_slash_input_test.cpp',lib,*sdl,'-o',folder/'keys'],check=True)
         for side in (0,1):
             clocks.append(verify_charge_clock(side))

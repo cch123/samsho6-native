@@ -89,7 +89,7 @@ def standalone(tmp):
              (4,0,0,0,0x240001),(4,2,0,0,0),(5,2,0,0,0)]
     cases=[(seconds,*c) for seconds in range(-1,100) for c in configs]
     src=tmp/'clock.cpp';src.write_text(CPP);exe=tmp/'clock'
-    subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,ROOT/'src/rage_gauge.cpp','-o',exe],check=True)
+    subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,ROOT/'src/rage_gauge.cpp','-o',exe],check=True)
     output=memoryview(subprocess.check_output([exe,ASSETS],input=''.join(' '.join(map(str,r))+'\n' for r in cases).encode()))
     stride=1+W*H*4;assert len(output)==len(cases)*stride
     n=0

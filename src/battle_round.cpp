@@ -25,7 +25,7 @@ void BattleRoundInitialization::begin(GroundStateRuntime& ground,const std::arra
                                      BattleRoundState& battle,BattleEffects& effects) {
     if(battle.gameMode!=3)throw std::runtime_error("Battle round initialization requires local versus");
     for(const auto& p:players)if(!playableFighter(p.actor.character)||p.actor.controlKindA20>1||
-        (p.actor.controlKindA20==1&&p.actor.controlModeC8!=35)||p.config.character!=p.actor.character||p.config.system>5)
+        (p.actor.controlKindA20==1&&p.actor.controlModeC8!=35)||p.config.character!=p.actor.character||(p.config.system>5&&p.config.system!=8))
         throw std::runtime_error("Battle round initialization requires supported fighters, controllers and spirits");
     const bool first=battle.match.roundIndex==0;
     battle.sampler.resetRoundSampling();battle.camera.resetRound();battle.timers={};

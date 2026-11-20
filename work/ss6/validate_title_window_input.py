@@ -124,7 +124,7 @@ def main():
         work=Path(td);harness=work/'window'
         libs=shlex.split(run(['pkg-config','--cflags','--libs','sdl3']))
         runtime=BUILD/'libss6-runtime.a'
-        run(['c++','-std=c++20','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',runtime,*libs,'-o',harness])
+        run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',runtime,*libs,'-o',harness])
         paths=[validate(viewer,assets,harness,work,seat) for seat in (0,1)]
     report=dict(status='passed',package=args.package,viewer_sha256=sha256(viewer.read_bytes()).hexdigest(),
                 runtime_sha256=sha256(runtime.read_bytes()).hexdigest(),paths=paths,

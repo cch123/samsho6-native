@@ -260,7 +260,7 @@ def keyboard_checks(viewer=None,assets=None):
         folder=Path(tmp)
         shutil.copy2(viewer or PKG/'ss6-viewer',folder/'viewer')
         flags=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
-        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
              HERE/'sdl_slash_input_test.cpp',EXE.parent/'libss6-runtime.a',*flags,'-o',folder/'keys'])
         for side in (0,1):
             front=(128,64)[side]

@@ -38,7 +38,7 @@ public:
 private:
     friend class ActionBank;
     ActionClip(const std::vector<uint8_t>& aid,const std::vector<uint8_t>& act,unsigned id,
-               bool mutedInspection,unsigned resource);
+               bool mutedInspection,unsigned resource,bool capturePose);
     std::vector<ActionRecord> records_;
     unsigned id_;
     unsigned recordCount_=0;
@@ -83,8 +83,12 @@ public:
     void start(const ActionClip& action);
     const ActionClip& action() const { return *action_; }
     const ActionRecord& record() const { return action_->record(clock_.step); }
+    ActionBank* bank() const { return bank_; } // the owner's resource, null for standalone clips
     void stopMotion();
     void setPosition(float x,float y) { motion_.x=x; motion_.y=y; }
+    void clearEndControl(uint32_t bits) { clock_.endControl&=~bits; } // object+3c (Mizuki's bounce re-arms the ground sentinel)
+    // Raw writes of object+2c then +28 (168960 drives a held victim's record from the attacker's frame).
+    void setRecordStep(uint32_t step) { clock_.fractionalTime=0; clock_.step=step; }
     void setMotion(const MotionState& motion) { motion_=motion; }
     void setObjectFlags(uint32_t flags38,uint32_t flags104,uint32_t flags108) {
         clock_.objectFlags=flags38; clock_.flags104=flags104; clock_.flags108=flags108;
@@ -101,6 +105,9 @@ public:
     //The owner binds this to the same scheduled pool and RNG as both actors.
     void setEffectObserver(std::function<void(unsigned,uint32_t,float,float)> observer) { effectObserver_=std::move(observer); }
     void setSoundObserver(std::function<void(int16_t,const ActionClock&)> observer) { soundObserver_=std::move(observer); }
+    // Record header bit 0x2000 (120ee8): after the sound command, the owner
+    // stops its retained voice channel.
+    void setVoiceCutObserver(std::function<void()> observer) { voiceCutObserver_=std::move(observer); }
 private:
     friend class PlayerObject;
     void enterRecord();
@@ -114,5 +121,6 @@ private:
     int16_t lastSound_ = 0;
     unsigned soundEvents_ = 0;
     std::function<void(int16_t,const ActionClock&)> soundObserver_;
+    std::function<void()> voiceCutObserver_;
 };
 } // namespace ss6

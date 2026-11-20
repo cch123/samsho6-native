@@ -42,7 +42,7 @@ def validate(work,viewer,assets):
     shutil.copy2(BUILD/'ss6-match-replay',match)
     harness=work/'keyboard'
     sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
-    run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+    run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
          HERE/'sdl_slash_input_test.cpp',BUILD/'libss6-runtime.a',*sdl,'-o',harness])
     results=[]
     for side in (0,1):

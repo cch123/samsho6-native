@@ -148,7 +148,11 @@ def sounds(iso,folder,character=2):
                 op('R',613);op('G',1);op('R',7)
             for tone in range(voiceCount):
                 slot=o.ee.read(0x59d008,4)
-                assert op('V',character,tone)==-1 and o.ee.read(0x15539a0+4*slot,4)==lineup.index(character)
+                r=op('V',character,tone)
+                # 213378 keys character 50's and character 29's first eight lines
+                # on a short physical channel instead of the streamed-voice slot.
+                if character==50 or (character==29 and tone<8):assert r>=0
+                else:assert r==-1 and o.ee.read(0x15539a0+4*slot,4)==lineup.index(character)
                 for _ in range(3):op('T')
                 op('R',811);op('G',2);op('R',7)
     cpp=folder/'audio.cpp';cpp.write_text(AUDIO_DRIVER);exe=folder/'audio';pcm=folder/'pcm'

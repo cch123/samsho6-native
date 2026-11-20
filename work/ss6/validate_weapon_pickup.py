@@ -171,7 +171,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         cpp=Path(tmp)/'observe.cpp';exe=Path(tmp)/'observe'
         cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-I',ROOT/'src',cpp,LIBRARY,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-I',ROOT/'src',cpp,LIBRARY,'-o',exe],check=True)
         bounds=[ranges(exe,i) for i in range(2)]
         scenarios=[(exe,i,case) for i in range(2) for case in
                    ('pickup','distant-light','near-medium','near-heavy','near-kick')]

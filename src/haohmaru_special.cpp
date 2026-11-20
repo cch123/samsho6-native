@@ -180,7 +180,7 @@ void bindWhirlwindAnchor(PlayerObject& body,AuxiliaryObject& child) {
     body.timeline.stopMotion();
 }
 void setWhirlwindPhase(PlayerObject& body,StateEntryActor& a,StateEntryActor& opponent,
-                       AuxiliaryObject* child,AuxiliaryObjects& objects,unsigned phase) {
+                       AuxiliaryObject* child,AuxiliaryObjects& objects,unsigned phase,bool thirdRowFE) {
     auto& r=a.registry28c;
     r[0]=r[1]=phase;r[7]=r[8]=r[9]=0;
     a.timers[23]=opponent.timers[23]=0;
@@ -191,7 +191,7 @@ void setWhirlwindPhase(PlayerObject& body,StateEntryActor& a,StateEntryActor& op
         a.queuedActionA3c=int32_t(1280+phase*2+!(a.flags23c&0x1000));
         a.flags248&=~0x800u;
         objects.request(*child,535+phase,false,false);
-        if(phase==2)body.pendingFlags|=1;
+        if(phase==2&&thirdRowFE)body.pendingFlags|=1;
     }
 }
 void restrictScriptJump(PlayerObject& body) {
@@ -199,7 +199,7 @@ void restrictScriptJump(PlayerObject& body) {
 }
 }
 void updateWhirlwindVictim(PlayerObject& body,StateEntryActor& a,const ActorCommandInput&,
-                           StateEntryContext& context,const GroundStateFrame& frame) {
+                           StateEntryContext& context,const GroundStateFrame& frame,const WhirlwindRows& rows) {
     if(!frame.weaponLock)throw std::runtime_error("Whirlwind victim requires live opponent and auxiliary pool");
     auto& world=*frame.weaponLock;
     auto& r=a.registry28c;
@@ -215,8 +215,8 @@ void updateWhirlwindVictim(PlayerObject& body,StateEntryActor& a,const ActorComm
         return;
     }
     AuxiliaryObject* child=a.bodyField124?&context.tasks.objects.at(a.bodyField124-1):nullptr;
-    if(a.callbacks260[0]==0x1ec248) {
-        if(!child||(*child)[0xcc/4]!=2||(*child)[0x14/4]!=0||!(*child)[1]) {
+    if(a.callbacks260[0]==rows.entry) {
+        if(!child||(*child)[0xcc/4]!=2||(*child)[0x14/4]!=rows.source||!(*child)[1]) {
             // 168220 falls back to common air damage when its source has
             // already gone away before the captured reaction can take over.
             a.callbacks260[0]=0;a.pendingTable=2;a.pendingIndex=74;a.request18c=1;return;
@@ -235,9 +235,9 @@ void updateWhirlwindVictim(PlayerObject& body,StateEntryActor& a,const ActorComm
         context.tasks.tasks.at(source[1]-1)[0]=0x147540;
         source[0x108/4]&=~0x7000u;
         a.callbacks260={0x165cc0,2,0xffffffffu,(world.opponent.stateFlags19a&4)?2u:unsigned(bool(world.opponent.stateFlags19a&2)),0,0,0};
-        a.override27c={};r[12]=0x4e2858u+strength*100;r[10]=a.bodyField124;r[3]=a.callbacks260[3];
+        a.override27c={};r[12]=rows.base;r[10]=a.bodyField124;r[3]=a.callbacks260[3];
         r[2]=0xffffffff;r[7]=r[8]=r[9]=0;a.timers[0]=a.timers[1]=0;
-        setWhirlwindPhase(body,a,world.opponent,child,world.objects,0);return;
+        setWhirlwindPhase(body,a,world.opponent,child,world.objects,0,rows.thirdRowFE);return;
     }
     const auto phase=r[0];
     restrictScriptJump(body);restrictScriptJump(world.opponentBody);
@@ -264,10 +264,10 @@ void updateWhirlwindVictim(PlayerObject& body,StateEntryActor& a,const ActorComm
         r[8]=r[9]=1;
         if(!landingReady(body,a.queuedActionA3c))return;
         stopAtGround(body);
-        setWhirlwindPhase(body,a,world.opponent,nullptr,world.objects,4);
+        setWhirlwindPhase(body,a,world.opponent,nullptr,world.objects,4,rows.thirdRowFE);
         frame.captureDamage(whirlwindLandingDamage[strength]);
         a.callbacks260[0]=0x174158;a.callbacks260[5]=5;return;
     } else throw std::runtime_error("Invalid whirlwind victim phase");
-    setWhirlwindPhase(body,a,world.opponent,child,world.objects,phase+1);
+    setWhirlwindPhase(body,a,world.opponent,child,world.objects,phase+1,rows.thirdRowFE);
 }
 }

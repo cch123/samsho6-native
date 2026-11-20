@@ -53,6 +53,8 @@ struct BattleRoundState {
     // In local versus one displayed count spans 90 normal battle updates.
     static constexpr std::array<int,4> roundTimeLimits{60,90,99,0};
     int remainingSeconds() const;
+    bool timeExpired() const;
+    void queueLifeChange(StateEntryActor& recipient,uint32_t opponentFlags23c,int32_t amount) const;
     int32_t lastItemSecond=0; // 12d2304, zeroed at each round entry.
     StageItemDelivery stageItems;
     StageItemNotices itemNotices;

@@ -96,7 +96,7 @@ def main():
     assert hashlib.sha256((ASSETS.parent/'SLPS_255.59').read_bytes()).hexdigest()==SOURCE_HASH
     with tempfile.TemporaryDirectory() as temp:
         td=Path(temp);cpp=td/'hud.cpp';exe=td/'hud';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/rage_gauge.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/rage_gauge.cpp','-o',exe],check=True)
         ken="--ken" in sys.argv
         groups=[(5,5),(5,4),(4,5),(5,0),(0,5)] if ken else [(4,4),(4,0),(0,4)]
         for systems in groups:

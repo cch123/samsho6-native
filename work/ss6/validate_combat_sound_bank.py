@@ -79,7 +79,7 @@ def compile_driver(temp, name, code, objects=()):
     source = temp / (name + '.cpp')
     binary = temp / name
     source.write_text(code)
-    subprocess.run(['c++', '-std=c++20', '-O2', '-I', str(ROOT / 'src'), str(source),
+    subprocess.run(['c++', '-std=c++20','-ffp-contract=off', '-O2', '-I', str(ROOT / 'src'), str(source),
                     *map(str, objects), '-o', str(binary)], check=True)
     return binary
 

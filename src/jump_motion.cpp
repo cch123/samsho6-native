@@ -185,10 +185,11 @@ void beginAirHurt(PlayerObject&,StateEntryActor& actor) {
     actor.callbacks260[3]=0;actor.callbacks260[6]=unsigned(explosion);
 }
 
-void updateAirLanding(PlayerObject& object,StateEntryActor& actor) {
-    if(!jumpReachedGround(object,actor.queuedActionA3c))return;
+bool updateAirLanding(PlayerObject& object,StateEntryActor& actor) {
+    if(!jumpReachedGround(object,actor.queuedActionA3c))return false;
     actor.pendingTable=0;
     actor.pendingIndex=actor.jumpDirectionA44==6 ? 44 : 22;
+    return true;
 }
 
 void beginRecoveryRoll(PlayerObject& object,StateEntryActor& actor) {

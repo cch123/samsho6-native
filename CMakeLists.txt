@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(ss6_native_reconstruction LANGUAGES CXX)
+# The EE FPU never fuses a multiply into a following add implicitly; the
+# explicit MULA/MADD sequences are modeled by ScalarFloat. Keep host floating
+# point (including the libgcc soft-double blends) unfused.
+add_compile_options(-ffp-contract=off)
 find_package(SDL3 CONFIG REQUIRED)
-add_library(ss6-runtime src/action_runtime.cpp src/motion.cpp src/judgment.cpp src/collision.cpp src/combat_decision.cpp src/scalar_float.cpp src/damage.cpp src/actor_state.cpp src/reaction.cpp src/player_object.cpp src/contact_trial.cpp src/ordinary_rules.cpp src/stage_camera.cpp src/trial_script.cpp)
+add_library(ss6-runtime src/soft_double.cpp src/action_runtime.cpp src/motion.cpp src/judgment.cpp src/collision.cpp src/combat_decision.cpp src/scalar_float.cpp src/damage.cpp src/actor_state.cpp src/reaction.cpp src/player_object.cpp src/contact_trial.cpp src/ordinary_rules.cpp src/stage_camera.cpp src/trial_script.cpp)
 target_compile_features(ss6-runtime PUBLIC cxx_std_20)
 target_include_directories(ss6-runtime PUBLIC src)
 target_compile_options(ss6-runtime PRIVATE -Wall -Wextra -Wpedantic)
@@ -157,8 +161,8 @@ target_sources(ss6-runtime PRIVATE src/character_tiles.cpp)
 add_executable(ss6-character-tiles-probe src/character_tiles_probe.cpp)
 target_link_libraries(ss6-character-tiles-probe PRIVATE ss6-runtime)
 
-target_sources(ss6-runtime PRIVATE src/character_select.cpp src/character_select_art.cpp src/versus_faceoff.cpp src/vs_curtain.cpp src/mamahaha.cpp src/konru.cpp src/rimururu_special.cpp src/hanzo_special.cpp src/hanzo_capture.cpp src/hanzo_projectile.cpp)
-target_sources(ss6-runtime PRIVATE src/native_match.cpp src/local_versus.cpp src/console_versus_art.cpp src/console_versus_menu.cpp src/console_versus_session.cpp src/combat_stage_state.cpp src/combat_stage.cpp src/fighter_depth.cpp src/contact_presentation.cpp src/native_scene.cpp src/jump_motion.cpp src/dash_motion.cpp src/haohmaru_special.cpp src/nakoruru_strikes.cpp src/nakoruru_eagle_attack.cpp src/nakoruru_riding.cpp src/nakoruru_capture.cpp src/finishing_blow.cpp)
+target_sources(ss6-runtime PRIVATE src/character_select.cpp src/character_select_art.cpp src/versus_faceoff.cpp src/vs_curtain.cpp src/mamahaha.cpp src/konru.cpp src/rimururu_special.cpp src/hanzo_special.cpp src/script_engine.cpp src/script_fighter.cpp src/victim_script.cpp src/fighter_tables.cpp src/andrew_ammo.cpp src/mina_special.cpp src/chample.cpp src/poppy.cpp src/kazuki_fire.cpp src/chamcham_pet.cpp src/karakuri_puppet.cpp src/karuta.cpp src/pakupaku_orbit.cpp src/rera_wolf.cpp src/projectile_engine.cpp src/hanzo_capture.cpp src/hanzo_projectile.cpp)
+target_sources(ss6-runtime PRIVATE src/native_match.cpp src/local_versus.cpp src/cpu_match_control.cpp src/cpu_technique.cpp src/cpu_technique_script.cpp src/cpu_input.cpp src/cpu_decision.cpp src/cpu_execution.cpp src/cpu_reactions.cpp src/cpu_tactics.cpp src/console_attract_ranking.cpp src/console_ranking_art.cpp src/console_title.cpp src/console_title_art.cpp src/console_versus_art.cpp src/console_versus_menu.cpp src/console_versus_session.cpp src/combat_stage_state.cpp src/combat_stage.cpp src/fighter_depth.cpp src/contact_presentation.cpp src/native_scene.cpp src/jump_motion.cpp src/dash_motion.cpp src/haohmaru_special.cpp src/nakoruru_strikes.cpp src/nakoruru_eagle_attack.cpp src/nakoruru_riding.cpp src/nakoruru_capture.cpp src/finishing_blow.cpp)
 add_executable(ss6-match-replay src/match_replay.cpp)
 target_link_libraries(ss6-match-replay PRIVATE ss6-runtime)
 add_executable(ss6-finishing-blow-probe src/finishing_blow_probe.cpp)

@@ -56,7 +56,7 @@ def main():
     stats=Counter();sets=[]
     with tempfile.TemporaryDirectory() as directory:
         work=Path(directory);src=work/'capture.cpp';src.write_text(CAPTURE);exe=work/'capture'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,LIB,'-o',exe],check=True)
         for opponent in range(4):
             for seat in (0,1):
                 result,opening=set_result(assets,opponent,seat)

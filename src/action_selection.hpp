@@ -29,6 +29,7 @@ struct SelectionThreat {
 class ActionSelection {
 public:
     explicit ActionSelection(const std::filesystem::path& assets);
+    uint8_t characterFlags(unsigned character) const {return characterFlags_.at(character);} // 168bf8
     uint8_t normalTransition(unsigned state,unsigned input,uint32_t flags23c) const;
     uint8_t attackTransition(unsigned state,unsigned input,uint32_t flags23c,bool chain=false) const;
     uint8_t systemNormal(const SelectionActor&,const ActorCommandInput&,unsigned state,const InputSystemConfig&,bool restricted=false) const;
@@ -58,5 +59,6 @@ private:
 };
 //14f5d8's per-system movement/evasion column, including custom system6.
 unsigned inputSystemColumn(const InputSystemConfig&);
+bool auxiliaryThreatActive(const SelectionActor&); //1a3798
 bool inputGuardAllowed(const SelectionActor&,const InputSystemConfig&);
 }

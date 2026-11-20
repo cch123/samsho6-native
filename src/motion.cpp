@@ -33,10 +33,12 @@ void enterMotion(MotionState& s, const MotionCommand& cmd, bool reverse, bool su
     // Jump table 0x5df3d8: 0 retains motion, whereas 1..4 clear it.
     // 16..18 also retain motion here; their separate object flags are not
     // represented by this arithmetic helper.
+    // 120fc8 sign-extends the kind and compares it unsigned with 19: every
+    // value outside 0..18 (ACT163 uses 19, Gaira's 579/640.. use 20/21)
+    // skips the jump table and retains all six values, like kind 0.
+    if (cmd.kind<0 || cmd.kind>=19) return;
     switch (cmd.kind) {
-    case 0: case 16: case 17: case 18: case 19:
-        // ACT163 uses 19 on every record. The EE bounds check at 120fc8
-        // sends it directly past the jump table and retains all six values.
+    case 0: case 16: case 17: case 18:
         break;
     case 1: case 2: case 3: case 4:
         s.dx=s.vx=s.ax=s.dy=s.vy=s.ay=0; break;

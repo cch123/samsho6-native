@@ -1,0 +1,915 @@
+Common per-actor move-script interpreter (163570..1655ff)
+=========================================================
+
+Scope: static reverse engineering of the pinned ELF work/ss6/extracted/SLPS_255.59
+(MIPS R5900, little endian). Every statement below was read from the disassembly
+(analyze_elf.py) unless it is marked INFERRED (meaning assigned from usage) or
+UNVERIFIED (not confirmed). No runtime trace of these functions has been compared
+yet; nothing here is "runtime-verified". Delay slots have been accounted for.
+
+Glossary
+  ACT     per-character action (animation) record bank; an "ACT id" is an action
+          number queued through 1493c0/1494c0.
+  row     one 20-byte record of table A (4e2788[character]).
+  script  a run of rows starting at a row whose byte+0 equals the script id;
+          following rows normally carry id 0xff ("continuation rows").
+  cb      the callback argument passed to actor callbacks: cb[0] = actor,
+          cb[1] = opponent actor (INFERRED from usage: cb[1][0] is used as a body,
+          cb[1]+0x194/+0x244/+0xa10 as actor fields).
+  actor   the fighter controller structure (native StateEntryActor and bases).
+  body    *(actor+0), the fighter's ordinary object (native PlayerObject).
+  aux     *(actor+4), the separate auxiliary object (Nakoruru eagle, Rimururu
+          Konru, Mina's companion, ...; native SelectionActor::auxiliaryState128 is
+          aux+0x128). Not to be confused with the opponent.
+  opp     cb[1] (opponent actor); opp body = *(opp+0).
+  RNG     the game's library random generator 112300(bound) (native GameRandom).
+  EE      Emotion Engine; EE cvt.w.s always truncates toward zero.
+  feature n
+          word actor+0x2c4+4*n, i.e. native ActorCommandInput::sampledFeatures[n]
+          (layout confirmed by state_transition_probe.cpp, which maps feature i to
+          actor offset 0x2c4+4*i).
+
+Features read by this engine (meaning from src/input_features.cpp):
+  f6  (+0x2dc, owner+0x18)  fresh (unlatched) press of button 0
+  f7  (+0x2e0, owner+0x1c)  fresh press of button 1
+  f8  (+0x2e4, owner+0x20)  fresh press of button 2
+  f24 (+0x324, owner+0x60)  4-visit latched button0 AND latched button1 (pair 0)
+  f56 (+0x3a4, owner+0xe0)  facing-relative ring, "up" (diagonal-resolved)
+  f62 (+0x3bc, owner+0xf8)  facing-relative held "forward" (not diagonal-resolved)
+  f63 (+0x3c0, owner+0xfc)  held down
+  f64 (+0x3c4, owner+0x100) facing-relative held "back"
+  f88 (+0x424, owner+0x160) absolute ring diagonal between owner+0x15c and +0x164 (up)
+  f90 (+0x42c, owner+0x168) absolute ring diagonal between owner+0x164 (up) and +0x14c
+  f91 (+0x430, owner+0x16c) held button 0
+  f92 (+0x434, owner+0x170) held button 1
+  f93 (+0x438, owner+0x174) held button 2
+  (f88/f90: owner+0x14c ring is selected from held[2]/held[3] using only the
+  reverse-directions option, not facing. Which screen side is which is UNVERIFIED;
+  1648f8 combines them with the body facing bit, see section 7.)
+
+Actor offsets used (native names where they exist):
+  +0x000 body pointer                    +0x004 aux pointer
+  +0x18c request18c (word)               +0x190/+0x192 pendingTable/pendingIndex
+                                          (halfwords written by 14ff80)
+  +0x194 state194 (low half table, high half index)
+  +0x1ac timer block (ActorTimers); timer i lives at +0x1b0+4*i = native timers[i]
+  +0x23c flags23c  +0x244 flags244  +0x248 flags248
+  +0x260 callbacks260[0..6]; +0x26c = callbacks260[3]; +0x274 = callbacks260[5]
+  +0x28c registry28c[0..12] (section 1)
+  +0x2c4 input feature block (see above)
+  +0xa10 character   +0xa24 player slot (input_lifecycle.hpp "Actor+a24")
+  +0xa30 life (fieldA30)   +0xa38 pendingDamageA38   +0xa3c queuedActionA3c
+  +0xa44 jumpDirectionA44
+  +0xf14..0xf21 characterBytesF14[0..13]: +0xf15=[1], +0xf17=[3], +0xf1c word =
+         bytes [8..11], +0xf1d=[9], +0xf1f=[11]
+Body/object offsets used (native MotionState/ActionClock/PlayerObject):
+  +0x24 current action   +0x28 current ACT record index (ActionClock.step)
+  +0x34 sound handle (PlayerObject::sound34)   +0x38 objectFlags (bit 0x80000 =
+  horizontal mirror)   +0x3c endControl word   +0x40 x float  +0x44 y float
+  +0x50 vx  +0x54 ax  +0x5c vy  +0x60 ay (int32, MotionState)
+  +0xc0 end-reached word  +0xcc object kind  +0xd0 object id/descriptor
+  +0xec/+0xf0 history offsets (float)  +0xfe pendingFlags (halfword)
+  +0x100 byte flags  +0x104 flags104  +0x108 flags108
+  +0x128,+0x12c,+0x130,+0x134 per-object scratch words (body+0x134 is native
+  PlayerObject::scriptLatch134).
+
+
+1. Registry: actor+0x28c .. actor+0x2bf (13 words, native registry28c)
+---------------------------------------------------------------------
+  r[0]  +0x00 (actor+0x28c) current row index, relative to r[11]
+  r[1]  +0x04 (actor+0x290) index of the row whose entry has been applied.
+        164460 enters a row iff r[0] != r[1]. -1 after 163488.
+  r[2]  +0x08 (actor+0x294) pending override ACT id, -1 = none. Written by the
+        per-visit branch logic (1638e8) and entry events; any value != -1 makes
+        164600 report the row complete, and the next row entry queues r[2]
+        instead of the row ACT.
+  r[3]  +0x0c (actor+0x298) variant ("strength" 0..2 in the ports). Passed by the
+        caller of 163590; also copied to actor+0x26c (callbacks260[3]).
+  r[4]  +0x10, r[5] +0x14  not touched by this engine except 163450 clearing
+        (hanzo_capture.cpp uses them for capture motion values).
+  r[6]  +0x18 (actor+0x2a4) "was airborne": (0.0 < body.y) captured at every row
+        entry and refreshed on most not-complete visits (164738).
+  r[7..9] +0x1c..+0x24  cleared only by 1634e8 (table-B engine), unused here.
+  r[10] +0x28 (actor+0x2b4) linked object reference; not touched here except
+        163450 clearing (14a348 flags it first; see state_transition.cpp:125).
+  r[11] +0x2c (actor+0x2b8) table-A row base of the running script (0 = none).
+        Also read by the projectile spawner 16d9c8 (section 9).
+  r[12] +0x30 (actor+0x2bc) table-B row base (1634e8 engine only).
+
+163450(reg)  "release": memset(reg,0,0x34) [315f38]; reg[2] = -1.
+             Callers: 148ddc, 14a75c (state entry), 16381c (script end),
+             166bd4, 168900.
+163488(reg, character, scriptId, variant)  -> bool
+             row = 163348(character, scriptId); reg[11] = row (ALWAYS written,
+             0 when not found);
+             if row: reg[2] = -1; reg[3] = variant; reg[0] = 0; reg[1] = -1;
+             return row != 0.  r[4..10], r[12] are NOT cleared.
+1634e8(reg, character, scriptId, variant)  -> bool   (table-B twin)
+             row = 1633c0(character, scriptId); reg[12] = row;
+             if row: reg[3] = variant; reg[2] = -1; reg[0] = 0; reg[1] = -1;
+                     reg[7] = reg[8] = reg[9] = 0;
+             Callers 165abc, 168914 (outside this engine).
+
+2. Table lookup
+---------------
+163348(character, id)  table A, pointer table 0x4e2788 (51 entries, [51]=0):
+    p = word[0x4e2788 + 4*character]; for i in 0..0xfff:
+        if p[20*i+0] == id: return p + 20*i
+        if p[20*i+4] == 0xff: return 0      // terminator = END CODE 0xff, not id
+    return 0
+  Note the terminator test is on byte+4 of the row being scanned, after its id
+  compare; the terminator row of every character is
+  ff 00 ffff ff 00 ffff ffff ffff 00 ff ffff 12 00 00 ff.
+1633c0(character, id)  table B, pointer table 0x4e4a68:
+    same loop, but terminates when byte+0 == 0xff (checked after the id compare).
+163430(id) -> 0x4e4b38 + 12*id   projectile descriptor record (12 bytes), used by
+    16d2b0/16dcc0 and others (153ba4, 153c28, 16176c, 16d360, 16d954, 16de9c,
+    16df24). Rimururu port documents 4e4b38[2..10].
+163570(selector) -> script id: (selector == 0xff || selector < 0x80 signed)
+    ? -1 : selector - 0x80. 51 callers, all in character code 1ec1ec..20bd6c.
+
+3. Row layout (20 bytes, table A)
+---------------------------------
+  +0x00 u8   script id (lookup key); 0xff on continuation rows. 164460 also
+             reads it for character 23 (section 6).
+  +0x01 u8   0 in every row of every character; not read by this engine.
+  +0x02 s16  ACT id queued at row entry; -1 = keep the running ACT. Also the
+             expected ACT for type-4 verification (163610).
+  +0x04 u8   end code 0..13 (164600 jump table, section 7). 0xff = table
+             terminator. 163610 additionally tests byte+4 == 1 at script end.
+  +0x05 u8   0 everywhere; not read.
+  +0x06 s16  branch target A: override ACT taken when body.104 & 0x40000.
+             Also the target of type 0x3c/0x3d/0x3e button logic.
+  +0x08 s16  branch target B: taken when body.104 & 0x80000.
+  +0x0a s16  branch target C: taken when 14aad8 reports the facing camera edge.
+  +0x0c u8   flags:
+             0x01 last row of the script (163610)
+             0x02 ACT += variant (164460, type-4 check, 1638e8 offset)
+             0x04 armed/unarmed pair: ACT += 2*variant, +1 more when unarmed
+                  (actor.23c & 0x1000 == 0). Tested BEFORE 0x02.
+             0x08 face the opponent on entry: 14a978(actor,0)
+             0x10 never read by this engine (UNVERIFIED external use)
+             0x20 apply the variant offset to branch A
+             0x40 apply the variant offset to branch B
+             0x80 apply the variant offset to branch C
+  +0x0d u8   projectile spawn mode (0, 2, 3, 4 or 0xff), read by 16d9c8 only.
+  +0x0e s16  projectile descriptor id (-1 when unused), read by 16d9c8 only.
+  +0x10 u8, +0x11 u8, +0x12 u8   not read by any table-A reader found
+             (163610 family or 16d9c8). Observed value sets over all
+             characters: +0x10 {3..8}, +0x11 {0,1,2,4,5,0x43},
+             +0x12 {0,1,2,4,5,7,14}; terminator has 0x12,0,0. Meaning UNVERIFIED.
+  +0x13 u8   row type (event code). 0xff on most rows = no event.
+
+A scan of .text for any `addiu rX,rY,0x28c` followed by `lw ...,0x2c(rX)` and for
+`lw ...,0x2b8(...)` finds only 163644 and 16da30; table A rows are therefore read
+only by this engine and 16d9c8 (registry pointers passed as arguments elsewhere
+are not excluded by this scan; UNVERIFIED completeness).
+
+4. Entry: 163590(cb, scriptId, variant)
+---------------------------------------
+    actor = cb[0]; reg = actor+0x28c
+    163488(reg, actor.a10 /*character*/, scriptId, variant)
+    actor.26c = variant                    // callbacks260[3], even if not found
+    164460(reg, cb)                        // enters row 0 (r[0]=0 != r[1]=-1)
+    1522a0(actor+0x260, 0x163610, 1, -1)   // tail call
+1522a0(p, pc, a, b): p[2] = b; p[0] = pc; p[1] = a (three words only).
+Ordering facts: the row-0 entry event and its ACT queue run BEFORE the callback is
+bound, so any callbacks260[0..2] written by the row-0 entry are overwritten.
+If the script is not found, r[11] = 0 and 164460 runs with stale r[0]/r[1]; if
+they differ it dereferences 20*r[0] from address 0 (UNVERIFIED; no caller is
+known to pass a missing id).
+
+5. Per-visit step: 163610(cb)   (the bound callback)
+----------------------------------------------------
+    actor = cb[0]; reg = actor+0x28c
+    row0 = reg[11] + 20*reg[0]          // OLD row, captured before anything runs
+    advance = 1
+    1638e8(reg, cb)                      // section 8: per-visit row effects
+    if (164600(reg, cb) == 0) goto tail  // section 7: row complete?
+    type = row0[0x13]                    // read from the OLD row pointer
+    if (type == 0x2a && (actor.244 & 0x04000000)) {
+        14ff80(actor+0x18c, 1, 0x4d)     // pendingTable=1, pendingIndex=0x4d
+        actor.18c = 1
+        return                           // NO 164460, no registry change
+    }
+    if (type == 0x10 && (actor.f1f & 1) && (actor.f1c & 0x06000000) == 0x06000000)
+        1e8298(actor.a24, 0xc7, actor.a10)   // sound request; i.e. f1f&7 == 7
+    if (type == 4) {                     // ACT verification
+        cur = reg[11] + 20*reg[0]        // FRESH index
+        f = cur[0xc]
+        expect = (s16)row0[2]
+        if (f & 2)        expect += reg[3]
+        else if (f & 4)   expect += 2*reg[3] + ((actor.23c & 0x1000) ? 0 : 1)
+        // note: here 0x02 is tested before 0x04 (opposite of 164460)
+        if (body.24 != expect) { advance = 0; reg[1] = reg[0] - 1 }
+    }
+    if (!advance) goto tail              // forces re-entry of the same row
+    cur = reg[11] + 20*reg[0]            // FRESH
+    if (!(cur[0xc] & 1)) { reg[0] = reg[0] + 1; goto tail }
+    if (reg[2] != -1)    { reg[0] = reg[0] + 1; goto tail }   // override pending
+    // ---- script end (last row completed with no override) ----
+    if (row0[4] == 1 && !(body.y > 0.0f)) {        // c.ole.s y,0 => y <= 0
+        1697d0(cb)                     // 11d990 stop; if y < 0 then y = 0
+        1494c0(actor, 0x24e, 0x24f, 0) // armed 590 / unarmed 591, not forced
+        1522a0(actor+0x260, 0x169a50, 1, -1); actor.274 = 0   // 169a50 mode 0
+        163450(reg); return
+    }
+    switch (row0[0x13]) {              // byte4 != 1, or byte4 == 1 and y > 0 (or NaN)
+      case 9:  14ff80(actor+0x18c, 0, 0x20); break
+      case 10: 14ff80(actor+0x18c, 0, 0x21); break
+      case 11: 14ff80(actor+0x18c, 0, 0x22); break
+      default: 169918(cb)              // standard recovery, see below
+    }
+    163450(reg); return
+  tail:
+    164460(reg, cb)                    // tail call: enter row if r[0] != r[1]
+
+169918(cb): actor.23c = f63 ? (23c | 8) : (23c & ~8); tail 169810 (common
+recovery; native knockdown.hpp recoverStanding / ground_state.cpp:264).
+Important consequences:
+  - Row advance, the new row's entry event and its ACT queue all happen in the
+    SAME visit as the completion.
+  - Type 4 only acts on a completed row. A mismatch rewinds r[1], so the same
+    row re-enters (re-queues its ACT, or r[2] if one is pending, re-runs its
+    entry event, resets body.134 and r[6]).
+  - If 1638e8 incremented r[0] (types 0x30/0x31), row0 is still the old row
+    while "cur" is the new one, so the old row's type and byte+4 are used.
+  - 1494c0(actor, armedAct, unarmedAct, force) -> 1493c0(actor, (actor.23c &
+    0x1000) ? armedAct : unarmedAct, force). 1493c0 = native queue of
+    actor.a3c (PlayerObject::markActorActionPending / GroundStateRuntime);
+    force != 0 also sets a3c=-1, body.c0=0, body.104|=1 first. It clears
+    actor.248 bit 0x800 and applies the 168c18 lock table (ports' lockTicks).
+
+6. Row entry: 164460(reg, cb) -> int
+------------------------------------
+    actor = cb[0]; var = reg[3]
+    if (reg[0] == reg[1]) return 0
+    row = reg[11] + 20*reg[0]
+    if (row[0xc] & 8) 14a978(actor, 0)          // face opponent (not forced)
+    if (actor.a10 == 23 && (actor.23c & 0x100000) &&
+        row[0] in {8, 9, 10, 11})                 // row's script-id byte
+        14a978(actor, 1)                          // forced facing
+    164c58(cb, row[0x13])                         // entry event, section 10
+    if (reg[2] != -1)
+        1493c0(actor, reg[2], 0)                  // override, no variant math
+    else if ((s16)row[2] != -1) {
+        act = (s16)row[2]; f = (fresh row reg[0])[0xc]
+        if (f & 4)      1494c0(actor, act + 2*var, act + 2*var + 1, 0)
+        else if (f & 2) 1493c0(actor, act + var, 0)
+        else            1493c0(actor, act, 0)
+    }
+    reg[2] = -1; reg[1] = reg[0]
+    reg[6] = (0.0f < body.y)                       // c.olt.s
+    body.134 = 0
+    return 1
+Ordering: facing (row flag 8) -> character-23 forced facing -> entry event ->
+ACT queue -> registry bookkeeping. The entry event therefore sees the OLD r[2],
+r[1] and body.134; any r[2] written by the event itself (types 0x1b, 0x24, 0x33,
+0x35, 0x3a) is consumed immediately by the queue step of the same entry.
+14a978(actor, force): face the opponent (native: action_selection; equal X keeps
+facing; force=0 respects actor.23c & 0x10 and the 1500a8/1500d0 alias gates).
+
+7. Row completion: 164600(reg, cb) -> int (1 = complete)
+--------------------------------------------------------
+    actor = cb[0]; body = actor.body
+    row = reg[11] + 20*reg[0]; end = row[4]
+    if (reg[2] != -1) return 1                   // pending override: complete now
+    if (row[0x13] == 0x1b && body.24 == 0x23c && 1699f8(cb))
+        actor.244 |= 0x400000
+    if (actor.a10 == 22 && (actor.23c & 0x100000) && end == 4) {
+        end = 0                                  // set in a non-likely delay slot
+        if (body.y <= 0.0f) 11d990(body)         // stop motion
+    }
+    if (end >= 14) { printf("ASSERT:%s\n","ssEngine:_end_check"); goto keep }
+    switch (end) {
+      case 0:  if (149488(actor)) return 1; goto wait
+      case 1:  if (body.y <= 0.0f) return 1; if (149488(actor)) return 1; goto wait
+      case 2:  if (body.y >  0.0f) return 1; if (149488(actor)) return 1; goto wait
+      case 3:  if (reg[6] == 0) { if (149488(actor)) return 1; goto wait }
+               if ((float)body.vy < 0.0f) return 1; goto wait
+               // NB: with reg[6] set, action end alone never completes
+      case 4:  if (1737d8(cb)) { 1697d0(cb); return 1 } goto wait
+      case 5:  if (173970(cb)) { 1697d0(cb); return 1 }
+               if (149488(actor)) return 1; goto keep          // no 1699f8 here
+      case 6:  if (1699f8(cb)) return 1; if (149488(actor)) return 1; goto keep
+      case 7:  if (1648f8(cb)) return 1; goto keep
+      case 8:  if (164ac8(cb)) return 1; goto wait
+      case 9:  if (164bc8(cb)) return 1; goto wait
+      case 10: if (164c18(cb)) return 1; goto wait
+      case 11: if (149488(actor)) {
+                   1522a0(actor+0x260, 0x169a50, 0, -1)   // arg word 0, not 1
+                   actor.274 = 4                          // 169a50 mode 4
+               }
+               goto wait                                  // never returns 1
+      case 12: 173880(cb); return 0                       // no r[6] update
+      case 13: if (!(body.108 & 0x40)) { if (149488(actor)) return 1; goto keep }
+               if (actor.f92 == 0) return 1
+               if (actor.f93 != 0) goto keep              // both held: continue
+               return 1
+    }
+  wait: 1699f8(cb)            // result ignored; always clears body.104 bit 0x100
+  keep: reg[6] = (0.0f < body.y); return 0
+Helpers:
+  149488(actor) = native actionEnded: 0 if body.c0 == 0 or body.104 & 1, else
+                  (actor.a3c == -1).
+  1699f8(cb):     v = 149488(actor) ? 1 : ((body.104 >> 8) & 1);
+                  body.104 &= ~0x100 (always); return v.
+  1697d0(cb):     11d990(body) [stop motion]; if (body.y < 0) body.y = 0.
+  1737d8(cb)      = native landing predicate: (body.3c & 0x100) || body.y < 0 ||
+                  ((149488 || body.104 & 0x100) && y == 0 && vy == 0 && ay == 0).
+  173970(cb)      = 1737d8 ? (1699f8 != 0) : 0 (native landingReady).
+  173880(cb)      = native updateAirLanding (ground_state.cpp:703): on 1737d8,
+                  character 8 in state 0x4a0001/0x4b0001/0x4c0001 -> 1697d0,
+                  1493c0(actor,0x295,0), bind 169a50 mode 0; otherwise
+                  14ff80(actor+0x18c, 0, actor.a44 == 6 ? 0x2c : 0x16).
+  1648f8(cb) "_shiraru_check" (end 7):
+      for n = 0..: o = 140d78(actor.a24, n, 2)    // n-th kind-2 own object
+          if (!o) { printf("ASSERT:%s\n","_shiraru_check"); return 1 }
+          if (o.d0 == 10) break
+      done = (o.24 == 0x25a && o.c0 && !(o.104 & 1)) || (o.104 & 0x2c0000)
+             || (o.100 & 2)
+      if (done) return 1
+      mirror = body.38 & 0x80000
+      if (f90)      state = mirror ? 0x15 : 0x14
+      else if (f88) state = mirror ? 0x14 : 0x15
+      else if (f56) state = 0x13
+      else return 0
+      14ff80(actor+0x18c, 0, state); return 0     // 18c NOT written
+  164ac8(cb) (end 8):
+      printf("DUMP:%s\n","------CHECK!!-----")
+      for n = 0..: o = 140d78(actor.a24, n, 2); if (!o) return 0
+          if (o.d0 == 0x37 && o.24 == 0x263 && o.c0 && !(o.104 & 1)) {
+              printf("DUMP:%s\n","------ !!!! WOW !!!! -----")
+              if (!(o.108 & 0x2000000)) return 1
+          }
+  164bc8(cb) (end 9): return 149488(actor) && opp.194 != 0x150002
+                      (opponent not in table 2 index 0x15).
+  164c18(cb) (end 10): return 16a830(cb, 16) || 149488(actor)
+      16a830(cb, d): if !(body.38 & 0x80000):
+                        return (float)14ae30(char) <= x || oppBody.x - d <= x
+                     else: return x <= (float)14ae18(char) || x <= oppBody.x + d
+      (stage limit or within d of the opponent ahead; native ten_explosion.cpp)
+  140d78(player, n, kind): n-th (0-based) object whose +0xcc == kind (kind -1 =
+      any) among the player's 48 registry slots at *(0x4d3d00)+0x108*player+0x29c
+      (1473b8 scan, registration order).
+
+8. Per-visit row effects: 1638e8(reg, cb)
+-----------------------------------------
+Register roles: actor = cb[0], opp = cb[1], row = reg[11]+20*reg[0] (fixed for the
+whole call, even if reg[0] changes), sOff = 0 (variant offset), unarmed1 = 0.
+"cur" below always means the FRESH row reg[11]+20*reg[0].
+
+8.1 Type prologues (only one runs; all continue into 8.2 "common")
+  type 0x3c (60) "both-buttons hold":
+      if (f24) actor.248 |= 0x200
+      if (!f91 || !f92) actor.248 &= ~0x200
+      if (149488(actor) && (actor.248 & 0x200)) {
+          reg[2] = (s16)row[6] + ((actor.23c & 0x1000) ? 0 : 1)
+      }
+  type 0x3d (61):
+      if (!f91 || !f92) actor.248 &= ~0x200        // never sets it
+      if (149488(actor) && (unsigned)(body.24 - 0x270) < 2)   // ACT 624/625
+          reg[2] = (s16)row[6] + (armed ? 0 : 1)
+  type 0x3e (62) "release":
+      if (!f91 || !f92) actor.248 &= ~0x200
+      if (!(actor.248 & 0x200) && (body.108 & 0x40))
+          reg[2] = (s16)row[6] + (armed ? 0 : 1)
+  type 0x3f (63) "throw victim pinning" (opp body offsets; actor body.28 = step):
+      ob = opp.body; s = body.28 (signed)
+      if      (ob.128 == 0 && s >= 13) { ob.x += mirror ? +5 : -5; ob.y += 5; ob.128 = 1 }
+      else if (ob.12c == 0 && s >= 11) { ob.x += mirror ? -1 : +1; ob.y -= 1; ob.12c = 1 }
+      else if (ob.130 == 0 && s >= 10) { ob.x += mirror ? -3 : +3; ob.y -= 3; ob.130 = 1 }
+      else if (ob.134 == 0 && s >= 9)  {
+          v = 168ea0(opp.a10, 8)                       // s16 pair
+          ob.x = body.x + (mirror ? -(float)v[0] : (float)v[0])
+          ob.y = body.y + (float)v[1]; ob.134 = 1 }
+      (mirror = actor body.38 & 0x80000. Constants 5.0/1.0/3.0 at 5f0d20..28.
+      All float adds/subs are single precision. The four latches are cleared by
+      entry event 0x3f.)
+  type 0x20 (32): for n = 0..: o = 140d78(actor.a24, n, 2); stop at null;
+      if (o.d0 == 0x5f && (o.104 & 0x40000)) body.104 |= 0x40000
+      (propagates a projectile contact to the body BEFORE the branch logic.)
+  all other types: no prologue.
+
+8.2 Common branch logic (every type)
+      f = cur[0xc]
+      if (f & 4)      { sOff = 2*reg[3]; if (!(actor.23c & 0x1000)) unarmed1 = 1 }
+      else if (f & 2) { sOff = reg[3] }
+  Branch A (contact):
+      if (body.104 & 0x40000) {
+          if ((s16)row[6] != -1) {
+              if (!(cur[0xc] & 0x20)) sOff = 0      // sOff STAYS 0 for B and C
+              reg[2] = (s16)row[6] + sOff + unarmed1
+          }
+          if (row[0x13] == 0x1d && !(actor.248 & 0x100)) reg[2] = -1
+          if (body.134 == 0) {
+              t = row[0x13]
+              if (t in 14..16) { }                   // explicitly no effect
+              else if (t == 0x1e) {
+                  o = 16c408(cb, (actor.23c & 0x100000) ? 0x274 : 0x214, 0, 0)
+                  o.108 = (o.108 & ~0x10000) | 0x20000
+                  16e788(o, opp, 0)                  // place at opponent + anchor 0
+                  body.134 = 1
+              }
+          }
+          if (row[0x13] == 6) opp.244 |= 0x10       // every contact visit
+      }
+  Branch B:
+      if ((body.104 & 0x80000) && (s16)row[8] != -1) {
+          if (!(cur[0xc] & 0x40)) sOff = 0
+          reg[2] = (s16)row[8] + sOff + unarmed1
+          if (row[0x13] == 0x11) { if (actor.23c & 0x10) reg[2] = -1 }
+          else if (row[0x13] == 0x2b) actor.248 |= 0x8000
+      }
+  Branch C (wall):
+      m = (int)((float)14adf0(actor.a10) + 2.0f)  // 36; 10 for char 46; 18 for 47
+      if (14aad8(actor, m, 1, 0) && (s16)row[0xa] != -1) {
+          if (!(cur[0xc] & 0x80)) sOff = 0
+          reg[2] = (s16)row[0xa] + sOff + unarmed1
+      }
+      14aad8 here = x = (int)body.x (truncation); mirror bit clear ->
+      x >= cam.right - m; mirror bit set -> x <= cam.left + m (signed ints;
+      cam = *(0x4d3d00)+0x34, +0x10 left, +0x14 right). Matches the native
+      nakoruru_strikes.cpp approachingEdge.
+  Later branches overwrite earlier ones; sOff once zeroed is not restored.
+
+8.3 Type epilogues (in this order; several may apply to one type value only)
+  0x11 (17): if (body.134 == 0 && (body.104 & 0x80080000)) {
+                 16cfc8(cb); body.134 = 1 }
+             16cfc8 = 140c68(player, 0x1396, kind 6, callback 0x16d020) then
+             11d908(o, 0x283, 0, 1).
+  0x24 (36): o = 140d78(actor.a24, 0, 2)          // FIRST kind-2 own object only
+             if (o && o.d0 == 0x61 && o.24 != 0x217 &&
+                 o.x - 78.0f <= body.x && body.x <= o.x + 78.0f) {
+                 1493c0(actor, 0x220, 0); o.d0 = 0x62; 11d908(o, 0x221, 0, 0) }
+  0x05 (5) "steerable drift":
+             if (body.104 & 0x40000) 11d990(body)
+             else {
+                 a = f62 ? 3276.8f : f64 ? -3276.8f : 0.0f   // forward wins
+                 if (a == 0.0f) {
+                     body.vx = (int)((float)body.vx * 0.9f)   // EE truncation
+                     body.ax = 0
+                     mag = body.vx < 0 ? (float)(-body.vx) : (float)body.vx
+                     if (mag <= 3276.8f) body.vx = 0
+                 } else {
+                     body.ax = (int)((float)body.ax + a)
+                     if (65536.0f < (float)body.vx)  body.vx = 0x10000
+                     if ((float)body.vx < -65536.0f) body.vx = -0x10000
+                 }
+             }
+             (-body.vx is an integer negate before conversion.)
+  0x30/0x31 (48/49) "mash":
+             if (f6) body.134++
+             if (body.108 & 0x40) {
+                 need = (type == 0x30) ? 3 : 4          // signed compare
+                 if (body.134 >= need) {
+                     if (body.104 & 0x40000) reg[2] = (type == 0x30) ? 0x23b : 0x23c
+                     else reg[0]++          // skips a row directly (see section 5)
+                 }
+             }
+  0x32 (50): if (body.104 & 0x100) { 165580(cb, 8, 0x2e); body.104 &= ~0x100 }
+  0x36 (54): if ((body.108 & 0x40) && (f6 || f7 || f8)) reg[2] = reg[3] + 0x268
+  3, 0x3c, 0x3d, 0x3e: body.104 |= 0x2000   (every visit; ports call this the
+             script-jump restriction / edge clamp)
+165580(cb, amount, rage) "self-drain then rage gain":
+      scaled = 14f2b8(amount)       // amount, or (amount*byte[0x43d061]+99)/100
+                                    // when 139430() is false (handicap scaling)
+      rest = actor.a30 - scaled; if (rest <= 0) rest = 1     // signed
+      d = actor.a30 - rest
+      if (scaled > 0) d = d*amount / scaled                  // signed div
+      14a8d0(actor, d)              // queue health change (actor.a38 += scaled d)
+      14efb8(actor+0x10c, rage)     // rage gain (native state_callbacks 14efb8)
+
+9. External row reader 16d9c8(actor) (projectile spawn; outside the range)
+-----------------------------------------------------------------------------
+Partially read for the row bytes; caller(s) and 16dcc0 internals UNVERIFIED.
+    if (body.104 & 2) return 0
+    if (!(body.104 & 0x8000)) return 0                 // ACT spawn marker
+    if (body.10c || (body.104 & 0x10000)) return 16dcc0(actor, 1, body.10c, 0)
+    opp = 1400a8(actor.a24)
+    if (!reg[11]) return 0
+    row = reg[11] + 20*reg[0]; mode = row[0xd]; id = (s16)row[0xe]
+    if (mode == 0) {
+        if (row[0x13] == 0x1f) { if (actor.f17 == 0) return 0; actor.f17-- }
+        o = 16dcc0(actor, 0, id, actor.26c)
+        if (row[0x13] == 0x23) o.x = opp.body.x
+        else if (row[0x13] == 0x14) 16dcc0(actor, 0, id + 1, 0)
+        else if (row[0x13] == 0x17) { 16dcc0(actor, 0, id, 1); 16dcc0(actor, 0, id, 2) }
+        return o
+    }
+    if (row[0x13] == 8) return 16dcc0(actor, mode, id, 0)
+    return 16dcc0(actor, mode, id + actor.26c, 0)
+So row types 8, 0x14, 0x17, 0x1f and 0x23 are projectile-spawn modifiers.
+
+10. Row entry events: 164c58(cb, type)
+--------------------------------------
+    actor = cb[0]; opp = cb[1]; reg = actor+0x28c; var = reg[3]
+    cam = 140040()                 // *(0x4d3d00)+0x34; called unconditionally
+    if (type == 7) actor.23c |= 0x02000000 else actor.23c &= ~0x02000000
+    if (type >= 0x40) return       // includes 0xff
+    switch (type)  (jump table 0x5f0e34, 64 entries)
+  0  1697d0(cb); body.fe &= ~8
+  1  body.fe |= 8
+  2  11db88(body)                                  // toggle facing (tail call)
+  6  opp.244 |= 0x10
+  7  (only the 23c bit above)
+  12 aux.128 = 6; aux.130 = actor.26c
+  13 timers[17] = 0x21c << 8; timers[18] = 0x10 << 8    // 14cfe8 twice
+  18 o = 16c408(cb, 0x21d, 0, 0); o.108 |= 0x8000; body.128 = o (pointer)
+  19 o = body.128; body.x = opp.body.x + (mirror ? +8.0f : -8.0f); o.x = body.x
+  21 actor.23c |= 0x400000
+  22 actor.23c &= ~0x400000
+  24 if (!(aux.134 != 0)) actor.f15 = 3            // 1f7628 = aux.134 != 0
+  25 if (var == 2)      body.x = opp.body.x + (mirror ? -50.0f : +50.0f)
+     else if (var == 1) body.x = opp.body.x + (mirror ? +50.0f : -50.0f)
+     else               body.x = (float)(mirror ? cam.right : cam.left)
+     14a978(actor, 0)
+  26 16c408(cb, 0x249, 0, 0)
+     body.x = opp.body.x + ((opp.body.38 & 0x80000) ? +80.0f : -80.0f)
+     14a978(actor, 0)                              // note: OPPONENT mirror bit
+  27 for n = 0..: o = 140d78(actor.a24, n, 2); if (!o) return
+         if (o.d0 == 0x2a || o.d0 == 0x2b) { if (o.24 != 0x23b) reg[2] = 0x23c; return }
+  28 165580(cb, 0x20, 0xb8)
+  33 count = number of own kind-2 objects with d0 == 0x5e
+     if (count < 2) for i in 0..9: o = 16d2b0(cb, 0x55 + i, 0); o.108 |= 0x40000
+     else for i in 0..4: o = 16d2b0(cb, 0x52, 0); o.108 |= 0x40000
+                         if (112300(2) == 0) o.38 &= ~0x80000 else o.38 |= 0x80000
+  34 if (1fdea8(actor)) {   // (23c & 0x100000) && aux.12c == 14 && 112300(8) == 0
+         actor.248 |= 0x2000
+         o = 16c408(cb, 0x328, 0, 0); o.108 &= ~0x2000
+         *(o+4)[0] = 0x165610            // task callback word of o's task
+     }
+     (1fdea8 consumes one RNG draw only when both flag tests pass.)
+  36 if (!(actor.244 & 0x01000000)) reg[2] = var + 0x24a   (165180 reads s2 = actor, the same
+     register event 37 decrements f1d through; an earlier draft said opp.244)
+  37 actor.f1d -= 1 (byte, wraps)
+  39 1493c0(opp, 0x62a, 1)                         // forced action on opponent
+  40 if (112300(16) == 0) { aux.130 = 1; s = 0xcd } else { aux.130 = 0; s = 0xcc }
+     h = 1e8298(actor.a24, s, actor.a10); if (h >= 0) body.34 = h | 0xc000
+  41 aux.128 = 1
+  44 aux.128 = 0xd
+  45 aux.128 = 0x10
+  46 aux.128 = 0x11
+  47 1efc70(body, 0)        // 1efc98(body,0) then 11d990(body): stop motion,
+                            // vx=ax=0, y=300.0, vy=-65536, ay=-40960,
+                            // x = opp x -/+ 20 by mirror, 11db88 facing toggle
+                            // on one path (UNVERIFIED in detail)
+     if (!13a858()) actor.23c |= 0x30            // 13a858: byte 0x43d05e == 1
+  51 reg[2] = (actor.23c & 0x1000) ? 0x263 : 0x264
+  52 o = 16d2b0(cb, 0xa6, 0); o.x = opp.body.x
+  53 map body.24: 0xbd->0x28e, 0xbe->0x28f, 0xc3->0x290, 0xc4->0x291,
+     0xca->0x292, 0xcc->0x293 -> reg[2]; otherwise printf("ASSERT:%s\n",
+     "ssEngine:P FACTOR") and reg[2] unchanged
+  55 208d00(cb) -> 209610(cb, 0)  (character-region helper; UNVERIFIED)
+  56 k = var == 0 ? 0.15f : var == 1 ? 0.4f : 0.6f
+     body.x = (float)(int)((float)cam.left + cam.c * k)    // cam+0xc float
+     14a978(actor, 0); 1414b8(); 1414f8(3, 60)   // camera queue clear + push
+  57 same as 56 with k = 0.85f
+  58 if (16ecf0(actor)) reg[2] = 0x24d    // any own object (any kind) d0 == 0xa8
+  59 if (body.24 != 0x24d) 16ed60(cb):
+         if (!16ecf0(actor)) for i in 0..3:
+             o = 16c408(cb, 0x24e, 0, 0); o.d0 = 0xa8; o.108 &= ~0x2000
+             *(o+4)[0] = 0x16ee10; o.128 = i; o.12c = 0; o.130 = 0
+  60 11db88(body); actor.248 |= 0x200
+  63 opp.body.x = body.x + (mirror ? -88.0f : +88.0f)
+     1494c0(opp, 0x591, 0x592, 0); opp.244 |= 0x20000; opp.body.104 |= 0x80
+     opp.body.128 = opp.body.12c = opp.body.130 = opp.body.134 = 0
+  3,4,5,8..11,14..17,20,23,29..32,35,38,42,43,48..50,54,61,62: no entry effect.
+  (mirror = actor body.38 & 0x80000 unless stated.)
+Spawn helpers:
+  16c408(cb, act, 0, 0): o = 140c68(actor.a24, 0x1396, kind 6, callback 0);
+      11d908(o, act, 0, 1); o.108 |= 0x2000; return o. (The a2 != 0 variant uses
+      140a78 kind 7 and copies body x/y; unused here.)
+      Native partial port: auxiliary_objects.cpp:222.
+  16d2b0(cb, descriptorId, a2): projectile spawn from descriptor 163430(id),
+      with 0x30/0x43 remaps; not detailed here.
+  16e788(o, ownerActor, anchor): o.x/y = owner body x/y; if anchor != -1,
+      v = 168ea0(owner.a10, anchor); o.ec += v[0]; o.f0 += v[1].
+  11d908(o, act, immediate, force) = native AuxiliaryObjects::request /
+      PlayerObject::request. 11d990 = stop motion. 11db88 = toggle facing.
+  1e8298(player, sound, character): sound request through 1e83c0 selection;
+      returns a handle (negative = refused). Native sound_selection covers
+      1e83c0 only.
+
+11. Flow summary
+----------------
+  163590 (enter)                    163610 (each visit)
+  ----------------                  ------------------------------------------
+  163488 lookup/init                row0 = row(r[0])
+  actor.26c = variant               1638e8: prologue(type) -> branches A,B,C
+  164460 enter row 0                        -> epilogue(type)
+  bind 163610                        |
+                                     v
+                              164600 complete? --no--> 164460 (enter if r0!=r1)
+                                     | yes
+                              type 0x2a & 244:0x04000000 --> request 1/0x4d, return
+                                     |
+                              type 0x10 sound; type 4 ACT check --mismatch-->
+                                     |                     r[1]=r[0]-1 -> 164460
+                              cur flag 1 (last)? --no--> r[0]++ -> 164460
+                                     | yes
+                              r[2] != -1 ? --yes--> r[0]++ -> 164460
+                                     | no (script end)
+                    row0.end==1 && y<=0 ? --yes--> land 590/591, 169a50 mode0
+                                     | no
+                    type 9/10/11 -> request 0/0x20..0x22, else 169918 recovery
+                                     |
+                                   163450 clear registry
+
+12. Row types (byte +0x13) and where they act
+---------------------------------------------
+  type  hex   163610 end/complete   1638e8 per-visit        164c58 entry   16d9c8
+  0     00                                                  stop, fe&~8
+  1     01                                                  fe|=8
+  2     02                                                  toggle facing
+  3     03                          body.104|=0x2000
+  4     04    ACT verification
+  5     05                          drift/steer (or stop)
+  6     06                          contact: opp.244|=0x10   opp.244|=0x10
+  7     07                                                  23c|=0x2000000
+  8     08                                                                 no variant
+  9-11  09-0b script-end request
+        0/0x20..0x22
+  12    0c                                                  aux 128/130
+  13    0d                                                  timers 17/18
+  14-16 0e-10 (0x10: sound c7)      exempt from 0x1e spawn
+  17    11                          B: 23c&0x10 cancels;
+                                    spawn 0x283 on 0x80080000
+  18,19 12,13                                               spawn/teleport
+  20    14                                                                 +id+1
+  21,22 15,16                                               23c bit 0x400000
+  23    17                                                                 +variants 1,2
+  24-28 18-1c                                               see section 10
+  29    1d                          A cancelled unless 248:0x100
+  30    1e                          contact effect spawn
+  31    1f                                                                 f17 ammo
+  32    20                          projectile contact -> body
+  33,34 21,22                                               volley / random spawn
+  35    23                                                                 x = opp x
+  36-41 24-29 (0x24 also per-visit pickup within 78.0)      see section 10
+  42    2a    request 1/0x4d when 244:0x04000000
+  43    2b                          B sets 248|=0x8000
+  44-47 2c-2f                                               see section 10
+  48,49 30,31                       mash counter
+  50    32                          drain 8 / rage 0x2e
+  51-53 33-35                                               see section 10
+  54    36                          button -> 0x268+var
+  55-59 37-3b                                               see section 10
+  60    3c                          hold-both branch          toggle facing,248|=0x200
+  61,62 3d,3e                       hold/release branch
+  63    3f                          victim pinning steps     victim placement
+  255   ff    (none)                (none)                  clears 23c:0x2000000
+  Type 38 (0x26; character 31) has no handler in 163610/1638e8/164c58/16d9c8.
+  Types 14 and 15 only exempt a row from the type-0x1e check; type 16 adds the
+  163610 sound. All three occur only in character 7; other readers of these
+  values, if any, are UNVERIFIED. Types 1 and 11 never occur in table A.
+  Usage by character (all 51 table entries; 42, 49, 50 have an empty table that
+  is just the shared terminator form): see the census at the end of A.3.
+
+13. Cross-check with the hand ports
+-----------------------------------
+  - hanzo_special.cpp, haohmaru_special.cpp, nakoruru_strikes.cpp and
+    rimururu_special.cpp clear actor.23c bit 0x02000000 in their "enter" and the
+    haohmaru comment attributes it to 163488. The write is in 164c58 (row entry
+    event), it is SET for type-7 rows and cleared otherwise. Equivalent for
+    characters 0..3, which have no type-7 rows (types 7 appear in characters 10,
+    20, 37).
+  - rimururu_special.cpp platformFinished (end code 7, row 12 of character 2):
+    on a not-complete visit the port clears body.104 bit 0x100 (the 16472c/1699f8
+    path). The original end-7 path goes 1647fc -> 164738 and does NOT call
+    1699f8, so bit 0x100 is preserved. DISCREPANCY.
+  - Same function: the "no d0==10 object" case returns true in the port; the
+    original also prints "ASSERT:_shiraru_check" and returns 1. Equivalent.
+  - The ports implement 1737d8 inline (haohmaru finishedPhase Ground) with the
+    same predicate as section 7; end code 3 with r[6] set waiting on vy < 0 also
+    matches.
+  - Nakoruru low/leap scripts (rows 0x4df178.., flags 0xcb / 0x8a, B/C = 532,
+    C = 543): the port's edge/0x80000 interrupt with base+strength matches
+    branch B/C with the 0x40/0x80 variant flags; branch A is -1 there.
+  - Hanzo script 3 row 4 (type 13) timers[17]=540<<8, timers[18]=16<<8 and
+    script 8 (type 3) body.104|=0x2000 match 164c58 case 13 and 1638e8.
+  - Ports write r[0..3], r[11] directly and call their own enter(); 163488 never
+    touches r[4..10]/r[12], which the haohmaru comment also notes.
+  - None of the ports run 1638e8's branch A/B/C or type logic generally; they
+    hard-code the subset their rows use (all rows of characters 0..3 have
+    A=B=C=-1 except character 1's rows 0 and 2).
+
+14. Open questions
+------------------
+  - Meaning of row bytes +0x10/+0x11/+0x12 and flag 0x10 (no reader found).
+  - 16dcc0 / 16d2b0 / 208d00->209610 / 1efc98 internals are named, not specified.
+  - Exact sound semantics of 1e8298's return handle (stored in body+0x34).
+  - Whether a caller can pass a missing script id to 163590 (stale r[0]/r[1]).
+  - Table B (4e4a68) row format: used by 1634e8 / 165a80 / 1688c8 (row byte 0x12
+    bit 0x80 tested at 168930); out of scope.
+
+Appendix A. Character 24 tables and row-type census
+===================================================
+A.1 Table A, character 24: pointer word 0x4e2788+4*24 = 0x4e27e8 -> base 0x4e0998
+    54 rows + terminator (search ends at the first row whose byte+4 == 0xff).
+
+  addr      idx  id  sel  ACT   end flags  A     B     C     +d  +e(s16) +10 +11 +12 type  meaning of flags
+  0x4e0998 [ 0]   0 0x80   601   0  0x09    -1    -1    -1   0     84    3   0   0  255  last,face
+  0x4e09ac [ 1]   1 0x81   552   6  0x0a    -1    -1    -1 255     -1    4   0   0  255  +var,face
+  0x4e09c0 [ 2] 255   -     -1   6  0x00    -1    -1    -1   0     74    4   0   0  255  
+  0x4e09d4 [ 3] 255   -     -1   6  0x00    -1    -1    -1   0     75    4   0   0  255  
+  0x4e09e8 [ 4] 255   -     -1   6  0x00    -1    -1    -1   0     76    4   0   0  255  
+  0x4e09fc [ 5] 255   -     -1   6  0x00    -1    -1    -1   0     77    4   0   0  255  
+  0x4e0a10 [ 6] 255   -     -1   0  0x01    -1    -1    -1   0     78    4   0   0  255  last
+  0x4e0a24 [ 7]   2 0x82   554   0  0x01    -1    -1    -1   0     79    4   0   0  255  last
+  0x4e0a38 [ 8]   3 0x83   575   6  0x08    -1    -1    -1 255     -1    8   4   4  255  face
+  0x4e0a4c [ 9] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0a60 [10] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0a74 [11] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0a88 [12] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0a9c [13] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0ab0 [14] 255   -     -1   0  0x01    -1    -1    -1   0     80    8   4   4  255  last
+  0x4e0ac4 [15]   4 0x84   624   0  0x04    -1    -1    -1 255     -1    8   4   4  255  pair
+  0x4e0ad8 [16] 255   -    626   4  0x05    -1    -1    -1 255     -1    8   4   4  255  last,pair
+  0x4e0aec [17]   5 0x85   662   0  0x09    -1    -1    -1   0     95    3   0   0  255  last,face
+  0x4e0b00 [18]   6 0x86   671   0  0x09    -1    -1    -1   0     85    3   0   0   33  last,face
+  0x4e0b14 [19]   7 0x87   583   0  0x09    -1    -1    -1   0     81    3   0   0  255  last,face
+  0x4e0b28 [20]   8 0x88   586   0  0x09    -1    -1    -1   0     83    3   0   0   31  last,face
+  0x4e0b3c [21]   9 0x89   547   6  0x00    -1    -1    -1 255     -1    8   4   4  255  
+  0x4e0b50 [22] 255   -     -1   4  0x00    -1    -1    -1 255     -1    8   4   4  255  
+  0x4e0b64 [23] 255   -     26   0  0x01    -1    -1    -1 255     -1    8   4   4  255  last
+  0x4e0b78 [24]  64 0xc0   664   0  0x09    -1    -1    -1   0     96    3   0   0  255  last,face
+  0x4e0b8c [25]  96 0xe0   186   0  0x09    -1    -1    -1   0     65    3   0   0  255  last,face
+  0x4e0ba0 [26]  97 0xe1   188   0  0x09    -1    -1    -1   0     66    3   0   0  255  last,face
+  0x4e0bb4 [27]  98 0xe2   190   0  0x09    -1    -1    -1   0     67    3   0   0   34  last,face
+  0x4e0bc8 [28]  99 0xe3   191   0  0x09    -1    -1    -1   0     68    5   1   1  255  last,face
+  0x4e0bdc [29] 100 0xe4   193   0  0x09    -1    -1    -1   0     69    5   1   1  255  last,face
+  0x4e0bf0 [30] 101 0xe5   195   0  0x09    -1    -1    -1   0     70    5   1   1  255  last,face
+  0x4e0c04 [31] 102 0xe6   192   0  0x09    -1    -1    -1   0     68    5   1   1  255  last,face
+  0x4e0c18 [32] 103 0xe7   194   0  0x09    -1    -1    -1   0     69    5   1   1  255  last,face
+  0x4e0c2c [33] 104 0xe8   196   0  0x09    -1    -1    -1   0     70    5   1   1  255  last,face
+  0x4e0c40 [34] 112 0xf0   209   0  0x01    -1    -1    -1   0     71    7   4   4  255  last
+  0x4e0c54 [35] 113 0xf1   210   0  0x01    -1    -1    -1   0     72    7   4   4  255  last
+  0x4e0c68 [36] 114 0xf2   211   0  0x01    -1    -1    -1   0     73    7   4   4  255  last
+  0x4e0c7c [37] 115 0xf3   212   0  0x01    -1    -1    -1   0     71    7   5   5  255  last
+  0x4e0c90 [38] 116 0xf4   213   0  0x01    -1    -1    -1   0     72    7   5   5  255  last
+  0x4e0ca4 [39] 117 0xf5   214   0  0x01    -1    -1    -1   0     73    7   5   5  255  last
+  0x4e0cb8 [40]  32 0xa0   690   6  0x0a    -1    -1    -1 255     -1    4   0   0  255  +var,face
+  0x4e0ccc [41] 255   -     -1   6  0x00    -1    -1    -1   0     74    4   0   0  255  
+  0x4e0ce0 [42] 255   -     -1   6  0x00    -1    -1    -1   0     75    4   0   0  255  
+  0x4e0cf4 [43] 255   -     -1   6  0x00    -1    -1    -1   0     76    4   0   0  255  
+  0x4e0d08 [44] 255   -     -1   6  0x00    -1    -1    -1   0     77    4   0   0  255  
+  0x4e0d1c [45] 255   -     -1   0  0x01    -1    -1    -1   0     78    4   0   0  255  last
+  0x4e0d30 [46]  33 0xa1   575   6  0x08    -1    -1    -1 255     -1    8   4   4  255  face
+  0x4e0d44 [47] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0d58 [48] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0d6c [49] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0d80 [50] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0d94 [51] 255   -     -1   6  0x00    -1    -1    -1   0     80    8   4   4  255  
+  0x4e0da8 [52] 255   -     -1   0  0x01    -1    -1    -1   0     80    8   4   4  255  last
+  0x4e0dbc [53]  34 0xa2   718   0  0x0b    -1    -1    -1   0     84    3   0   0  255  last,+var,face
+  0x4e0dd0 [54] 255   -     -1 255  0x00    -1    -1    -1 255     -1   18   0   0  255  
+
+  bytes +1 and +5 are 0 in every row of every character.
+
+A.2 Table B, character 24: pointer word 0x4e4a68+4*24 = 0x4e4ac8 -> base 0x4e3a80
+    Raw 20-byte rows (format belongs to the separate 1634e8/165a80/1688c8 engine; NOT decoded here).
+    1633c0 ends its search at the first row whose byte+0 == 0xff.
+  0x4e3a80 [0] 01 00 db 00 ff ff ff ff 00 00 00 06 1b 00 00 00 00 00 21 ff
+  0x4e3a94 [1] 02 00 ff ff ff ff ff ff 00 00 00 03 00 00 3f 00 00 00 81 ff
+  0x4e3aa8 [2] 03 00 de 00 ff ff 24 03 06 00 00 00 00 19 5c 00 00 00 40 40
+  0x4e3abc [3] 03 00 ff ff ff ff ff ff 00 00 00 03 00 00 34 00 00 00 01 ff
+  0x4e3ad0 [4] 04 00 ff ff ff ff ff ff 00 00 00 03 00 00 45 00 00 00 81 ff
+  0x4e3ae4 [5] ff 00 ff ff ff ff ff ff 00 00 00 00 00 00 00 00 00 00 00 ff
+
+A.3 Row-type / end-code / flag census (table A; terminator rows excluded)
+
+  char rows types(+0x13, 255 omitted)      end codes     flags OR  branches A/B/C used
+     0   13 []                                [0, 3, 4]     0x0f      ---
+     1   22 [3, 12]                           [0, 4, 6]     0xcf      -BC
+     2   14 []                                [0, 7]        0x0f      ---
+     3   10 [3, 13]                           [0, 6]        0x0d      ---
+     4    3 []                                [0]           0x0d      ---
+     5   13 []                                [0, 4]        0x0f      ---
+     6   11 [4]                               [0]           0x4b      AB-
+     7   11 [14, 15, 16, 17]                  [0, 6, 10]    0x0b      -B-
+     8   32 [18, 19]                          [0, 4, 11]    0x0f      -B-
+     9   14 []                                [0, 4, 6]     0x0b      ---
+    10   13 [7, 20]                           [0, 5]        0x0d      ---
+    11   18 [6, 21, 22, 23]                   [0]           0x0f      A--
+    12   13 []                                [0, 6]        0x0b      A--
+    13    8 []                                [0]           0xef      ABC
+    14   11 []                                [0]           0x6f      AB-
+    15    8 [8]                               [0]           0x0f      ---
+    16    2 [24]                              [0, 6]        0x09      ---
+    17   18 [25, 26, 27]                      [0, 4, 6]     0x0b      A--
+    18   10 [28]                              [0, 6]        0x0f      A--
+    19    2 []                                [0]           0x0d      ---
+    20   18 [7, 29]                           [0, 9]        0x0d      A--
+    21    4 []                                [0, 5]        0x05      -B-
+    22   11 [30]                              [0, 4]        0x0b      -B-
+    23   17 [2, 9, 10]                        [0, 1, 4]     0x0d      ---
+    24   54 [31, 33, 34]                      [0, 4, 6]     0x0f      ---
+    25    6 [35]                              [0]           0x0d      ---
+    26    9 []                                [0]           0x0f      ---
+    27    5 []                                [0, 8]        0x0f      ---
+    28    8 []                                [0]           0x4b      -B-
+    29    8 []                                [0]           0x0d      ---
+    30   13 [36, 37]                          [0]           0x0f      ---
+    31   21 [6, 38]                           [0, 4]        0x0f      A--
+    32   13 [39]                              [0]           0x0b      ---
+    33   10 [40, 41]                          [0, 6]        0x6b      AB-
+    34   16 [42, 43, 44, 45, 46]              [0, 4, 6]     0x0f      AB-
+    35    7 [6]                               [0]           0xed      ABC
+    36    9 [5, 6, 47]                        [0]           0x0f      AB-
+    37   39 [4, 6, 7, 48, 49]                 [0, 4, 6]     0x0d      AB-
+    38   22 [50]                              [0, 4]        0x0b      ---
+    39    6 []                                [0]           0x0d      ---
+    40   14 [51]                              [0, 5]        0x2f      A--
+    41   12 [52, 53, 54]                      [0, 13]       0xcf      -BC
+    42    0 []                                []            0x00      ---
+    43    4 []                                [0]           0x0f      ---
+    44    8 [55]                              [0]           0x6b      ABC
+    45   17 [12]                              [0, 4, 6]     0x8f      --C
+    46   12 [56, 57]                          [0]           0x6b      ABC
+    47   13 [58, 59]                          [0, 6]        0x0b      ---
+    48   27 [0, 3, 60, 61, 62, 63]            [0, 4, 6]     0x0f      ABC
+    49    0 []                                []            0x00      ---
+    50    0 []                                []            0x00      ---
+
+  Characters 0..3 versus 24:
+    0: types none; ends 0,3,4; flags 1,2,4,8; spawn modes 0/2; no branches.
+    1: types 3,12; ends 0,4,6; flags 1,2,4,8,0x40,0x80; branches B,C (rows 0,2).
+    2: types none; ends 0,7; flags 1,2,4,8; spawn mode 0.
+    3: types 3,13; ends 0,6; flags 1,4,8; spawn mode 0.
+   24: types 31 (0x1f, 16d9c8 ammo byte f17), 33 (0x21, entry volley),
+       34 (0x22, random companion spawn); ends 0,4,6; flags 1,2,4,8;
+       spawn mode 0 with projectile ids 65..96; no branches; no variant
+       flags 0x20/0x40/0x80; no type-4/3/0x3c.. per-visit types.
+    Character 24 therefore needs: 163590/163610/164460/164600 (ends 0,4,6),
+    entry events 33/34, and 16d9c8 for its mode-0 rows (types 31 and 255).
+    Row 23 queues ACT 26 (flags last); literal table value, meaning UNVERIFIED.
+
+A.4 Characters 0..3 (for comparison with the hand ports)
+  char 0: base 0x4df060
+    [ 0] id=  0 ACT=  529 end=  0 flags=0x0b A=  -1 B=  -1 C=  -1 +d=  0 +e=   0 +10..12=4,0,0 type=255
+    [ 1] id=  1 ACT=  539 end=  0 flags=0x09 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [ 2] id=  2 ACT=  549 end=  3 flags=0x0a A=  -1 B=  -1 C=  -1 +d=  2 +e= 555 +10..12=8,5,5 type=255
+    [ 3] id=255 ACT=  552 end=  0 flags=0x03 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [ 4] id=  3 ACT=  568 end=  3 flags=0x0a A=  -1 B=  -1 C=  -1 +d=  2 +e= 571 +10..12=8,5,5 type=255
+    [ 5] id=255 ACT=  552 end=  0 flags=0x03 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [ 6] id=  4 ACT=  584 end=  4 flags=0x0a A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,14 type=255
+    [ 7] id=255 ACT=   -1 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,1,1 type=255
+    [ 8] id=  5 ACT=  598 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   1 +10..12=4,0,0 type=255
+    [ 9] id=  6 ACT=  625 end=  0 flags=0x09 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [10] id=  7 ACT=  612 end=  3 flags=0x08 A=  -1 B=  -1 C=  -1 +d=  2 +e= 614 +10..12=4,2,2 type=255
+    [11] id=255 ACT=  613 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [12] id=  8 ACT=  592 end=  0 flags=0x09 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [13] id=255 ACT=   -1 end=255 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=18,0,0 type=255
+  char 1: base 0x4df178
+    [ 0] id=  0 ACT=  529 end=  0 flags=0xcb A=  -1 B= 532 C= 532 +d=255 +e=  -1 +10..12=6,67,7 type=255
+    [ 1] id=255 ACT=   -1 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=6,67,7 type=255
+    [ 2] id=  1 ACT=  540 end=  0 flags=0x8a A=  -1 B=  -1 C= 543 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [ 3] id=255 ACT=  543 end=  0 flags=0x02 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [ 4] id=255 ACT=  546 end=  0 flags=0x03 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [ 5] id=  2 ACT=  554 end=  0 flags=0x0b A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [ 6] id=  3 ACT=  557 end=  0 flags=0x05 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [ 7] id=  4 ACT=  637 end=  4 flags=0x05 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [ 8] id=  5 ACT=  655 end=  4 flags=0x02 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=12
+    [ 9] id=255 ACT=  658 end=  0 flags=0x03 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [10] id=  6 ACT=  715 end=  0 flags=0x05 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [11] id=  7 ACT=  681 end=  0 flags=0x09 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [12] id=  8 ACT=  624 end=  0 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=3
+    [13] id=255 ACT=  627 end=  4 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [14] id=255 ACT=  629 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [15] id=  9 ACT=  625 end=  0 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=3
+    [16] id=255 ACT=  628 end=  4 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [17] id=255 ACT=  630 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [18] id= 10 ACT=  626 end=  4 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=3
+    [19] id=255 ACT=  631 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [20] id= 11 ACT=  670 end=  6 flags=0x04 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=255
+    [21] id=255 ACT=   -1 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,2,2 type=12
+    [22] id=255 ACT=   -1 end=255 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=18,0,0 type=255
+  char 2: base 0x4df348
+    [ 0] id=  0 ACT=  529 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   2 +10..12=4,0,0 type=255
+    [ 1] id=  1 ACT=  537 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   3 +10..12=4,0,0 type=255
+    [ 2] id=  2 ACT=  567 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   4 +10..12=4,0,0 type=255
+    [ 3] id=  3 ACT=  571 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   5 +10..12=4,0,0 type=255
+    [ 4] id=  4 ACT=  545 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   6 +10..12=4,0,0 type=255
+    [ 5] id=  5 ACT=  581 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   7 +10..12=4,0,0 type=255
+    [ 6] id=  6 ACT=  553 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   8 +10..12=4,0,0 type=255
+    [ 7] id=  7 ACT=  614 end=  0 flags=0x0b A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [ 8] id=  8 ACT=  616 end=  0 flags=0x0b A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [ 9] id=  9 ACT=  634 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=  0 +e=   9 +10..12=4,0,0 type=255
+    [10] id= 10 ACT=  623 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [11] id= 11 ACT=  595 end=  0 flags=0x04 A=  -1 B=  -1 C=  -1 +d=  0 +e=  10 +10..12=8,5,5 type=255
+    [12] id=255 ACT=  597 end=  7 flags=0x04 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [13] id=255 ACT=  599 end=  0 flags=0x05 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=8,5,5 type=255
+    [14] id=255 ACT=   -1 end=255 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=18,0,0 type=255
+  char 3: base 0x4df478
+    [ 0] id=  0 ACT=  529 end=  0 flags=0x05 A=  -1 B=  -1 C=  -1 +d=  0 +e=  11 +10..12=4,0,0 type=255
+    [ 1] id=  1 ACT=  546 end=  0 flags=0x05 A=  -1 B=  -1 C=  -1 +d=  0 +e=  12 +10..12=8,5,5 type=255
+    [ 2] id=  2 ACT=  730 end=  0 flags=0x05 A=  -1 B=  -1 C=  -1 +d=  0 +e=  13 +10..12=4,0,0 type=255
+    [ 3] id=  3 ACT=  716 end=  6 flags=0x04 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [ 4] id=255 ACT=   -1 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=13
+    [ 5] id=  4 ACT=  723 end=  0 flags=0x01 A=  -1 B=  -1 C=  -1 +d=  0 +e= 135 +10..12=6,1,1 type=255
+    [ 6] id=  5 ACT=  617 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [ 7] id=  6 ACT=  642 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,7 type=255
+    [ 8] id=  7 ACT=  664 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=255
+    [ 9] id=  8 ACT=  568 end=  0 flags=0x0d A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=4,0,0 type=3
+    [10] id=255 ACT=   -1 end=255 flags=0x00 A=  -1 B=  -1 C=  -1 +d=255 +e=  -1 +10..12=18,0,0 type=255

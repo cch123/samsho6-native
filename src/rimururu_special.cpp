@@ -93,7 +93,6 @@ bool updateRimururuSpecial(PlayerObject& body,StateEntryActor& a,const ActorComm
     r.fill(0);r[2]=0xffffffff;return true;
 }
 
-uint8_t rimururuIceContactFlags(unsigned id) {return ice.at(id-2).flags;}
 void spawnRimururuIce(AuxiliaryObjects& objects,TaggedTaskPools& pools,std::span<uint32_t> reg,unsigned slot,
                       const StateEntryActor& a,const AuxiliaryObject& parent) {
     if(!a.registry28c[11]||a.registry28c[0])return;

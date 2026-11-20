@@ -11,7 +11,12 @@ def main():
  elf=Elf(raw);ids=[12,36,29,3,30,2,10,5,4,1,6,41,42]
  data=b''.join(raw[elf.offset(0x4a2b30+i*108):elf.offset(0x4a2b30+i*108)+108] for i in ids)
  (ROOT/'work/ss6/extracted/resources/world_effects.bin').write_bytes(data)
+ # The whole table (entries 0..66; 67 onward is unrelated data) for the
+ # runtime, shared by 124430 world effects and 1242c0 contact groups.
+ full=raw[elf.offset(0x4a2b30):elf.offset(0x4a2b30)+67*108]
+ (ROOT/'work/ss6/extracted/resources/effect_descriptors.bin').write_bytes(full)
  report=dict(elf_sha256=SOURCE_HASH,asset='world_effects.bin',bytes=len(data),sha256=hashlib.sha256(data).hexdigest(),
+  effect_descriptors=dict(entries=67,sha256=hashlib.sha256(full).hexdigest(),source='0x4a2b30'),
   descriptors=ids,addresses=[hex(0x4a2b30+i*108) for i in ids],
   scope='World descriptors 12/36 for weapon lock, 29 for whirlwind recovery, 3 for the light+medium attack, 30 for wall impact, 2 for the Shin weapon-breaking attack, 10 for the broken sword, 5 for the Zan charge aura, 4 for the explosion and 1 for Zero concentration, including their completion callbacks. Group 6 supplies meditation particles. Groups 41 and 42 are the Ken perfect guard opening and success effects. Includes fixed and random actions and their velocity ranges.')
  (ROOT/'outputs/ss6-feasibility/world_effect_tables.json').write_text(json.dumps(report,indent=2)+'\n')

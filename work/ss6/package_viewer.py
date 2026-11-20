@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Install the built viewer with a fresh inode for macOS executable caching."""
+from fighter_roster import PLAYABLE, SELECTABLE, GRID
 import os,shutil,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
@@ -9,18 +10,19 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  'permission_air_rectangles.bin','permission_target_ranges.bin','permission_attack_ranges.bin','permission_systems.bin','permission_limits.bin','permission_gate_limits.bin','permission_cancel_conditions.bin',
                  'entry_attack.bin','entry_special.bin','entry_damage.bin','entry_conditions.bin','entry_special_exceptions.bin',
                  'callback_attack_handlers.bin','callback_special_parameters.bin','callback_character_parameters.bin','callback_constants.bin',
-                 'weapon_positions.bin','weapon_constants.bin','weapon_lock.bin','aid_51.bin','act_51.bin','jdg_51.bin','pil_51.bin','idx_51.bin','map_51.bin','chr_51.bin','sound_selection.bin','combat_sound_bank.bin','bgm02_l.vb','bgm02_r.vb','bgm05_l.vb','bgm05_r.vb','bgm06_l.vb','bgm06_r.vb','bgm24_l.vb','bgm24_r.vb','stage_event.bin','stage_item_schedule.bin','opening_tasks.bin','ending_tasks.bin','ending_choices.bin',
-                 'contact_effects.bin','effect03.tex','effect04.tex','effect05.tex','effect09.tex','04tenso.bin','effect06.tex','effect07.tex','effect08.tex','world_effects.bin','02Guard.bin','03etc.bin','effect02.tex','01HitFlash.bin','Display.bin','Display2.bin','Display3.bin','effect_pal_data.bin',
+                 'weapon_positions.bin','script_rows.bin','action_locks.bin','projectile_descriptors.bin','victim_rows.bin','depth_rules.bin','victim_facing_pairs.bin','victim_hold_pairs.bin','fighter_stubs.bin','form_actions.bin','angle_trig.bin','weapon_constants.bin','weapon_lock.bin','aid_51.bin','act_51.bin','jdg_51.bin','pil_51.bin','idx_51.bin','map_51.bin','chr_51.bin','sound_selection.bin','combat_sound_bank.bin','bgm01_l.vb','bgm01_r.vb','bgm02_l.vb','bgm02_r.vb','bgm05_l.vb','bgm05_r.vb','bgm06_l.vb','bgm06_r.vb','bgm24_l.vb','bgm24_r.vb','stage_event.bin','stage_item_schedule.bin','opening_tasks.bin','ending_tasks.bin','ending_choices.bin',
+                 'contact_effects.bin','effect03.tex','effect04.tex','effect05.tex','effect09.tex','04tenso.bin','effect06.tex','effect07.tex','effect08.tex','world_effects.bin','effect_descriptors.bin','02Guard.bin','03etc.bin','effect02.tex','01HitFlash.bin','Display.bin','Display2.bin','Display3.bin','effect_pal_data.bin',
                  'obj1_16.tex','obj2_16.tex','effect01.tex','moji1.tex','moji2.tex','moji3.tex','moji_e.tex','hanabi1.tex','hanabi2.tex',
                  'ougi1.tex','ougi2.tex','sakura.tex','versus_quotes_00.bin','versus_result_layout.bin',
                  'menu_bg00_00.tex','win_00.tex','win_00.pal','font_otherscene16.tex','obj0.pal',
-                 'vs_curtain.bin','change_base16.tex','collision_01.bin','collision_02.bin','collision_03.bin','vs_faceoff_layout.bin','vs_back.tex','vs_back.pal','vs_obj.tex','vs_obj.pal','character_select_art.bin','spirit_select_art.bin',
+                 'console_ranking_art.bin','cpu_air_attack_timing.bin','cpu_guard_heights.bin','projectile_descriptor_flags.bin','projectile_hitstop.bin','cpu_technique_slots.bin','cpu_technique_steps.bin','cpu_technique_definitions.bin','cpu_attack_situations.bin','cpu_matchup_ranges.bin','sqDataCm.bin',*[f'sqData{i:02X}.bin' for i in range(51)],
+                 'bg_title00.tex','bg_title00.pal','obj0_16.tex','font_coin.tex','vs_curtain.bin','change_base16.tex',*[f'collision_{c:02}.bin' for c in PLAYABLE if c],'vs_faceoff_layout.bin','vs_back.tex','vs_back.pal','vs_obj.tex','vs_obj.pal','character_select_art.bin','spirit_select_art.bin',
                  'ps2_gage_1_2_3_all.tex','ps2_gage_1_2_3_all.pal','ps2_common_icon.tex','ps2_common_icon.pal',
                  'char_face_1024.tex','char_face_1024.pal',
-                 *[f'{stem}_{id:02}.bin' for id in (1,2,3) for stem in ('aid','act','jdg','pil','idx','map','chr')],
-                 *[f'bup_{i:02}.{ext}' for i in (*range(40),42) for ext in ('tex','pal')],
-                 *[f'vs_voice_{i:02}.bin' for i in (*range(1,40),42)],
-                 *[f'vs_sounds_{i:02}.bin' for i in (1,2,3,51,52)],
+                 *[f'{stem}_{id:02}.bin' for id in (c for c in SELECTABLE if c) for stem in ('aid','act','jdg','pil','idx','map','chr')],
+                 *[f'bup_{i:02}.{ext}' for i in sorted({*GRID,48}-{53}) for ext in ('tex','pal')],
+                 *[f'vs_voice_{i:02}.bin' for i in (*range(1,43),*range(44,49))],
+                 *[f'vs_sounds_{i:02}.bin' for i in (*(c for c in SELECTABLE if c),51,52)],
                  *[f'bg{arena:02}_{page}.{ext}' for arena in (0,1) for ext,pages in (('tex',(1,2,3,4)),('pal',(1,3))) for page in pages],
                  'console_versus_art.bin','combat_stage.bin','combat_stage_01.bin']:
  shutil.copy2(ROOT/'work/ss6/extracted/resources'/resource,ROOT/'outputs/ss6-feasibility/native-viewer/assets'/resource)
@@ -30,7 +32,8 @@ fd,name=tempfile.mkstemp(prefix='ss6-viewer.',dir=target.parent);os.close(fd)
 try:
  # In-place overwrite produced SIGKILL on this host despite codesign --verify
  # succeeding. Atomic replacement preserves a fresh signed executable inode.
- shutil.copy2(ROOT/'work/ss6/build-native/ss6-viewer',name)
+ # SS6_VIEWER_BUILD selects another build directory (default build-native).
+ shutil.copy2(ROOT/'work/ss6'/os.environ.get('SS6_VIEWER_BUILD','build-native')/'ss6-viewer',name)
  os.replace(name,target)
 finally:
  Path(name).unlink(missing_ok=True)

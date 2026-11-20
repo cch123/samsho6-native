@@ -140,7 +140,7 @@ def main():
     assert digest==hashlib.sha256((ROOT/'work/ss6/build-native/ss6-viewer').read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory() as td:
         folder=Path(td);cpp=folder/'driver.cpp';cpp.write_text(SOURCE)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'work/ss6/build-native/libss6-runtime.a','-o',folder/'driver'],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'work/ss6/build-native/libss6-runtime.a','-o',folder/'driver'],check=True)
         modes=('secret','guard') if ken else ('concentration',)
         cases=[(folder,side,ken,mode,viewer,assets) for mode in modes for side in (0,1)]
         with ProcessPoolExecutor(2) as pool:results=list(pool.map(check,cases))

@@ -1,5 +1,7 @@
+#include <initializer_list>
 #include "fighter_depth.hpp"
 #include "scalar_float.hpp"
+#include "fighter_roster.hpp"
 #include <algorithm>
 #include <bit>
 #include <stdexcept>
@@ -22,38 +24,43 @@ ScalarFloat childDepth(const AuxiliaryObject& obj,ScalarFloat bodyDepth) {
 AuxiliaryObject& taskObject(TaggedTaskPools& pools,uint32_t task) {
     return pools.objects.at(pools.tasks.at(task-1)[7]-1);
 }
-// Contiguous rows of the Japanese table at 4d3d18 share a depth mode.
-// The mode compares a one-based ACT record, independently of its duration.
-struct DepthRule {unsigned fighter,first,last,mode;};
-constexpr DepthRule depthRules[]{
-    {0,532,537,0},
-    {1,571,572,0},{1,681,681,0},{1,682,682,16},{1,693,704,0},
-    {3,592,593,0},{3,617,622,0},{3,623,624,5},{3,625,628,7},{3,629,634,3},
-    {3,648,649,0},{3,650,651,6},{3,652,653,3},{3,664,665,0},
-    {3,666,667,14},{3,668,669,9},{3,670,671,3}
-};
+// 1489c0's 18-entry jump table at 5ea1c4; record = body+28 plus one.
 bool behindOnRecord(unsigned mode,unsigned record) {
+    const auto any=[record](std::initializer_list<unsigned> l){for(auto v:l)if(record==v)return true;return false;};
     switch(mode) {
     case 0:return false;
+    case 1:return true;
+    case 2:return record==1;
     case 3:return record==2;
-    case 5:return record==7||record==11;
-    case 6:return record==2||record==6||record==10;
-    case 7:return record==7||record==11||record==15;
-    case 9:return record==2||record==6||record==10||record==14;
-    case 14:return record>=2&&record<40;
-    case 16:return record>=3&&record<25;
+    case 4:return record==4;
+    case 5:return any({7,11});
+    case 6:return any({2,6,10});
+    case 7:return any({7,11,15});
+    case 8:return any({7,11,15,19});
+    case 9:return any({2,6,10,14});
+    case 10:return record>=2;
+    case 11:return record>=10;
+    case 12:return record-1u<4;
+    case 13:return record-1u<2;
+    case 14:return record-2u<38;
+    case 15:return record-66u<16;
+    case 16:return record-3u<22;
+    case 17:return record>=20;
     default:throw std::logic_error("Missing fighter depth mode");
     }
 }
-void applyFighterDepthOverride(const std::array<unsigned,2>& ids,const std::array<unsigned,2>& actions,
+void applyFighterDepthOverride(const FighterTables& tables,const std::array<unsigned,2>& ids,const std::array<unsigned,2>& actions,
                               const std::array<unsigned,2>& steps,uint32_t& p1Depth,uint32_t& p2Depth) {
     // 148900 stops at the first matching body, even when both fighters
     // have an override. ACT numbers in unrelated character banks do not match.
+    // The rows (4d3d18, depth_rules.bin) name one ACT each; the mode compares
+    // a one-based ACT record, independently of its duration.
+    const auto& rules=tables.depthRules();
     for(unsigned i=0;i<2;++i) {
-        const auto rule=std::find_if(std::begin(depthRules),std::end(depthRules),[&](auto r) {
-            return ids[i]==r.fighter&&r.first<=actions[i]&&actions[i]<=r.last;
+        const auto rule=std::find_if(rules.begin(),rules.end(),[&](auto r) {
+            return ids[i]==r.fighter&&actions[i]==r.act;
         });
-        if(rule==std::end(depthRules))continue;
+        if(rule==rules.end())continue;
         const bool needP1Front=(i==0)!=behindOnRecord(rule->mode,steps[i]+1);
         if(needP1Front?ScalarFloat{p2Depth}.less({p1Depth}):ScalarFloat{p1Depth}.less({p2Depth}))
             std::swap(p1Depth,p2Depth);
@@ -61,14 +68,14 @@ void applyFighterDepthOverride(const std::array<unsigned,2>& ids,const std::arra
     }
 }
 }
-void applyHaohmaruDepthOverride(const std::array<unsigned,2>& actions,uint32_t& p1Depth,uint32_t& p2Depth) {
-    applyFighterDepthOverride({0,0},actions,{0,0},p1Depth,p2Depth);
+void applyHaohmaruDepthOverride(const FighterTables& tables,const std::array<unsigned,2>& actions,uint32_t& p1Depth,uint32_t& p2Depth) {
+    applyFighterDepthOverride(tables,{0,0},actions,{0,0},p1Depth,p2Depth);
 }
 
-void updateFighterDepths(BattleRoundState& battle,const std::array<RoundPlayerRef,2>& players) {
+void updateFighterDepths(BattleRoundState& battle,const std::array<RoundPlayerRef,2>& players,const FighterTables& tables) {
     const auto& p1=players[0].actor;
     const auto& p2=players[1].actor;
-    if(p1.character>3||p2.character>3)
+    if(!playableFighter(p1.character)||!playableFighter(p2.character))
         throw std::runtime_error("Draw priority requires character-specific action tables");
     bool p1InFront=(p1.stateTable()==1&&battle.entry.attackMarker12d2300)||
                    p1.state194==0x290000||p1.state194==0x340000||p2.state194==0x230000;
@@ -101,7 +108,7 @@ void updateFighterDepths(BattleRoundState& battle,const std::array<RoundPlayerRe
         auto& o=taskObject(pools,task);
         if(!(o[0x104/4]&explicitDepth))o[0xb0/4]=0;
     }
-    applyFighterDepthOverride({p1.character,p2.character},actions,
+    applyFighterDepthOverride(tables,{p1.character,p2.character},actions,
         {players[0].body.timeline.clock().step,players[1].body.timeline.clock().step},
         players[0].body.depthOffsetB0,players[1].body.depthOffsetB0);
     // The resource00 round normally has no actor+4 auxiliary body. If it

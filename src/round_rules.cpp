@@ -38,7 +38,8 @@ int knockoutRequest(uint32_t posture,uint32_t gates,int table,int state,int32_t 
 VictoryRequest victoryRequest(uint32_t posture,uint32_t gates,int table,int state,bool ended,bool condition) {
     if (table==0&&state==52) return ended ? VictoryRequest::Ready : VictoryRequest::Wait;
     if (posture&0x200000) return VictoryRequest::Dismount;
-    if (posture&0x800000) throw std::runtime_error("Special victory state not implemented");
+    // 1452e8: riding Rera waits in the air, otherwise requests attack 1/0x46 (and 18c).
+    if (posture&0x800000) return (posture&16) ? VictoryRequest::Wait : VictoryRequest::Ride;
     if ((gates&2)||(posture&16)||condition) return VictoryRequest::Wait;
     return VictoryRequest::Queue;
 }

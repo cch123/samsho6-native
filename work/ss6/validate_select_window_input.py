@@ -114,7 +114,7 @@ def main():
         work=Path(td);harness=work/'select-window';setup=work/'empty.pad';setup.write_text('0 0 0\n')
         seq=work/'events';seq.write_text('\n'.join(lines)+'\n');script=work/'reference.pad';snap=work/'reference.bmp'
         sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3']))
-        run(['c++','-std=c++20','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',BUILD/'libss6-runtime.a',*sdl,'-o',harness])
+        run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',HERE/'sdl_gamepad_input_test.cpp',BUILD/'libss6-runtime.a',*sdl,'-o',harness])
         cap=[arg for tick,frame in captures.items() for arg in ('--capture',str(frame),work/f'{tick}.bmp')]
         out=run([harness,assets,setup,seq,'--mode','select','--fixed-host-time',*cap],env=DUMMY)
         events=list(map(int,next(line for line in out.splitlines() if line.startswith('events ')).split()[1:]))

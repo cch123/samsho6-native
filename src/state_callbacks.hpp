@@ -1,4 +1,5 @@
 #pragma once
+#include "fighter_tables.hpp"
 #include "state_entry.hpp"
 #include <map>
 
@@ -36,8 +37,11 @@ public:
     uint32_t registerAttack(StateEntryActor&,const InputSystemConfig&,CallbackContext&) const; //172eb0
     //173108 resource00/system0 common damage. Weapon-drop and active
     //system termination for other characters/systems have separate owners.
-    static uint32_t registerOrdinaryDamage(StateEntryActor&,const InputSystemConfig&);
+    uint32_t registerOrdinaryDamage(StateEntryActor&,const InputSystemConfig&) const;
     void addRage(StateEntryActor&,const InputSystemConfig&,int32_t amount) const; //14efb8
+    // 14f148: rage state 2/3 becomes 3 and lower states 0, amount 0, then
+    // 14f108 sets the system's sword maximum and clamps the current sword.
+    void resetRage(StateEntryActor&,const InputSystemConfig&) const;
     void addTenChainRage(StateEntryActor&,const InputSystemConfig&) const;
     static bool damageDropsWeapon(const StateEntryActor&,unsigned sourceCharacter,int32_t damageIndex); //1732b0
     static bool hasSystemEffect(const InputSystemConfig&); //14eb78
@@ -46,6 +50,7 @@ private:
     StateEntryRules entries_;
     InputBindings bindings_;
     std::array<uint32_t,51> attackHandlers_;
+    FighterTables fighters_; // damage-source stubs of script fighters (4e97a8)
     std::array<std::array<uint8_t,128>,51> specialParameters_;
     std::array<std::array<int32_t,7>,51> characters_;
     std::array<std::array<int32_t,10>,9> systems_;

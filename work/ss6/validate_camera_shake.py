@@ -173,7 +173,7 @@ def main():
     with tempfile.TemporaryDirectory() as d:
         root=ROOT/'src';cpp=Path(d)/'driver.cpp';exe=Path(d)/'driver'
         cpp.write_text(DRIVER)
-        subprocess.run(['c++','-O2','-std=c++20', '-I',root,cpp,root/'stage_camera.cpp',root/'scalar_float.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off', '-I',root,cpp,root/'stage_camera.cpp',root/'scalar_float.cpp','-o',exe],check=True)
         result=exercise(exe)
     report=dict(status='passed',elf_sha256=PIN,source_sha256=digest(ROOT/'src/stage_camera.cpp'),**result,producer_audit=producers(),
                 scope='Complete 141528/146ba0,146388/146418,146460,1463d0,146870/146dc8/146e28/146d60 with finite EE scalar model. Compare stored and projected centers, world bounds, targets, velocities, both signed 8.8 residuals and all five projection globals after every request, reset, publish or queued movement.')

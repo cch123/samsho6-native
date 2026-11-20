@@ -293,7 +293,7 @@ def special_contact_matrix():
         p.write(ctx+4,source,4)
     commands,expected=[],[]
     for raw,strength,part,posture,armed,previous in itertools.product(
-            (10,11,17,20),range(3),range(3),(0,8,16),range(2),(0,34)):
+            (10,11,17,20,21,22),range(3),range(3),(0,8,16),range(2),(0,34)):
         clear()
         flags=posture|(0x1000 if armed else 0)
         p.write(source+0x194,1|((68+strength)<<16),4)

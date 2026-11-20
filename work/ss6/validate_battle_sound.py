@@ -112,7 +112,7 @@ def matrix():
         main = Path(tmp) / 'sound.cpp'
         main.write_text(DRIVER)
         binary = Path(tmp) / 'sound'
-        subprocess.run(['c++', '-std=c++20', '-I', str(ROOT / 'src'), str(main),
+        subprocess.run(['c++', '-std=c++20','-ffp-contract=off', '-I', str(ROOT / 'src'), str(main),
                         str(BUILD / 'libss6-runtime.a'), '-o', str(binary)], check=True)
         result = subprocess.run([binary, RES], text=True, capture_output=True, check=True,
                                 input=''.join(' '.join(map(str, c))+'\n' for c in commands))

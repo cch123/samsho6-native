@@ -143,7 +143,7 @@ def main(args):
     runtime_sha=digest(BUILD/'libss6-runtime.a')
     with tempfile.TemporaryDirectory() as folder:
         d=Path(folder);obj=d/'callbacks.o';exe=d/'fight'
-        cxx=['c++','-std=c++20','-O2','-I',str(ROOT/'src')]
+        cxx=['c++','-std=c++20','-ffp-contract=off','-O2','-I',str(ROOT/'src')]
         subprocess.run([*cxx,'-DupdateNakoruruEagleAttack=tracedEagleImplementation','-c',ROOT/'src/nakoruru_eagle_attack.cpp','-o',obj],check=True)
         subprocess.run([*cxx,ROOT/'work/ss6/nakoruru_eagle_trace.cpp',obj,BUILD/'libss6-runtime.a','-o',exe],check=True)
         cases=[(s,st,out,armed) for s in (0,1) for st in (74,75,76,77,90) for armed in (True,False) if armed or st!=77

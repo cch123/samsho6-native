@@ -18,6 +18,14 @@ const std::array<uint8_t,16>* descriptor(const InputSystemConfig& c) {
     if(!c.descriptor)throw std::runtime_error("System6 input bindings require the selected descriptor");
     return &*c.descriptor;
 }
+bool allowsFirstCategory(const InputSystemConfig& c) { // 14fb58
+    const auto* d=descriptor(c);
+    return (d&&(*d)[1]!=4)||(c.system>=1&&c.system<=5)||c.system==7||c.system==8;
+}
+bool allowsSecondCategory(const InputSystemConfig& c) { // 14fbd8
+    const auto* d=descriptor(c);
+    return (d&&(*d)[2]!=7)||c.system==1||c.system==5;
+}
 bool alternateCommands(const InputSystemConfig& c) { //14fc30
     const auto* d=descriptor(c);return (d&&(*d)[2]==8)||c.system==1;
 }
@@ -75,14 +83,24 @@ bool InputBindings::normalAvailable(unsigned index,const InputSystemConfig& c) c
     }
     return (normal_.at(index).systems>>system)&1;
 }
+int InputBindings::techniqueCategorySlot(unsigned character,unsigned column) const {
+    const auto slot=categories_.at(character).at(column);
+    return slot==255?-1:int(slot);
+}
+bool InputBindings::allowsTechniqueCategory(unsigned character,unsigned slot,const InputSystemConfig& c) const {
+    if(firstCategory(character,slot))return allowsFirstCategory(c);
+    if(secondCategory(character,slot))return allowsSecondCategory(c);
+    return true;
+}
 bool InputBindings::specialAvailable(unsigned index,unsigned slot,const InputSystemConfig& c) const {
-    auto system=c.system;const auto* d=descriptor(c);
+    descriptor(c); // Validate a custom system even for uncategorized slots.
+    auto system=c.system;
     if(secondCategory(c.character,slot)) {
-        const bool permitted=(d&&(*d)[2]!=7)||c.system==1||c.system==5; //14fbd8
+        const bool permitted=allowsSecondCategory(c);
         system=permitted?(alternateCommands(c)?1:5):0;
     }
     if(firstCategory(c.character,slot)) {
-        const bool permitted=(d&&(*d)[1]!=4)||(c.system>=1&&c.system<=5)||c.system==7||c.system==8; //14fb58
+        const bool permitted=allowsFirstCategory(c);
         system=permitted?5:0;
     }
     return (special_.at(index).systems>>system)&1;

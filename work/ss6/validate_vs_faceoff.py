@@ -119,7 +119,7 @@ def director(exe,ids,press):
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         driver=Path(tmp)/'driver.cpp';driver.write_text(DRIVER);exe=Path(tmp)/'driver'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',driver,BUILD/'libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',driver,BUILD/'libss6-runtime.a','-o',exe],check=True)
         poses=[(f,f) for f in [0,5,15,17,31,55,110,190,192,245,275,290,306,360,420,450,480,499,516]]+[(480,31),(497,67)]
         pixels(exe,(0,1),poses);pixels(exe,(22,42),[(41,41),(300,201),(485,65)])
         steps=[director(exe,(0,1),{}),director(exe,(42,29),{29:(2,0),30:(2,0)}),

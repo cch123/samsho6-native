@@ -70,6 +70,38 @@ void record(StateEntryActor& source,PlayerMatchStats& stats,const ContactEvent* 
     if(guard)source.flags244|=0x10000000;
 }
 }
+int contactFinishCategory(const StateEntryActor& a,const InputBindings& bindings){return actorCategory(a,bindings);}
+int projectileFinishCategory(const AuxiliaryObject& object,const StateEntryActor& owner,const StateEntryActor& opponent,
+                             const InputBindings& bindings) {
+    const auto kind=object[0xcc/4];
+    if(kind==5)return 14;
+    if(kind==3) {
+        // 14dc00 reads the companion command at impact. Profile 4 can
+        // finish its technique after the opponent has entered the paired pose.
+        const auto profile=object[0x18/4];
+        if(profile==1||profile==45)return object[0x128/4]==7?11:10;
+        if(profile==4) {
+            if(object[0x24/4]==810||opponent.stateIndex()==87)return 13;
+            if(bindings.specialFirstCategory(owner.character,owner.stateIndex()))return 11;
+        }
+        return 10;
+    }
+    if(kind!=2)return 10;
+    const auto id=object[0xd0/4];
+    if(id>=65&&id<=73)return int((id-65)%3);
+    if(id>=85&&id<=94)return 13;
+    switch(id) {
+    case 9:case 20:case 23:case 29:case 37:case 123:case 132:case 134:
+    case 178:case 181:case 182:return 13;
+    case 26:case 28:case 35:case 52:case 55:case 95:case 96:case 99:case 135:
+    case 138:case 142:case 149:case 150:case 156:case 162:case 163:case 164:
+    case 169:case 180:return 11;
+    case 104:case 105:return 1;
+    case 106:case 107:case 108:return 2;
+    case 188:return 4;
+    default:return 10;
+    }
+}
 bool isCounterContact(const StateEntryActor& target,const PlayerMatchStats& sourceStats,const ContactEvent& event) {
     return (event.b.fields.low7&1)||
            ((target.flags240&1)&&sourceStats.hitCount0c==0&&target.stateTable()!=2);

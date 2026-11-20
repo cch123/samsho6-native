@@ -9,6 +9,7 @@
 #include "local_versus.hpp"
 #include "fighter_roster.hpp"
 #include "character_select_art.hpp"
+#include "console_title_art.hpp"
 #include "vs_curtain.hpp"
 #include "combat_audio.hpp"
 #include "versus_audio_output.hpp"
@@ -761,6 +762,7 @@ class VersusScreen {
     Frame frame_{640,448,Bytes(640*448*4)};
     Frame result_{640,480,Bytes(640*480*4)};
     std::optional<ss6::ConsoleVersusArt> consoleArt_;
+    std::optional<ss6::ConsoleTitleArt> titleArt_;
     std::optional<ss6::CharacterSelectArt> selectArt_;
     std::optional<ss6::VersusFaceoffArt> faceoffArt_;
     std::optional<ss6::VsCurtain> curtain_;
@@ -832,8 +834,19 @@ class VersusScreen {
 public:
     explicit VersusScreen(const fs::path& assets):textures_(assets),rage_(assets),identity_(assets),assets_(assets) {}
     const Frame& paint(const ss6::NativeMatch& match,const fs::path& stageDump={},bool includeHudPortraits=false) {
-        if(const auto& selection=match.characterSelect()) {
-            if(const auto& preview=match.faceoff()) {
+        if(match.title() || match.characterSelect()) {
+            const auto& selection=match.characterSelect();
+            if(const auto& title=match.title()) {
+                if(!titleArt_)titleArt_.emplace(assets_);
+                const auto& d=title->draw;
+                auto prompt=ss6::ConsoleTitlePrompt::Hidden;
+                if(!d.modeMenu && match.titlePromptVisible())
+                    prompt=match.battle().matchEnd.continue2c?ss6::ConsoleTitlePrompt::Wait:ss6::ConsoleTitlePrompt::Start;
+                const auto white=match.selectWhiteLevel();
+                const auto level=white?white:match.battle().consoleMenu.fadeAlpha;
+                titleArt_->paint(d.modeMenu,d.firstRow,d.scrollDirection,d.scrollTick,d.titleTick,d.idleTick,result_.rgba,prompt,level,white>0);
+                return result_;
+            } else if(const auto& preview=match.faceoff()) {
                 const auto picks=match.selectedLineup();
                 const std::array<unsigned,2> ids{picks[0].character,picks[1].character};
                 if(ids!=portraitIds_){faceoffArt_.emplace(assets_,ids);portraitIds_=ids;}
@@ -869,25 +882,23 @@ public:
         const auto& battle=match.battle();
         const auto& result=battle.resultScreen;
         const auto& menu=battle.consoleMenu;
-        if(match.characterSelect()) {
+        if(match.title() || match.characterSelect()) {
             const auto& image=paint(match);
             check(SDL_UpdateTexture(texture,nullptr,image.rgba.data(),image.width*4));
             check(SDL_RenderTexture(r,texture,nullptr,nullptr));
-            if(match.selectionUnavailable()) {
+            if(match.title() && match.title()->unavailableMode) {
+                color(r,25,24,27);SDL_FRect banner{0,422,640,58};check(SDL_RenderFillRect(r,&banner));
+                color(r,255,255,255);text(r,20,443,"MODE IN DEVELOPMENT / SELECT VS MODE TO PLAY");
+            } else if(match.selectionUnavailable()) {
                 color(r,25,24,27);SDL_FRect banner{0,422,640,58};check(SDL_RenderFillRect(r,&banner));
                 color(r,255,255,255);const auto stage=match.unavailableStage();
                 if(!match.missingMove().empty())text(r,20,437,match.missingMove());
                 else if(stage>=0&&!ss6::CombatStageState::supports(stage))text(r,20,437,"STAGE "+std::to_string(stage)+" IS IN DEVELOPMENT / CHOOSE STAGE 0 OR 1");
-                else text(r,20,437,"FIGHTER IN DEVELOPMENT / CHOOSE HAOHMARU, NAKORURU, RIMURURU OR HANZO");
+                else text(r,20,437,"FIGHTER IN DEVELOPMENT / CHOOSE HAOHMARU, NAKORURU, RIMURURU, HANZO, RASETSUMARU, MINA, GAOH OR EARTHQUAKE");
                 text(r,20,459,"PRESS AN ATTACK BUTTON TO RETURN TO CHARACTER SELECT");
             }
-            present(r,result,paused,menu.fadeAlpha);return;
-        }
-        if(menu.destination==ss6::ConsoleVersusDestination::Title) {
-            color(r,23,26,29);check(SDL_RenderClear(r));
-            color(r,242,237,218);text(r,160,218,"TITLE SCREEN - END OF NATIVE PREVIEW");
-            text(r,160,246,"R  NEW MATCH     ESC  EXIT");
-            present(r,result,paused,menu.fadeAlpha);
+            if(match.title())present(r,{},paused);
+            else present(r,result,paused,menu.fadeAlpha);
             return;
         }
         if(result.presentationReady) {
@@ -950,8 +961,9 @@ public:
 };
 int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snapshot,const fs::path& dump,
               const fs::path& stageDump,
-              unsigned updates,unsigned smoke,bool boxes,int roundTime,ss6::VersusMode mode,const fs::path& audioOut={},std::array<unsigned,2> spirits={},bool startAtSelect=false) {
-    ss6::LocalVersus session(assets,roundTime,mode,spirits,startAtSelect);
+              unsigned updates,unsigned smoke,bool boxes,int roundTime,ss6::VersusMode mode,const fs::path& audioOut={},std::array<unsigned,2> spirits={},ss6::VersusEntry entry=ss6::VersusEntry::Fight,
+              std::array<bool,2> cpuSeats={}) {
+    ss6::LocalVersus session(assets,roundTime,mode,spirits,entry,cpuSeats);
     auto screen=std::make_unique<VersusScreen>(assets);
     const bool interactive=snapshot.empty() && dump.empty() && stageDump.empty() && audioOut.empty();
     std::optional<ss6::CombatAudio> mixer;
@@ -1078,7 +1090,9 @@ int main(int argc, char** argv) {
         unsigned index = 0, updates = 0, smokeUpdates = 0, actionId=0;
         int roundTime=-1;
         std::array<unsigned,2> spirits{};
-        bool versus=false,startAtSelect=false;
+        std::array<bool,2> cpuSeats{};
+        bool versus=false;
+        auto entry=ss6::VersusEntry::Fight;
         auto versusMode=ss6::VersusMode::Console;
         bool idle = true, rawRequested = false, boxes=false,contacts=false,dumpMirror=false,trial=false,scripted=false,koPreview=false;
         float targetX=64;
@@ -1087,6 +1101,7 @@ int main(int argc, char** argv) {
             std::string arg = argv[i];
             if (i + 1 >= argc) throw std::runtime_error("Expected option value");
             if (arg == "--assets") assets = argv[++i];
+            else if (arg == "--cpu") cpuSeats=ss6::versusCpuSeats(argv[++i]);
             else if (arg == "--dump") dump = argv[++i];
             else if (arg=="--p1-spirit" || arg=="--p2-spirit") {
                 if(i+1==argc)throw std::invalid_argument(arg+" requires a spirit name");
@@ -1118,9 +1133,10 @@ int main(int argc, char** argv) {
             else if (arg == "--smoke-updates") smokeUpdates = unsigned(std::stoul(argv[++i]));
             else if (arg == "--mode") {
                 std::string mode = argv[++i];
-                if (mode != "idle" && mode != "cells" && mode != "contacts" && mode != "trial" && mode!="knockout" && mode!="versus" && mode!="fixed-versus" && mode!="select")
-                    throw std::runtime_error("Unknown mode (expected versus, fixed-versus, idle, cells, contacts, trial or knockout)");
-                startAtSelect=mode=="select";versus=startAtSelect||mode=="versus"||mode=="fixed-versus";
+                if (mode != "idle" && mode != "cells" && mode != "contacts" && mode != "trial" && mode!="knockout" && mode!="versus" && mode!="fixed-versus" && mode!="select" && mode!="title")
+                    throw std::runtime_error("Unknown mode (expected title, select, versus, fixed-versus, idle, cells, contacts, trial or knockout)");
+                entry=mode=="title"?ss6::VersusEntry::Title:mode=="select"?ss6::VersusEntry::CharacterSelect:ss6::VersusEntry::Fight;
+                versus=entry!=ss6::VersusEntry::Fight||mode=="versus"||mode=="fixed-versus";
                 versusMode=mode=="fixed-versus"?ss6::VersusMode::FixedMatch:ss6::VersusMode::Console;
                 rawRequested = mode == "cells";
                 contacts = mode == "contacts";koPreview=mode=="knockout";trial=mode=="trial"||koPreview;
@@ -1130,7 +1146,8 @@ int main(int argc, char** argv) {
         if(updates>1000000)throw std::runtime_error("Too many updates");
         if(!stageDump.empty()&&(!versus||!trialScript.empty()))throw std::runtime_error("--dump-stage requires a versus match");
         if(!audioOut.empty()&&(!versus||!trialScript.empty()))throw std::runtime_error("--audio-out requires a versus match");
-        if(versus&&trialScript.empty())return runVersus(assets,matchReplay,snapshot,dump,stageDump,updates,smokeUpdates,boxes,roundTime,versusMode,audioOut,spirits,startAtSelect);
+        if((cpuSeats[0]||cpuSeats[1])&&(!versus||!trialScript.empty()))throw std::runtime_error("--cpu requires a versus match");
+        if(versus&&trialScript.empty())return runVersus(assets,matchReplay,snapshot,dump,stageDump,updates,smokeUpdates,boxes,roundTime,versusMode,audioOut,spirits,entry,cpuSeats);
         if(!matchReplay.empty())throw std::runtime_error("--match-replay requires versus mode");
         CharacterSample sample(assets);
         if(trial||(versus&&!trialScript.empty()))return runTrial(assets,sample,snapshot,dump,updates,smokeUpdates,defensePreset,boxes,scripted,targetX,dumpMirror,trialScript,koPreview,actionId);

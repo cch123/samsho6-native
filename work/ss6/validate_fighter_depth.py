@@ -19,7 +19,7 @@ using namespace ss6;
 void emit(uint32_t x){std::cout<<x<<' ';}
 int main(int argc,char** argv) {
     if(argc!=2)return 2;
-    ActionBank bank(argv[1],true);
+    ActionBank bank(argv[1],true);FighterTables depthTables(argv[1]);
     std::array<MatchFighter,2> f{MatchFighter(bank),MatchFighter(bank)};
     auto ref=[](MatchFighter& f){return RoundPlayerRef{f.body,f.actor,f.input,f.config,f.storage,f.objects};};
     std::array<RoundPlayerRef,2> refs{ref(f[0]),ref(f[1])};
@@ -63,7 +63,7 @@ int main(int argc,char** argv) {
                 else b.objectTasks[i]=i+1;
             }
             b.objectTasks[20]=4;
-            updateFighterDepths(b,refs);
+            updateFighterDepths(b,refs,depthTables);
             for(const auto& x:f)emit(x.body.depthOffsetB0);
             for(unsigned i=0;i<18;++i)emit(b.entry.tasks.objects[i][0xb0/4]);
             for(unsigned i:{24u,25u})emit(b.entry.tasks.objects[i][0xb0/4]);
@@ -71,7 +71,7 @@ int main(int argc,char** argv) {
         }else if(op=="override") {
             std::array<unsigned,2> actions{};uint32_t d0,d1;
             std::cin>>actions[0]>>actions[1]>>d0>>d1;
-            applyHaohmaruDepthOverride(actions,d0,d1);emit(d0);emit(d1);std::cout<<'\n';
+            applyHaohmaruDepthOverride(depthTables,actions,d0,d1);emit(d0);emit(d1);std::cout<<'\n';
         }else return 3;
     }
 }
@@ -123,7 +123,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         source=Path(temp)/'probe.cpp';exe=Path(temp)/'probe'
         source.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-I',ROOT/'src',source,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-I',ROOT/'src',source,LIB,'-o',exe],check=True)
         out=subprocess.run([exe,ASSETS],input='\n'.join(commands)+'\n',text=True,capture_output=True,check=True)
     lines=iter([int(x) for x in row.split()] for row in out.stdout.splitlines())
     traces=[]

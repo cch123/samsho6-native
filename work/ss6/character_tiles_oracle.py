@@ -12,9 +12,23 @@ ATLAS=0x1800000
 bits=lambda v:struct.unpack('<I',struct.pack('<f',v))[0]
 def fixture(resources=(0,0,51)):
  p=Probe((ROOT/'work/ss6/extracted/SLPS_255.59').read_bytes(),finite_model=True);buffered_stdout(p)
+ # The original addresses each bank through its pointer table, so these
+ # fixture arenas are free choices. Default bases stay fixed; a bank larger
+ # than its stride (Mina's chr/map/act) moves only the following slots.
+ limits={'chr':ATLAS,'map':0x1400000,'act':0x1c30000,'pil':0x1a00000}
+ ends={}
  for slot,res in enumerate(resources):
   for name,base,pointer in [('idx',0x46f1b0+slot*0x2000,None),('chr',0x1400000+slot*0x180000,0x4751f8),('map',0x1300000+slot*0x50000,0x475210),('aid',0x46a9b0+slot*0x1800,None),('act',0x1b00000+slot*0x80000,0x4751b0),('pil',0x1900000+slot*0x50000,0x4751c8)]:
-   d=(ASSETS/f'{name}_{res:02}.bin').read_bytes();p.memory[base:base+len(d)]=d
+   d=(ASSETS/f'{name}_{res:02}.bin').read_bytes()
+   if name in limits:
+    base=max(base,(ends.get(name,0)+0xffff)&~0xffff)
+    if base+len(d)>limits[name]:
+     # Two oversized banks (a Mina mirror) cannot share one region. Use the
+     # separate overflow arena, which no default layout touches.
+     base=(ends.get('overflow',0x1d40000)+0xffff)&~0xffff;ends['overflow']=base+len(d)
+     assert ends['overflow']<=0x1e00000,(name,resources,hex(ends['overflow']))
+    else:ends[name]=base+len(d)
+   p.memory[base:base+len(d)]=d
    if pointer:p.write(pointer+slot*4,base,4)
   p.write(0x46a9a0+slot*4,res,4)
  d=(ASSETS/'pal_all.bin').read_bytes();p.memory[0x3f8a40:0x3f8a40+len(d)]=d

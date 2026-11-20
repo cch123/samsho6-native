@@ -48,22 +48,26 @@ CombatSoundSample loadSide(const std::filesystem::path& path,size_t expected) {
 }
 void CombatMusic::request(int variant,int tone,bool preload,int volume) {
     const bool stage=tone>=5&&tone<5+int(stageBytes.size());
-    if(variant!=0||(!stage&&tone!=2&&tone!=24))
+    // Both title soundtrack selections point at identical stereo payloads
+    // under BGM1 and BGM3. Other installed streams use the default variant.
+    const bool title=tone==1;
+    if((variant!=0&&!(title&&variant==1))||(!stage&&!title&&tone!=2&&tone!=24))
         throw std::invalid_argument("Unsupported versus music track");
     auto cached=std::find_if(tracks_.begin(),tracks_.end(),[tone](const Track& t){return t.tone==tone;});
     if(cached!=tracks_.end()) {
         slot_=unsigned(cached-tracks_.begin());
     } else {
-        const size_t size=stage?stageBytes[size_t(tone-5)]:(tone==2?1294336:163840);
+        const size_t size=stage?stageBytes[size_t(tone-5)]:title?819200:tone==2?1294336:163840;
         const auto stem=std::string("bgm")+(tone<10?"0":"")+std::to_string(tone)+"_";
         Track loaded;
         loaded.tone=tone;
         for(unsigned i=0;i<2;++i)
             loaded.sides[i]=loadSide(assets_/(stem+(i?"r.vb":"l.vb")),size);
         // 2c18 schedules the one-shot KOFF on the next half-buffer IRQ.
-        // At that IRQ the fifth (last) half has just been uploaded ahead of
-        // playback; four halves were heard. Stage music instead stays keyed.
-        loaded.endSample=unsigned(loaded.sides[0].pcm.size()-3-(tone==24?halfBuffer/16*28:0));
+        // The final uploaded half has not reached playback. This leaves
+        // 24 audible halves for the title and four for the victory cue.
+        const bool oneShot=title||tone==24;
+        loaded.endSample=unsigned(loaded.sides[0].pcm.size()-3-(oneShot?halfBuffer/16*28:0));
         // An EE request precedes KOFF. Until the next service, the mixer can
         // still read both sides of the currently playing track. Replace the
         // other slot even if several requests arrive before that service.
@@ -72,7 +76,7 @@ void CombatMusic::request(int variant,int tone,bool preload,int volume) {
     }
     // 1282d0 requests track 2 with the repeat flag set and starts it
     // immediately. The stage stream uses a separate release after preload.
-    repeat_=tone!=24;
+    repeat_=stage||tone==2;
     released_=!preload;
     volume_=std::clamp(volume,0,0x3fff);
     phase_=Phase::StopPrevious;

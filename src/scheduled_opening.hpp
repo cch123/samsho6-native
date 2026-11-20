@@ -28,7 +28,10 @@ public:
     uint32_t startWorld(unsigned descriptor,uint32_t flags,unsigned resourceSlot,
         float x,float y,float z,float scale,TaggedTaskPools&,EffectResidency&,GameRandom&);
     // 1242c0 uses an unqualified task tag and zero depth for contact groups.
-    void startContact(unsigned descriptor,float x,float y,float scale,TaggedTaskPools&,EffectResidency&,GameRandom&);
+    // facing is ORed into 124620's flags (masked there with 081c0000); the
+    // contact callers pass 0/1 and z 0, table-B row type 9 passes 80000 and -50.
+    void startContact(unsigned descriptor,float x,float y,float scale,TaggedTaskPools&,EffectResidency&,GameRandom&,
+                      uint32_t facing=0,float z=0);
     //Bind this handler to112838's native dispatch; it does not dispatch or
     //clear other tasks/draws. Births and reclamation remain scheduler-owned.
     void task(uint32_t task,TaggedTaskPools&,EffectResidency&,EffectPalettes&,
@@ -44,8 +47,8 @@ private:
     SoundSelection* sound_;
     std::function<void()> explosionFinished_,concentrationFinished_;
     std::array<std::array<uint32_t,27>,20> descriptors_{};
-    std::array<std::array<uint32_t,27>,13> worldDescriptors_{};
-    std::map<unsigned,std::array<uint32_t,27>> contactDescriptors_;
+    std::array<std::array<uint32_t,27>,67> effectDescriptors_{}; // 4a2b30, native id 0x100 + index
+    std::array<bool,67> effectUsable_{};
     unsigned palette_=0;
     const std::array<uint32_t,27>& descriptor(unsigned nativeId) const;
     void spawnAt(unsigned descriptor,uint32_t owner,TaggedTaskPools&,EffectResidency&,

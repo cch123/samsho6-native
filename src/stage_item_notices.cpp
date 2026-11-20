@@ -17,22 +17,23 @@ int StageItemNotices::allocate(int kind,int x,int y) {
     }
     return -1;
 }
-bool StageItemNotices::heal(int x){return allocate(0,x,80)>=0;}
+bool StageItemNotices::show(StageItemLabel label,int x){return allocate(int(label),x,80)>=0;}
 void StageItemNotices::visit(uint32_t delta,const StageCamera& camera,std::array<int,2> weaponX,
                              std::array<bool,2> cpu,unsigned depthCounter) {
     drawCount_=0;
     for(unsigned side=0;side<2;++side) {
         auto& slot=weaponSlot_[side];
         if(weaponX[side]>=0) {
-            if(slot<0)slot=allocate(cpu[side]?3:int(side)+1,weaponX[side],50);
+            if(slot<0)slot=allocate(cpu[side]?5:int(side)+3,weaponX[side],50);
         } else if(slot>=0){pool_[unsigned(slot)]={};slot=-1;}
     }
     for(auto& notice:pool_) {
         if(notice.kind<0)continue;
         notice.elapsed+=delta;
-        const bool healing=notice.kind==0;
-        int u=317,v=77,w=66,h=24,alpha=255;
-        if(healing) {
+        int u,v,w,h,alpha=255;
+        if(notice.kind<=int(StageItemLabel::Bomb)) {
+            constexpr std::array widths{66,131,116};
+            u=317;v=77+25*notice.kind;w=widths[notice.kind];h=24;
             const int age=int32_t(notice.elapsed)>>8;
             if(age>=60){notice={};continue;}
             // 1b5fd0 truncates the 8.8 movement product before adding it.
@@ -45,7 +46,7 @@ void StageItemNotices::visit(uint32_t delta,const StageCamera& camera,std::array
             // consuming several cycles in a single priority-20 visit.
             if(cell>=4){notice.animation-=16*256;cell=0;}
             constexpr std::array origin{324,380,439},width{55,58,72};
-            u=origin[notice.kind-1];w=width[notice.kind-1];v=152+32*cell;h=31;
+            u=origin[notice.kind-3];w=width[notice.kind-3];v=152+32*cell;h=31;
         }
         const auto pos=camera.project(notice.x,notice.y,-1);
         const auto scale=number(pos.scale).div({0x3f805220});

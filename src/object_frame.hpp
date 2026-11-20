@@ -22,6 +22,9 @@ struct AuxiliaryFrame {
     int32_t speedMode140=0;
     std::array<AuxiliaryOwner,2> owners{};
 };
+struct TaggedTaskPools;
+// 147558: the per-object completion check (0x4000 / 0x2000 / 0x8000 deletion flags, companion return).
+void objectCompletion(std::array<uint32_t,80>& o,const AuxiliaryFrame&,TaggedTaskPools&);
 //1207e8 copies78 object words, two clock flags and draw kind. Word140 is
 //retained queue storage; beginFrame must only reset count, not erase slots.
 struct ObjectDrawQueue {

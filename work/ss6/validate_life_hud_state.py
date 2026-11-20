@@ -193,7 +193,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as temp:
         f=Path(temp)/'test.cpp';f.write_text(DRIVER);app=Path(temp)/'probe'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',f,ROOT/'src/rage_gauge.cpp','-o',app],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',f,ROOT/'src/rage_gauge.cpp','-o',app],check=True)
         with ProcessPoolExecutor(4) as pool:
             matrices=list(pool.map(synthetic,[(app,pair) for pair in ((0,1),(1,0),(2,3),(3,2),(4,5),(5,4))]))
     if '--synthetic-only' in sys.argv:print(matrices);return

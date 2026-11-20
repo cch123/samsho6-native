@@ -23,7 +23,7 @@ int main(int argc,char**argv) {
     std::vector<uint8_t> pixels(640*480*4);
     while(std::cin>>s.spiritDrawFrame>>s.drawRemaining>>s.stageOption>>s.stageCursor>>s.characterDirectorVisible) {
         s.drawFrame=s.spiritDrawFrame+int(s.characterDirectorVisible);
-        for(auto& seat:s.spirits)std::cin>>seat.drawPhase>>seat.drawCount>>seat.drawCursor;
+        for(auto& seat:s.spirits)std::cin>>seat.drawPhase>>seat.drawCount>>seat.drawCursor>>seat.choiceCount;
         for(auto& seat:s.seats){seat.drawPhase=s.characterDirectorVisible?11:0;seat.drawCount=14-(s.spiritDrawFrame%13);}
         art.paint(s,pixels);
         std::cout.write(reinterpret_cast<const char*>(pixels.data()),pixels.size()).flush();
@@ -64,12 +64,18 @@ def main():
     for addr,v in ((0x32ce08,1),(0x3a9c20,0x1a00000),(0x43d064,256)):p.write(addr,v,4)
     cases=[]
     def add(a,b,option=0,stage=10,chars=0):
+        # A seat triple (phase, tick, cursor) may carry a fourth entry: 7 for the 44..47 wheel (12f8e8).
+        a=(*a,6) if len(a)==3 else a;b=(*b,6) if len(b)==3 else b
         cases.append((190+len(cases),1200-len(cases),option,stage,chars,a,b))
     for t in range(13):add((1,t,5),(1,t,5),chars=1)
     for t in (0,4,10,20,59):add((1,t,5),(1,t,5))
     for c in range(6):
         for ph,ts in [(2,(0,11,20,49,69,83,250)),(3,range(10)),(4,range(10)),(5,range(6))]:
             for t in ts:add((ph,t,c),(ph,t,(5-c)))
+    for c in range(7): # the seven-entry wheel (spirit 8 at cursor 6) on either seat
+        for ph,ts in [(1,(0,5,10)),(2,(0,11,20,49,69,83,250)),(3,range(10)),(4,range(10)),(5,range(6))]:
+            for t in ts:add((ph,t,c,7),(ph,t,5-c%6)) if c%2==0 else add((ph,t,c%6),(ph,t,c,7))
+    for c in (0,6):add((14,25,c,7),(14,35,c,7))
     for s in range(2):
         for opt in (0,1):
             for ph,ts in [(13,(0,6,20,44,70,257)),(17,range(6))]:
@@ -81,16 +87,18 @@ def main():
     count=letters=0
     with tempfile.TemporaryDirectory() as temp:
         d=Path(temp);cpp=d/'driver.cpp';exe=d/'driver';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/character_select_art.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/character_select_art.cpp',
                         ROOT/'src/versus_result_art.cpp','-o',exe],check=True)
         child=subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
         try:
             for frame,rem,opt,stage,chars,a,b in cases:
                 for addr,val in ((0x345178,0),(0x345180,0),(0x4c8280,0),(0x4c8288,rem),(0x4c3828,opt),(0x4c8d80,stage)):
                     p.write(addr,val,4)
-                for s,(_,_,c) in enumerate((a,b)):p.write(0x4c8d18+52*s+40,c,4)
+                for s,(_,_,c,n) in enumerate((a,b)):
+                    for i,v in enumerate((7,0,1,2,3,4,5,8) if n==7 else (6,0,1,2,3,4,5,0)):p.write(0x4c8d18+52*s+4*i,v,4)
+                    p.write(0x4c8d18+52*s+40,c,4)
                 p.run(0x114e80);q=[]
-                for s,(ph,t,_) in [(1,b),(0,a)]:q+=calls(p,0x1309a8,s,ph,t)[0]
+                for s,(ph,t,_,_) in [(1,b),(0,a)]:q+=calls(p,0x1309a8,s,ph,t)[0]
                 q+=calls(p,0x1353a0,frame)[0];q+=calls(p,0x12f5f0)[0]
                 if chars:
                     for s in range(2):q+=calls(p,0x12a418,s,11,14-(frame%13),0,0)[0]
@@ -103,12 +111,12 @@ def main():
                     ys,xs=np.where(np.any(got!=expected,axis=2));y,x=ys[0],xs[0]
                     Image.fromarray(expected).save('/private/tmp/ss6-spirit-original.png');Image.fromarray(got).save('/private/tmp/ss6-spirit-native.png')
                     raise AssertionError((frame,opt,stage,chars,a,b,len(ys),x,y,expected[y,x],got[y,x]))
-                if a==(2,83,1):Image.fromarray(got).save(OUT/'spirit-select-native.png')
-                if a==(20,30,0) and stage==0:Image.fromarray(got).save(OUT/'stage-select-native.png')
+                if a==(2,83,1,6):Image.fromarray(got).save(OUT/'spirit-select-native.png')
+                if a==(20,30,0,6) and stage==0:Image.fromarray(got).save(OUT/'stage-select-native.png')
         finally:child.stdin.close();child.wait()
         assert child.returncode==0
     report=dict(status='passed',original_sha256=ORIGINAL,frames=len(cases),rgba_pixels=len(cases)*640*480,
-                original_draws=count,glyph_packets=letters,scope='Original 1309a8, 1353a0, 12f5f0, all six factory names/descriptions on both wheels, eleven stage choices, both binary options/owners, two concurrent directors, original 24px Japanese labels from emitted GS packets. Native software RGBA. No hardware readback.')
+                original_draws=count,glyph_packets=letters,scope='Original 1309a8, 1353a0, 12f5f0, all six factory names/descriptions on both wheels, the seven-entry 44..47 wheel (spirit 8, cursors 0..6) on either seat, eleven stage choices, both binary options/owners, two concurrent directors, original 24px Japanese labels from emitted GS packets. Native software RGBA. No hardware readback.')
     (OUT/'spirit-select-art-validation.json').write_text(json.dumps(report,indent=2)+'\n');print(report)
 
 if __name__=='__main__':main()

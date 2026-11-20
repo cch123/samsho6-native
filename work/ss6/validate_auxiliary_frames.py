@@ -4,7 +4,7 @@
 The three phases are composed explicitly. This is not a whole140270 frame,
 original trigger proof, or a native GS/audio backend validation.
 """
-import collections, hashlib, itertools, json, random, struct, subprocess, sys
+import collections, hashlib, itertools, json, random, struct, subprocess, sys, tempfile
 from pathlib import Path
 from mips_probe import Probe, signed
 from extract_collision_tables import SOURCE_HASH
@@ -127,6 +127,8 @@ def main():
    i,state=args;a=A+i*0xf2c;running=state>=71
    p.write(a+0x194,1|(state<<16),4);p.write(a+0x28c,0,4);p.write(a+0x2b8,0x4df0b0 if running else 0x4df088,4)
    p.write(a+0x26c,state-(71 if running else 68),4);result=oh(run(0x16d9c8,[a]))
+  elif name=='actor-attachment':
+   i,=args;result=oh(run(0x16d9c8,[A+i*0xf2c]))
   elif name=='slash-effect':
    i,=args;a=A+i*0xf2c
    p.write(a+0x194,1|(80<<16),4);p.write(a+0x28c,0,4);p.write(a+0x2b8,0x4df150,4)
@@ -192,6 +194,48 @@ def main():
   aid=(ASSETS/f'aid_{c:02}.bin').read_bytes();act=(ASSETS/f'act_{c:02}.bin').read_bytes()
   p.memory[0x46a9b0+slot*0x1800:0x46a9b0+(slot+1)*0x1800]=aid;p.memory[ACT[slot]:ACT[slot]+len(act)]=act
   p.write(0x4751b0+slot*4,ACT[slot],4);p.write(0x46a9a0+slot*4,c,4)
+ if '--victory-attachment' in sys.argv:
+  from mips_probe import idle_fixture
+  aid=(ASSETS/'aid_00.bin').read_bytes();act=(ASSETS/'act_00.bin').read_bytes()
+  source,body=idle_fixture(raw,aid,act);source.write(body+0xc8,1,4);source.write(body+0x104,0x200,4)
+  source.run(0x120390,[body,502]);source.write(body+0x30,256,4)
+  for _ in range(6):
+   assert source.read(body+0x10c,4)==0
+   source.run(0x120ac8,[body])
+  assert source.read(body+0x28,4)==1 and source.read(body+0x104,4)&0x18000==0x8000
+  decoded=tuple(source.read(body+off,4) for off in (0x10c,0x110,0x114))
+  for side in range(2):
+   cmd('reset',side+1,0);cmd('actor',side,0x1000,0,0)
+   start=struct.unpack_from('<h',aid,502*2)[0]
+   record=ACT[side]+(start+1)*60
+   assert p.read(record,4)&0x400
+   action,dx,dy=struct.unpack_from('<3h',p.memory,record+0x2e)
+   assert (action,dx,dy)==decoded==(508,0,0)
+   # Pass the request published by the original body clock to the actor-owned registry.
+   for off,v in [(0x10c,action),(0x110,dx),(0x114,dy),(0x104,0x8000)]:cmd('parent',side,off,v)
+   cmd('actor-attachment',side);check(('birth',side));assert result
+   cmd('draw',side);check(('commit',side));child=optr(result)
+   assert p.read(child+0x24,4)==508 and p.read(child+0xcc,4)==6
+   steps={0};last=0
+   for t in range(400):
+    cmd('tick')
+    if not p.read(reg(side),4):check(('retired',side));break
+    step=p.read(child+0x28,4);steps.add(step)
+    if step!=last:check(('record',side,step));last=step
+   else:raise AssertionError('Victory effect failed to retire')
+   assert len(steps)==27
+   traces.append(dict(player=side+1,source_record=start+1,action=action,records=len(steps),updates=t+1));flush()
+  with tempfile.TemporaryDirectory() as tmp:
+   exe=Path(tmp)/'live';library=BIN.parent/'libss6-runtime.a'
+   subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',Path(__file__).with_name('cpu_victory_attachment_probe.cpp'),library,'-o',exe],check=True)
+   first,last,count,n,ticks,wins,losses,visible,maxPixels=map(int,subprocess.check_output([exe,ASSETS],text=True).split())
+  report=dict(status='passed',cases=traces,snapshots=total,original_instructions=instructions,
+              live_level3_cpu_set=dict(first=first,last=last,draws=count,records=n,ticks=ticks,score=[wins,losses],visible_poses=visible,max_changed_pixels=maxPixels),
+              runtime_sha256=hashlib.sha256(library.read_bytes()).hexdigest(),
+              original_elf_sha256=SOURCE_HASH,native_probe_sha256=native_pin,
+              scope='Original 120390/120ac8 body playback through Haohmaru ACT502 entry 1, 16d9c8 and 16dcc0 nonzero personal attachment allocation, complete original object clocks/callbacks/draws to retirement. Full object and submitted draw records at every one of ACT508’s 27 poses. Owner placement sampled for both seats.')
+  (ROOT/'outputs/ss6-feasibility/victory-attachment-validation.json').write_text(json.dumps(report,indent=2)+'\n')
+  print(total,'victory attachment snapshots');return
  if '--slash-effect' in sys.argv:
   traces=[]
   for slot,interrupted in itertools.product(range(2),(False,True)):

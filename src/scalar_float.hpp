@@ -1,4 +1,5 @@
 #pragma once
+#include <bit>
 #include <cstdint>
 
 namespace ss6 {
@@ -17,4 +18,7 @@ struct ScalarFloat {
     ScalarFloat div(ScalarFloat other) const;
     ScalarFloat sqrt() const;
 };
+// EE add.s / sub.s on host floats (rounding toward zero, ScalarFloat model).
+inline float eeAdd(float a,float b){return std::bit_cast<float>(ScalarFloat{std::bit_cast<uint32_t>(a)}.add(ScalarFloat{std::bit_cast<uint32_t>(b)}).bits);}
+inline float eeSub(float a,float b){return std::bit_cast<float>(ScalarFloat{std::bit_cast<uint32_t>(a)}.sub(ScalarFloat{std::bit_cast<uint32_t>(b)}).bits);}
 } // namespace ss6

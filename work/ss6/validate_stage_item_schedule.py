@@ -72,7 +72,7 @@ def main():
     counts=Counter();sides=set();anchors=set();cooldowns=set();instructions=0
     with tempfile.TemporaryDirectory() as tmp:
         src=Path(tmp)/'probe.cpp';exe=Path(tmp)/'probe';src.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,LIB,'-o',exe],check=True)
         raw=subprocess.run([exe,ASSETS],input=''.join(' '.join(map(str,row))+'\n' for row in inputs),
                            capture_output=True,check=True,text=True)
     for i,(row,line) in enumerate(zip(inputs,raw.stdout.splitlines(),strict=True)):

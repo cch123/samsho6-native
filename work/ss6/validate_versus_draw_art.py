@@ -139,7 +139,7 @@ def main():
                 comparison='Original EE object init, playback, draw and CLUTs. Final GS caption packet vertices independently sampled on patterned 640x480 RGBA. Software reference; no physical PS2 video capture.')
     with tempfile.TemporaryDirectory() as d:
         src=Path(d)/'driver.cpp';src.write_text(DRIVER);exe=Path(d)/'driver'
-        subprocess.run(['c++','-std=c++20','-O2','-I',str(ROOT/'src'),str(src),str(ROOT/'src/versus_draw_art.cpp'),str(ROOT/'src/action_runtime.cpp'),str(ROOT/'src/native_scene.cpp'),str(LIB),'-o',str(exe)],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',str(ROOT/'src'),str(src),str(ROOT/'src/versus_draw_art.cpp'),str(ROOT/'src/action_runtime.cpp'),str(ROOT/'src/native_scene.cpp'),str(LIB),'-o',str(exe)],check=True)
         proc=subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
         try:
             for slot in [0,1]:

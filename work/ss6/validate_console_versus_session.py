@@ -215,7 +215,7 @@ def main():
         tmp=Path(td)
         (tmp/'main.cpp').write_text(DRIVER)
         exe=tmp/'test'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',tmp/'main.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',tmp/'main.cpp',
                         ROOT/'src/console_versus_session.cpp',ROOT/'src/game_random.cpp','-o',exe],check=True)
         output=subprocess.run([exe],input=''.join(' '.join(map(str,row))+'\n' for row in inputs),
                               text=True,capture_output=True,check=True).stdout

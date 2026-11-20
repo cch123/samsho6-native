@@ -26,6 +26,8 @@ struct CollisionPlayer {
 class CollisionTables {
 public:
     explicit CollisionTables(const std::filesystem::path& assets);
+    uint8_t projectileFlags(unsigned descriptor) const {return projectileFlags_.at(descriptor);}
+    bool sharesProjectileHitstop(unsigned character,unsigned action) const;
     bool usesAttackDamage(unsigned type,unsigned profile=0) const; // second byte of the JDG class row at 14da48
     uint8_t captureIndex(unsigned type,unsigned profile) const {return classByte(type,profile,1);}
     uint8_t classFor(uint32_t rawType,unsigned profile=0) const;
@@ -33,7 +35,12 @@ public:
 private:
     uint8_t classByte(unsigned type,unsigned profile,unsigned offset) const;
     std::array<uint8_t,460> bytes_{};
-    std::array<std::array<uint8_t,64>,3> characterClasses_{};
+    std::array<uint8_t,190> projectileFlags_{};
+    std::array<uint8_t,22*4> sharedHitstop_{};
+    // Indexed by character profile (+18). Only admitted fighters are loaded;
+    // a missing profile must fail instead of reading resource-00 classes.
+    std::array<std::array<uint8_t,64>,51> characterClasses_{};
+    std::array<bool,51> loaded_{};
 };
 struct ContactSide {
     uint16_t judgmentFlags;

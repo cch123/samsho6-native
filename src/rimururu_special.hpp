@@ -9,7 +9,6 @@ struct GroundStateFrame;
 struct StageCamera;
 
 bool updateRimururuSpecial(PlayerObject&,StateEntryActor&,const ActorCommandInput&,const GroundStateFrame&);
-uint8_t rimururuIceContactFlags(unsigned descriptor);
 void spawnRimururuIce(AuxiliaryObjects&,TaggedTaskPools&,std::span<uint32_t> registry,unsigned slot,
                       const StateEntryActor&,const AuxiliaryObject& parent);
 void updateRimururuIce(AuxiliaryObjects&,TaggedTaskPools&,uint32_t task,const StageCamera&,unsigned ownerAction);

@@ -245,7 +245,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         tmp=Path(tmp);source=tmp/'driver.cpp';source.write_text(DRIVER)
         exe=tmp/'audio';pcm=tmp/'audio.raw'
-        subprocess.run(['c++','-std=c++20','-O2','-I',SOURCE,source,SOURCE/'combat_audio.cpp',SOURCE/'combat_music.cpp',SOURCE/'combat_sound_bank.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',SOURCE,source,SOURCE/'combat_audio.cpp',SOURCE/'combat_music.cpp',SOURCE/'combat_sound_bank.cpp','-o',exe],check=True)
         result=subprocess.run([exe,RES,pcm],input='\n'.join(commands)+'\n',text=True,capture_output=True,check=True)
         returns=list(map(int,result.stdout.split()))
         for idx,(got,want) in enumerate(zip(returns,expected,strict=True)):

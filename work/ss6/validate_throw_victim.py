@@ -137,7 +137,7 @@ def main():
     assert lengths=={"ACT404":33,"ACT405":33,"ACT406":49,"ACT407":49}
     with tempfile.TemporaryDirectory() as tmp:
         cpp=Path(tmp)/'probe.cpp';cpp.write_text(DRIVER);exe=Path(tmp)/'probe'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/throw_victim.cpp',WORK/'build-native/libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/throw_victim.cpp',WORK/'build-native/libss6-runtime.a','-o',exe],check=True)
         result=subprocess.run([exe,ASSETS],input='\n'.join(commands)+'\n',text=True,capture_output=True)
         for index,(line,want) in enumerate(zip(result.stdout.splitlines(),expected)):
             got=list(map(int,line.split()))

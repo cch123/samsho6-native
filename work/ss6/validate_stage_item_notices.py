@@ -21,9 +21,9 @@ DRIVER=r'''
 void emit(uint32_t v){std::cout.write(reinterpret_cast<const char*>(&v),4);}
 int main(int,char** argv) {
     ss6::StageItemNotices notices;ss6::StageItemNoticeArt art(argv[1]);ss6::StageCamera camera;
-    int count,x,rate,firstX,secondX,firstCPU,secondCPU,depth,full;
+    int count,x,kind,rate,firstX,secondX,firstCPU,secondCPU,depth,full;
     while(std::cin>>count) {
-        for(int i=0;i<count;++i){std::cin>>x;emit(notices.heal(x));}
+        for(int i=0;i<count;++i){std::cin>>kind>>x;emit(notices.show(ss6::StageItemLabel(kind),x));}
         std::cin>>rate>>firstX>>secondX>>firstCPU>>secondCPU>>depth>>full;
         std::cin>>camera.projectionX>>camera.projectionY>>camera.depth>>camera.depthOffset>>camera.verticalOffset;
         notices.visit(rate,camera,{firstX,secondX},{bool(firstCPU),bool(secondCPU)},depth);
@@ -45,6 +45,7 @@ int main(int,char** argv) {
 def inputs():
     for t in range(180):
         new={1:[243],12:[325],17:list(range(205,305,10)),18:[312],99:[284,285],160:[-40,820]}.get(t,[])
+        new=[((t+j)%3,x) for j,x in enumerate(new)]
         x0=(257 if t<35 else 270) if 5<=t<65 else 228 if 81<=t<129 else -1
         x1=330 if 7<=t<43 else 355 if 55<=t<130 else -1
         cpu=(int(t>=70),int(t>=51));rate=0 if 20<=t<=24 else 128 if 35<=t<=59 else 256
@@ -73,13 +74,13 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as tmp:
         cpp=Path(tmp)/'notice.cpp';cpp.write_text(DRIVER);exe=cpp.with_suffix('')
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/stage_item_notices.cpp',LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/stage_item_notices.cpp',LIB,'-o',exe],check=True)
         cases=list(inputs());cmd=''
-        for new,delta,x0,x1,c0,c1,depth,full,cam in cases:cmd+=' '.join(map(str,[len(new),*new,delta,x0,x1,c0,c1,depth,int(full),*cam]))+'\n'
+        for new,delta,x0,x1,c0,c1,depth,full,cam in cases:cmd+=' '.join(map(str,[len(new),*(v for pair in new for v in pair),delta,x0,x1,c0,c1,depth,int(full),*cam]))+'\n'
         buf=subprocess.run([exe,ASSETS],input=cmd.encode(),capture_output=True,check=True).stdout
     p=original();p.run(0x1b5b08,limit=100000);p.write(0x4c3808,3,4)
     battle=0x1c30000;p.write(0x4d3d00,battle,4);p.memory[battle:battle+0x500]=bytes(0x500)
-    tex=atlas()[10];accepted=dropped=packetsSeen=frames=n=0;pos=0;images={};full_slots=False
+    tex=atlas()[10];soundsEmitted=accepted=dropped=packetsSeen=frames=n=0;pos=0;images={};full_slots=False
     for tick,(new,delta,x0,x1,c0,c1,depth,full,cam) in enumerate(cases):
         for a,f in zip((0x4a2a58,0x4a2a5c,0x4a2a60,0x4a2a6c,0x4a2a68),cam):
             struct.pack_into('<f',p.memory,a,f)
@@ -89,13 +90,15 @@ def main():
             p.write(battle+0x29c+i*0x108,ptr if x>=0 else 0,4)
             p.write(ptr+0x1c,o,4);p.write(o+0xcc,4,4);struct.pack_into('<2f',p.memory,o+0x40,x,0)
             p.write(p.read(0x4d3d08,4)+i*0xf2c+0xa20,cpu,4)
-        for x in new:
+        for kind,x in new:
+            free=any(not p.read(0x132c4c8+i*0xac+0x24,4) for i in range(10))
             sounds=[]
             def sound(pc):
                 if pc==0x1e7b70:sounds.append((p.registers[4]&0xffffffff,p.registers[5]))
-            _,ins=p.run(0x1b5b80,[0,x,80],limit=200000,observe=sound);n+=ins
+            _,ins=p.run(0x1b5b80,[kind,x,80],limit=200000,observe=sound);n+=ins
             ok,=struct.unpack_from('<I',buf,pos);pos+=4
-            assert sounds==([(0xffffffff,65)] if ok else []),(tick,x,ok,sounds)
+            assert bool(ok)==free and sounds==([(0xffffffff,65)] if free and kind==0 else []),(tick,kind,x,ok,sounds)
+            soundsEmitted+=len(sounds)
             accepted+=ok;dropped+=1-ok
         p.write(0x46a908,delta,4);p.write(0x3db8f4,depth,4)
         for a in (0x345178,0x378e08,0x3db8f8):p.write(a,0,4)
@@ -122,7 +125,7 @@ def main():
     assert pos==len(buf) and dropped and full_slots
     doc=dict(status='passed',elf_sha256=PIN,runtime_sha256=digest(LIB),module_sha256=digest(ROOT/'src/stage_item_notices.cpp'),
              atlas_sha256=digest(ASSETS/'obj2_16.tex'),updates=len(cases),packets=packetsSeen,full_images=frames,pixels=frames*640*448,
-             accepted_with_se65=accepted,refused_without_sound=dropped,all_ten_slots=True,original_instructions=n,images=images,
-             scope='Native slot gate, raw delta 0/128/256, 60-visit healing rise/fade, 4-cell weapon indicators for both human sides/CPU, weapon motion after indicator creation, overlapping, saturation, slot reuse, offscreen culling, three cameras, EE submitted clut/geometry and final pixels on a known patterned background. Camera, gameplay recovery and ground weapon pointers are supplied by fixture.')
-    OUT.write_text(json.dumps(doc,indent=2)+'\n');print(frames,'images',packetsSeen,'packets',accepted,'sounds',dropped,'refused')
+             accepted_labels=accepted,healing_sounds=soundsEmitted,refused_without_sound=dropped,all_ten_slots=True,original_instructions=n,images=images,
+             scope='Native slot gate, raw delta 0/128/256, 60-visit healing, defense-down and bomb rise/fade, 4-cell weapon indicators for both human sides/CPU, weapon motion after indicator creation, overlapping, saturation, slot reuse, offscreen culling, three cameras, EE submitted clut/geometry and final pixels on a known patterned background. Camera, gameplay recovery and ground weapon pointers are supplied by fixture.')
+    OUT.write_text(json.dumps(doc,indent=2)+'\n');print(frames,'images',packetsSeen,'packets',accepted,'labels',soundsEmitted,'sounds',dropped,'refused')
 if __name__=='__main__':main()

@@ -15,7 +15,7 @@ public:
     explicit CombatAudio(const std::filesystem::path& assets);
     int play(int bank,int tone);
     void bindPlayers(std::array<unsigned,2> ids){players_=ids;clearVoices();}
-    int playVoice(int character,int tone);
+    int playVoice(int character,int tone,unsigned voiceVariant=0);
     int playResidentJingle(int tone,int volumeCode);
     void preloadMusic(int variant,int track);
     void startMusic(int volume);

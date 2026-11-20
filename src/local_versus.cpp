@@ -3,6 +3,12 @@
 #include <stdexcept>
 
 namespace ss6 {
+std::array<bool,2> versusCpuSeats(std::string_view name) {
+    if(name=="p1")return {true,false};
+    if(name=="p2")return {false,true};
+    if(name=="both")return {true,true};
+    throw std::invalid_argument("--cpu expects p1, p2 or both");
+}
 unsigned versusSpirit(std::string_view name) {
     if(name=="rage")return 0;
     if(name=="shin")return 1;
@@ -24,12 +30,21 @@ bool readVersusReplaySegment(std::istream& input,unsigned& ticks,std::array<uint
 }
 
 LocalVersus::LocalVersus(const std::filesystem::path& assets,int roundTime,VersusMode mode,std::array<unsigned,2> spirits,bool startAtSelect)
-    :assets_(assets),roundTime_(roundTime),mode_(mode),spirits_(spirits),startAtSelect_(startAtSelect),
-     match_(std::make_unique<NativeMatch>(assets,roundTime,mode,nullptr,spirits_)) {if(startAtSelect_)match_->openCharacterSelect(true); }
+    :LocalVersus(assets,roundTime,mode,spirits,startAtSelect?VersusEntry::CharacterSelect:VersusEntry::Fight) {}
+
+LocalVersus::LocalVersus(const std::filesystem::path& assets,int roundTime,VersusMode mode,
+                         std::array<unsigned,2> spirits,VersusEntry entry,std::array<bool,2> cpuSeats)
+    :assets_(assets),roundTime_(roundTime),mode_(mode),spirits_(spirits),entry_(entry),cpuSeats_(cpuSeats) {restart();}
+
+void LocalVersus::configureControllers(NativeMatch& match) const {
+    for(unsigned seat=0;seat<2;++seat)if(cpuSeats_[seat])match.enableCpu(seat);
+}
 
 void LocalVersus::restart() {
     match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
-    if(startAtSelect_)match_->openCharacterSelect(true);
+    if(entry_==VersusEntry::Fight)configureControllers(*match_);
+    if(entry_==VersusEntry::CharacterSelect)match_->openCharacterSelect(true);
+    if(entry_==VersusEntry::Title)match_->openTitle(false);
     matchNumber_=1;
 }
 void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
@@ -43,7 +58,8 @@ void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
     if(match_->faceoff()&&match_->faceoff()->complete) {
         auto next=std::make_unique<NativeMatch>(assets_,-1,mode_,match_.get(),std::array<unsigned,2>{},
                                                 match_->selectedLineup(),match_->characterSelect()->stage);
-        if(!(startAtSelect_ && match_->updates==0))++matchNumber_;
+        configureControllers(*next);
+        if(entry_==VersusEntry::Fight || match_->updates!=0)++matchNumber_;
         match_=std::move(next);
         return;
     }
@@ -52,6 +68,7 @@ void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
         // The fade task creates the new fight after the old fight's update.
         // Its opening first receives a controller sample on the following tick.
         auto next=std::make_unique<NativeMatch>(assets_,-1,mode_,match_.get());
+        configureControllers(*next);
         match_=std::move(next);
         ++matchNumber_;
     }

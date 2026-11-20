@@ -8,6 +8,7 @@ namespace ss6 {
 struct PermissionActor : SelectionActor,ActorContactHistory {
     uint8_t stateFlags19a=0,aliasFlags1aa=0;
     uint32_t bodyFlags108=0,bodyState128=0,bodyLatch12c=0,auxiliaryAction24=0,auxiliaryState12c=0;
+    uint32_t bodyCounter130=0; // body+0x130, zeroed by 165a78 and counted by Gaira's 1f3db8
     uint32_t sampledButton9=0; //Actor+2e8, feature9 at input owner+24.
     std::array<int32_t,35> timers{};
     int32_t timerDelta=256;
@@ -44,6 +45,7 @@ class InputPermissions {
 public:
     explicit InputPermissions(const std::filesystem::path& assets);
     bool condition(unsigned id,PermissionActor&,const PermissionActor& opponent,const InputSystemConfig&,PermissionContext&) const;
+    int characterFrontRange(unsigned character) const {return targetRanges_.at(character)[2];} // 168cb8(1)
     static bool objectAvailable(unsigned key,const PermissionContext&);
     static bool actorAllowed(const PermissionActor&); //179e38
     bool category(unsigned id,const PermissionActor&) const; //179e68

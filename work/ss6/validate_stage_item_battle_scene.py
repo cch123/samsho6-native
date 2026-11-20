@@ -9,6 +9,7 @@ from pathlib import Path
 import struct
 import subprocess
 import tempfile
+import numpy as np
 
 from PIL import Image
 from extract_versus_quotes import ORIGINAL
@@ -16,6 +17,7 @@ from validate_selected_combat import BUILD, CAPTURE, LIB, OUT, ROOT, SOURCE, cap
 from validate_ten_element import CHILD, PARENT
 from validate_thrown_stage_items import compile_probe
 from validate_weapon_handling import setup
+from validate_stage_item_notices import original as notice_original, atlas, raster
 
 LINEUP=(0,1)
 FIELDS=CHILD+(0x10c,0x110,0x114)
@@ -50,6 +52,9 @@ int main(int argc,char**argv){try{
             if(o[51]!=7||(o[9]!=4&&o[9]!=5&&o[9]!=6)||o[0x118/4]!=victim+1)continue;
             out(task[0]);out(o[0x118/4]);for(unsigned off:ELEMENT_FIELDS)out(o[off/4]);
         }
+        for(float v:{b.camera.projectionX,b.camera.projectionY,b.camera.depth,b.camera.depthOffset,b.camera.verticalOffset})
+            out(std::bit_cast<uint32_t>(v));
+        for(unsigned side=0;side<2;++side)out(int(m.fighter(side).body.timeline.motion().x));
         std::cout<<'\n';
     }
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
@@ -70,6 +75,36 @@ def pads(side=None,early=False):
         if side==1:hold(2514,1,0,2304)
     return controls
 
+
+def bomb_overlays(rows,geometry,ticks):
+    p=notice_original();p.run(0x1b5b08,limit=100000);p.write(0x4c3808,3,4)
+    battle=0x1c30000;p.write(0x4d3d00,battle,4);p.memory[battle:battle+0x500]=bytes(0x500)
+    texture=atlas()[10];images={}
+    for t in range(2536,max(ticks)+1):
+        before,now=rows[t-1],rows[t]
+        coords=geometry[t-1]
+        for off,val in zip((0x4a2a58,0x4a2a5c,0x4a2a60,0x4a2a6c,0x4a2a68),coords):
+            p.write(off,val,4)
+        struct.pack_into('<f',p.memory,0x4a2a64,-160)
+        p.write(0x46a908,before[35],4);p.write(0x3db8f4,100,4)
+        for off in (0x345178,0x378e08,0x3db8f8):p.write(off,0,4)
+        packets=[]
+        def observe(pc):
+            if pc==0x108464:
+                ptr=p.read(p.registers[19]+24,4)
+                packets.append([struct.unpack_from('<5fI',p.memory,ptr+24*i) for i in range(4)])
+        p.run(0x1b5e30,limit=500000,observe=observe)
+        if packets and t in ticks:
+            def paint(pixels,quads=packets):
+                return raster(quads,texture,np.frombuffer(pixels,dtype=np.uint8).reshape(448,640,4)).tobytes()
+            images[t]=(min(v[2] for q in packets for v in q),paint)
+        # The bomb touches after priority 20. Its notice first appears on
+        # the next update and samples the victim before their recoil movement.
+        for side in range(2):
+            if before[7+side]>now[7+side]:
+                assert 55<=before[23]<=56
+                p.run(0x1b5b80,[2,coords[5+side],80])
+    return images
 
 def check_element(rows,victim):
     src,_=setup(victim,LINEUP[victim]);p,a,o,b=src.p,src.a,src.o,src.b
@@ -147,7 +182,8 @@ def main(opt):
     hashes={key:sha256(f.read_bytes()).hexdigest() for key,f in [('runtime',LIB),('viewer',viewer)]}
     cases=[];pixel_counts=Counter()
     with tempfile.TemporaryDirectory() as td:
-        tmp=Path(td);watch=compile_probe(tmp,'watch',DRIVER);draw=compile_probe(tmp,'draw',CAPTURE)
+        tmp=Path(td);watch=compile_probe(tmp,'watch',DRIVER);draw=compile_probe(tmp,'draw',CAPTURE.replace(
+            'scene.paint(m,rgba,','scene.paint(q,{b.camera,{b.gauges.words910[2],b.gauges.words910[3]},b.gauges.focus46a948},b.paletteState,b.gauges.paletteTones,rgba,'))
         p=fixture((*LINEUP,51))
         for bank,name in enumerate(('01HitFlash.bin','02Guard.bin','03etc.bin'),1):
             at=0x4a4810+(bank-1)*0x3da0;p.memory[at:at+0x3da0]=(SOURCE/name).read_bytes()
@@ -156,6 +192,8 @@ def main(opt):
             data=subprocess.run([watch,assets,str(victim)],input=''.join(f'{a} {b}\n' for a,b in controls).encode(),
                                 check=True,capture_output=True).stdout
             rows={r[0]:r for r in (list(map(int,line.split())) for line in data.splitlines())}
+            geometry={t:r[-7:] for t,r in rows.items()}
+            rows={t:r[:-7] for t,r in rows.items()}
             assert rows[2361][1]==1 and rows[2361][23:25]==[0,0] and rows[2361][29]==2
             assert rows[2362][23]==76 and rows[2362][29]==2
             assert rows[2541][23]==(55 if side is None else 56)
@@ -172,8 +210,9 @@ def main(opt):
             if side is not None and not early:result['element']=check_element(rows,victim)
             targets={'p1-throw':[(2366,76),(2536,78),(2547,56),(2556,4),(2575,5)],
                      'p2-throw':[(2536,78),(2548,56)],'early-bounce':[(2448,133)],'ground':[(2549,55)]}[name]
+            overlays=bomb_overlays(rows,geometry,[t for t,_ in targets])
             for tick,act in targets:
-                frame=capture(draw,viewer,assets,tmp,p,LINEUP,controls,tick-1,{'slot':2,'action':act,'steps':[]},pixel_counts)
+                frame=capture(draw,viewer,assets,tmp,p,LINEUP,controls,tick-1,{'slot':2,'action':act,'steps':[]},pixel_counts,overlays.get(tick))
                 result.setdefault('frames',[]).append(frame)
                 if name=='p1-throw' and tick==2547:
                     snapshot=tmp/'window.bmp'

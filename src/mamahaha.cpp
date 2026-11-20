@@ -49,9 +49,11 @@ bool enter(AuxiliaryObjects& objects,Object& o,const Object& body,const StateEnt
     case 5:request(775);break;
     case 6:copyFacing(o,body);request(776+o[0x130/4]);break;
     case 7:copyFacing(o,body);o[0x104/4]&=~0x800000u;request(779);break;
-    case 8:o[0x40/4]=body[0x40/4];o[0x44/4]=body[0x44/4];copyFacing(o,body);request(786);break;
-    case 9:
-        if(!armed||(finalWin&&owner.fieldA30<100)){o[0x108/4]|=finished;cmd=previous;}
+    case 8: // 1ed900: Purple Nakoruru's body (resource 42) or character 45 is ready at once, command 0
+        if(body[0x14/4]==42||owner.character==45){o[0x108/4]|=finished;cmd=0;break;}
+        o[0x40/4]=body[0x40/4];o[0x44/4]=body[0x44/4];copyFacing(o,body);request(786);break;
+    case 9: // 1ed960: for resource 42 the winner's HP test is inverted
+        if(!armed||(finalWin&&((body[0x14/4]==42)==(owner.fieldA30>=100)))){o[0x108/4]|=finished;cmd=previous;}
         else if(finalWin)perch(40,64,781);
         else perch(-41,76,780);
         break;

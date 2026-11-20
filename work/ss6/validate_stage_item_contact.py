@@ -233,7 +233,7 @@ def main():
     cases += [(s,s,1,k,0,b) for s in range(2) for k,b in [(-1,0),(-1,1),(-1,2),(-1,3),(3,1),(6,3)]]
     with tempfile.TemporaryDirectory() as temp:
         path=Path(temp);exe=path/'contact';probe=path/'contact.cpp';probe.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',probe,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',probe,LIB,'-o',exe],check=True)
         run=subprocess.run([exe,ASSETS],text=True,capture_output=True,input=''.join(' '.join(map(str,c))+'\n' for c in cases))
         assert run.returncode==0,run.stderr
         native=run.stdout.split('.\n');assert len(native)==len(cases)+1

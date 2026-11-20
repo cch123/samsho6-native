@@ -1,5 +1,6 @@
 #include "collision.hpp"
 #include "fighter_resource_path.hpp"
+#include "fighter_roster.hpp"
 #include <fstream>
 #include <stdexcept>
 #include <utility>
@@ -13,20 +14,35 @@ CollisionTables::CollisionTables(const std::filesystem::path& assets) {
     std::ifstream in(assets/"collision_00.bin",std::ios::binary);
     if (!in.read(reinterpret_cast<char*>(bytes_.data()),bytes_.size()) || in.peek()!=EOF)
         throw std::runtime_error("Missing or invalid resource-00 collision tables");
-    for(unsigned id=1;id<=characterClasses_.size();++id) {
-        auto& table=characterClasses_[id-1];
+    auto readProjectileTable=[&](const char* name,auto& bytes) {
+        std::ifstream f(assets/name,std::ios::binary);
+        if(!f.read(reinterpret_cast<char*>(bytes.data()),bytes.size()) || f.peek()!=EOF)
+            throw std::runtime_error("Missing or invalid projectile table: "+std::string(name));
+    };
+    readProjectileTable("projectile_descriptor_flags.bin",projectileFlags_);
+    readProjectileTable("projectile_hitstop.bin",sharedHitstop_);
+    for(unsigned id:playableFighterIds) {
+        if(!id)continue;
+        auto& table=characterClasses_.at(id);loaded_[id]=true;
         const auto path=fighterResourcePath(assets,"collision",id);
         std::ifstream f(path,std::ios::binary);
         if(!f.read(reinterpret_cast<char*>(table.data()),table.size())||f.peek()!=EOF)
             throw std::runtime_error("Invalid fighter collision table: "+path.string());
     }
 }
+bool CollisionTables::sharesProjectileHitstop(unsigned character,unsigned action) const {
+    // 1690b0 stores an 8-bit resource and a little-endian 16-bit ACT per row.
+    for(size_t i=0;i<sharedHitstop_.size();i+=4)
+        if(sharedHitstop_[i]==character && (sharedHitstop_[i+2]|unsigned(sharedHitstop_[i+3])<<8)==action)return true;
+    return false;
+}
 uint8_t CollisionTables::classByte(unsigned type,unsigned profile,unsigned offset) const {
     if(type>=64)throw std::out_of_range("Invalid six-bit JDG type");
     if(type<36)return bytes_[type*2+offset];
     const auto local=(type-36)*2+offset;
     if(profile==0)return bytes_[396+local];
-    return characterClasses_.at(profile-1)[local];
+    if(profile>=loaded_.size()||!loaded_[profile])throw std::runtime_error("Unsupported character collision profile");
+    return characterClasses_[profile][local];
 }
 uint8_t CollisionTables::classFor(uint32_t type,unsigned profile) const {
     const auto category=classByte(type,profile,0);

@@ -209,7 +209,7 @@ def main():
         tmp=Path(tmp)
         (tmp/'probe.cpp').write_text(RUNNER)
         binary=tmp/'probe'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',tmp/'probe.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',tmp/'probe.cpp',
                         ROOT/'src/damage.cpp',ROOT/'src/scalar_float.cpp','-o',binary],check=True)
         result = subprocess.run([binary,ASSETS],input='\n'.join(commands)+'\n',
                                 capture_output=True,text=True,check=True)

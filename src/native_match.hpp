@@ -1,6 +1,10 @@
 #pragma once
+#include "kazuki_fire.hpp"
+#include "projectile_engine.hpp"
 #include "round_dispatcher.hpp"
 #include "human_input.hpp"
+#include "cpu_tactics.hpp"
+#include <memory>
 #include "combat_decision.hpp"
 #include "sound_selection.hpp"
 #include "rage_gauge.hpp"
@@ -8,6 +12,7 @@
 #include "fighter_identity_hud.hpp"
 #include "combat_stage_state.hpp"
 #include "character_select.hpp"
+#include "console_title.hpp"
 #include "versus_faceoff.hpp"
 
 namespace ss6 {
@@ -31,14 +36,24 @@ struct MatchFighter {
     ActorInputSampling sampling;
     unsigned hits=0,guards=0;
 };
+// Called at the CPU's actual actor visit. The other seat may have already
+// advanced this tick, so a single precomputed pair of per-tick inputs would
+// lose an observation available to the original player-two decision.
+using CpuSeatDecision=std::function<CpuCommand(MatchFighter&,const MatchFighter&,BattleRoundState&)>;
 class NativeMatch {
 public:
     explicit NativeMatch(const std::filesystem::path& assets,int roundTime=-1,VersusMode mode=VersusMode::FixedMatch,
                          const NativeMatch* rematchFrom=nullptr,std::array<unsigned,2> spirits={},
-                         std::optional<VersusLineup> selection={},int selectedStage=0);
+                         std::optional<VersusLineup> selection={},int selectedStage=0,
+                         std::array<CpuSeatDecision,2> cpuSeats={});
     NativeMatch(const NativeMatch&)=delete;
     NativeMatch& operator=(const NativeMatch&)=delete;
     void tick(const std::array<NormalizedPadSample,2>& pads);
+    // Configure a native decision maker before the first battle tick. Each seat has its own AI level.
+    void enableCpu(unsigned seat,int level=4);
+    void openTitle(bool returningFromVersus);
+    const auto& title() const {return title_;}
+    bool titlePromptVisible() const {return promptClock_<60;}
     void openCharacterSelect(bool boot=false);
     void leaveUnportedFight(const UnportedFighterState&);
     const std::string& missingMove() const {return missingMove_;}
@@ -68,6 +83,12 @@ public:
     bool finished=false;
 private:
     void enterSelectAudio();
+    void enterTitleAudio();
+    std::optional<ConsoleTitle> title_;
+    bool titleAudioPending_=false;
+    int titleFadeTick_=0;
+    unsigned promptClock_=0;
+    std::filesystem::path assets_;
     VersusLineup lineup_;
     std::array<unsigned,3> resourceSlots_;
     std::array<ActionBank,2> banks_;
@@ -78,6 +99,10 @@ private:
     bool fromFaceoff_=false;
     std::string missingMove_;
     std::array<MatchFighter,2> fighters_;
+    std::array<CpuSeatDecision,2> cpuSeats_;
+    std::array<std::unique_ptr<CpuTactics>,2> cpuTactics_;
+    std::array<int,2> cpuLevels_{-1,-1};
+    CpuCommand runCpu(unsigned seat,PermissionContext&,const SelectionThreat&);
     BattleRoundState battle_;
     GroundStateRuntime ground_;
     HumanInputPipeline human_;
@@ -104,10 +129,12 @@ private:
     MatchEndingRules ending_;
     WeaponLock lock_;
     AuxiliaryObjects aux_;
+    AngleTrig angleTrig_; // angle_trig.bin (Kazuki's fire)
     DamageTables damage_;
     ReactionTables reactions_;
     std::array<JudgmentData,3> judgments_;
     CollisionTables collisions_;
+    ProjectileTable projectiles_;
     CombatTables combat_;
     RoundDispatcher rounds_;
     std::array<InputMapping,2> mappings_{};
@@ -129,8 +156,13 @@ private:
                       const AuxiliaryObject& image,ContactMarks& source,ContactMarks& target);
     enum class DamageOrigin { FighterRecord, ProjectileRecord, CaptureScript };
     void interruptConcentration(unsigned target);
+    void updateTakeLoser(unsigned player,uint32_t task);
     void scriptDamage(unsigned target,int base,DamageOrigin,int projectileCategory=10);
     bool resolveStrike(const ContactEvent&,const CollisionPlayer&,const CollisionPlayer&,ContactMarks&,ContactMarks&,uint32_t sourceHandle=0);
+    void markOffscreen(); // 142f30
+    void minaScriptEvent(unsigned player,uint8_t type); // 164c58 events 33/34
+    void scriptProjectileTask(unsigned player,uint32_t task);
+    uint32_t spawnScriptProjectileFor(unsigned player,unsigned id,unsigned variant,const ScriptRow* row);
     void updateStage();
     void visitActor(unsigned,const std::array<NormalizedPadSample,2>&);
 };

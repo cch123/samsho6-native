@@ -125,7 +125,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         src=Path(tmp)/'probe.cpp';src.write_text(DRIVER);exe=src.with_suffix('')
         names=['action_runtime','player_object','judgment','native_scene','character_draw','character_tiles']
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,*[ROOT/f'src/{x}.cpp' for x in names],
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,*[ROOT/f'src/{x}.cpp' for x in names],
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         for slots in ((0,1,51),(1,0,51)):
             p=fixture(slots)

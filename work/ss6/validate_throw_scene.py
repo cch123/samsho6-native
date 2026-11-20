@@ -22,7 +22,7 @@ def main():
         tmp=Path(folder);lib=tmp/'lib.a';shutil.copyfile(BUILD/'libss6-runtime.a',lib)
         view=tmp/'view';shutil.copy2(BUILD/'ss6-viewer',view)
         program=tmp/'probe.cpp';program.write_text(CAPTURE_DRIVER);exe=tmp/'probe'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',program,lib,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',program,lib,'-o',exe],check=True)
         for slot,kind,selected in [(0,'forward',{4:404,32:404,39:408,56:400}),
                                    (1,'back',{4:406,54:410,78:400}),
                                    (0,'break',{3:236,16:236})]:

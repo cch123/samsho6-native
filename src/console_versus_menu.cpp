@@ -124,6 +124,14 @@ std::array<int,2> ConsoleVersusMenu::tick() {
     }
     return sounds;
 }
+void ConsoleVersusMenu::beginSet(int confirmingSeat) {
+    // GameData is rebuilt on returning to title. Both ports retain their
+    // physical repeat timers; the other seat owns the ensuing stage choice.
+    session={};
+    session.originalEntrant=session.lastEntrant=1-confirmingSeat;
+    active=false;draw.visible=false;
+    destination=pending=ConsoleVersusDestination::None;
+}
 void ConsoleVersusMenu::inheritRematch(const ConsoleVersusMenu& previous) {
     // The new battle receives its own menu task only after its final round.
     // Global pad repeat, menu border animation, scores and the active black

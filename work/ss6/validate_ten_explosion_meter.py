@@ -91,7 +91,7 @@ def main():
     cases.extend(clock_cases)
     with tempfile.TemporaryDirectory() as td:
         path=Path(td);cpp=path/'probe.cpp';exe=path/'probe';cpp.write_text(CPP)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,ROOT/'src/battle_gauges.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/battle_gauges.cpp',
                         ROOT/'src/damage.cpp',ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         result=subprocess.run([exe,ASSETS],input=''.join(' '.join(map(str,c))+'\n' for c in cases),text=True,capture_output=True,check=True)
     actual=[list(map(int,line.split())) for line in result.stdout.splitlines()]

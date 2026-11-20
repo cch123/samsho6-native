@@ -45,20 +45,57 @@ int main(int argc,char** argv){try{
     out(uint32_t(0));std::cout.write(reinterpret_cast<char*>(rgba.data()),rgba.size());
 }catch(const std::exception& e){std::cerr<<e.what();return 1;}}
 '''
-def prefix(lineup):
-    pads=[[0,0] for _ in range(1250)]
+from fighter_roster import cursor_path
+
+def prefix(lineup,spirits=None):
+    pads=[[0,0] for _ in range(1250)];ends=[]
     for side,resource in enumerate(lineup):
         # From cell 2, cell 3 is one down. Cell 12 is two columns and two
         # rows up. The horizontal scroll direction mirrors for the second seat.
         forward=(128,64)[side]
         back=forward^192
-        directions={0:{66:32},1:{65:forward,76:forward,88:16,90:16},
-                    2:{62:back|16,72:back|16,82:back},3:{65:forward,76:forward,88:16}}[resource]
+        # The first five fighters keep the recorded (partly diagonal) timings
+        # that existing reference runs use; later fighters follow the shortest
+        # path to their CharacterSelect cell, one move every ten ticks.
+        # (Rimururu's recorded three-step back path only fitted the 7-column grid; on the
+        # unlocked 8-column grid she is four columns away and follows the computed path.)
+        legacy={0:{66:32},1:{65:forward,76:forward,88:16,90:16},
+                3:{65:forward,76:forward,88:16},
+                24:{62:forward|16,72:forward|16,82:forward}}
+        if resource in legacy:directions=legacy[resource]
+        elif resource==48:directions={62:8}  # Start: the Kuroko view, every cell confirms 48
+        else:
+            masks={'forward':forward,'back':back,'up':16,'down':32}
+            (col,nc),(row,nr)=cursor_path(resource)
+            # Row moves ride along with column moves (diagonals, as the
+            # recorded Rimururu path does); a column move waits 10 ticks for
+            # the page scroll, leftover rows follow 12 ticks after it, and
+            # everything lands before P2's confirmation at tick 92.
+            directions={}
+            for k in range(max(nc,nr)):
+                if k<nc:tick=62+10*k
+                elif nc:tick=62+10*(nc-1)+12+2*(k-nc)
+                else:tick=62+2*k
+                directions[tick]=(masks[col] if k<nc else 0)|(masks[row] if k<nr else 0)
         for tick,mask in directions.items():pads[tick-1][side]=mask
-    # Select one costume on each seat. Confirm both Ken spirits, let P2
-    # choose the default binary setting, then move random stage 10 to 0.
-    for tick,side,mask in ((92,1,512),(99,0,256),(245,0,1024),(249,1,1024),
-                          (280,1,1024),(310,1,128),(355,1,1024),(465,0,8)):
+        # The cursor accepts input again 10 ticks after a column move (2 after a row move).
+        last=max(directions,default=0)
+        # The Kuroko wipe blocks input for 21 updates (12db80).
+        ends.append(last+(22 if directions[last]==8 else 10 if directions[last]&192 else 2) if directions else 0)
+    # Select one costume on each seat (P2 first). A long 8-column path delays both
+    # confirmations, and every later step by the same amount; short paths keep the
+    # original ticks. Confirm both Ken spirits, let P2 choose the default binary
+    # setting, then move random stage 10 to 0.
+    p2=max(92,ends[1]);p1=max(99,ends[0],p2+7);delta=p1-99
+    # Optional spirits (system ids 0..5): the wheel opens on Ken (5), so system s takes (s+1)%6
+    # right presses (one per 12 ticks, 10 for the turn); later steps move by the same amount.
+    # 44..47 keep their single spirit 8.
+    turns=[(s+1)%6 if lineup[i] not in (44,45,46,47) else 0 for i,s in enumerate(spirits)] if spirits else [0,0]
+    for side,k in enumerate(turns):
+        for n in range(k):pads[245+delta+12*n-1][side]=128
+    delta+=12*max(turns)
+    for tick,side,mask in ((p2,1,512),(p1,0,256),(245+delta,0,1024),(249+delta,1,1024),
+                          (280+delta,1,1024),(310+delta,1,128),(355+delta,1,1024),(465+delta,0,8)):
         pads[tick-1][side]=mask
     return pads
 
@@ -68,7 +105,7 @@ def trace(exe,assets,pads):
     if result.returncode:raise RuntimeError(f'{result.stderr.strip()} at pad tick {len(result.stdout.splitlines())+1}')
     return [r.split() for r in result.stdout.splitlines()]
 
-def capture(exe,viewer,assets,work,p,lineup,pads,tick,visibility,stats):
+def capture(exe,viewer,assets,work,p,lineup,pads,tick,visibility,stats,final_overlay=None):
     selected=pads[:tick+1];packet=subprocess.run([exe,assets,*map(str,lineup)],check=True,capture_output=True,
         input=''.join(f'{x} {y}\n' for x,y in selected).encode()).stdout
     stream=io.BytesIO(packet);n,=struct.unpack('<I',stream.read(4))
@@ -91,7 +128,7 @@ def capture(exe,viewer,assets,work,p,lineup,pads,tick,visibility,stats):
         # Re-use the same original rows and backdrop for the subtraction;
         # reset its real CLUT allocator before rendering each comparison.
         stream.seek(pos)
-        report=compare(p,stream,stats,f'{lineup}-{tick+1}',pixels(scene),target,pixels(arena))
+        report=compare(p,stream,stats,f'{lineup}-{tick+1}',pixels(scene),target,pixels(arena),final_overlay=final_overlay)
         assert target['quads'] and target['visible_pixels']>0,(lineup,tick,target)
         seen.append(target.copy())
     return dict(pad_tick=tick+1,ordered_objects=n,visible=seen,rgba_sha256=report['viewer_sha256'])
@@ -105,7 +142,7 @@ def run(args):
     stats=Counter();cases=[];movement=[]
     with tempfile.TemporaryDirectory() as temp:
         tmp=Path(temp);driver=tmp/'capture';src=tmp/'capture.cpp';src.write_text(CAPTURE)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,LIB,'-o',driver],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,LIB,'-o',driver],check=True)
         for lineup in ((0,1),(1,0),(1,1)):
             p=fixture((*lineup,51))
             for bank,filename in enumerate(('01HitFlash.bin','02Guard.bin','03etc.bin'),1):

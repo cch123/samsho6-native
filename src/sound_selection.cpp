@@ -62,6 +62,9 @@ void SoundSelection::stop(uint32_t& word) {
     events_.push_back({BattleSoundKind::Stop,0,int(word&0xfff)});
     word=0;
 }
+void SoundSelection::cutVoice(uint32_t word) {
+    if(word&0x8000)events_.push_back({BattleSoundKind::Stop,0,int(word&7)});
+}
 void SoundSelection::voice(int character,int tone) {
     events_.push_back({BattleSoundKind::Voice,character,tone});
     // 213378 keys on a short physical channel for character 50 and

@@ -180,7 +180,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory(prefix='ss6-issen-finish-') as temp:
         cpp=Path(temp)/'view.cpp';exe=Path(temp)/'view';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,BUILD/'libss6-runtime.a','-o',exe],check=True)
         with ProcessPoolExecutor(4) as pool:cases=list(pool.map(verify,[(exe,s,k) for s in range(2) for k in (False,True)]))
     OUT.write_text(json.dumps(dict(status='passed',original_sha256=PIN,replay_sha256=digest(REPLAY),
         validator_sha256=digest(Path(__file__)),cases=cases),indent=2,ensure_ascii=False)+'\n')

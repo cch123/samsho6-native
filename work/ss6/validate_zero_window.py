@@ -48,7 +48,7 @@ def main():
         sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3'],text=True).stdout)
         compiler=shlex.split(os.environ.get('CXX','c++'))
         for name,source in [('keys','sdl_slash_input_test.cpp'),('pads','sdl_gamepad_input_test.cpp')]:
-            subprocess.run([*compiler,'-std=c++20','-O2','-I',ROOT/'src',HERE/source,lib,*sdl,'-o',folder/name],check=True)
+            subprocess.run([*compiler,'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',HERE/source,lib,*sdl,'-o',folder/name],check=True)
         for side in ([args.seat-1] if args.seat else (0,1)):
             seq=fight(side);wanted=samples(side)
             frames,_=compare_battle_sequence(folder,side,'mu','zero',seq,wanted,(),[name for name,_ in wanted.values()],

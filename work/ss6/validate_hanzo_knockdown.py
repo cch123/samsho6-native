@@ -120,7 +120,7 @@ def main():
     # logic is replaced; the input protocol exposes commits between updates.
     with tempfile.TemporaryDirectory() as t:
         prog=Path(t)/'fall'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',ROOT/'src/knockdown_probe.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',ROOT/'src/knockdown_probe.cpp',
                         BUILD/'libss6-runtime.a','-o',prog],check=True)
         result=compare_fall(62,prog)
     cases=[live(side,ko,guard) for side in (0,1) for ko,guard in ((False,False),(True,False),(False,True))]

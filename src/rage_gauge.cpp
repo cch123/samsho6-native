@@ -17,14 +17,18 @@ constexpr Sprite backdrop{1,198,208,16},frame{1,130,208,16},flame{1,147,208,16};
 constexpr Sprite exhaustedFrame{1,181,208,16};
 constexpr Sprite exhaustedEmblem{395,152,38,38};
 constexpr Sprite concentrationFrame{1,164,208,16};
-struct SpiritArt { Sprite base,emblem; int x,y; std::array<int,3> start,end; };
-constexpr std::array<SpiritArt,6> spirits{{
+// slot1: system 8 (the companion fighters 44..47) draws its frame and emblem from texture
+// slot 1 (obj0_16) rather than the stock spirits' slot 10 (obj2_16); 1c0718 / 1c0920.
+struct SpiritArt { Sprite base,emblem; int x,y; std::array<int,3> start,end; bool slot1=false; };
+constexpr std::array<SpiritArt,9> spirits{{
     {{1,334,60,64},{350,280,53,53},9,389,{255,128,0},{255,0,0}},
     {{62,334,60,64},{404,280,53,53},10,386,{255,200,0},{255,80,0}},
     {{123,334,60,64},{458,280,53,53},9,385,{128,255,128},{0,255,0}},
     {{245,334,60,64},{350,334,53,53},10,384,{128,128,255},{0,0,255}},
     {{1,269,60,64},{404,334,53,53},8,384,{200,255,255},{255,255,0}},
-    {{184,334,60,64},{458,334,53,53},10,385,{255,255,128},{255,255,0}}
+    {{184,334,60,64},{458,334,53,53},10,385,{255,255,128},{255,255,0}},
+    {},{}, // systems 6 / 7 are option-gated and not offered by the console VS select
+    {{217,421,60,64},{1,421,53,53},9,384,{128,255,128},{0,255,0},true} // 0x4c5380 / 0x4c53b0; Zan's gradient
 }};
 
 void fill(std::span<uint8_t> pixels,const RageGaugePlayer& p,int side) {
@@ -131,7 +135,7 @@ void paintLifeGauge(std::span<uint8_t> dst,const RageGaugePlayer& p,int side) {
         if(to>from)bar(dst,side?366+from:273-to,45,to-from,16,r,g,b,alpha);
     };
     if(p.woundWidth>0)bar(dst,p.woundX,45,p.woundWidth,16,255,0,0,64);
-    if(p.system==0||p.system==1||p.system==3) {
+    if(p.system==0||p.system==1||p.system==3||p.system==8) {
         // The HUD grows its own geometry one pixel at a time on healing.
         // The actor has already received the full amount at this point.
         bar(dst,p.lifeX,45,p.lifeWidth,16,255,255,32);
@@ -345,7 +349,7 @@ void RageGaugeState::advance(const std::array<int32_t,2>& state120,const std::ar
 }
 
 RageGaugeRenderer::RageGaugeRenderer(const std::filesystem::path& assets)
-    :gaugeAtlas_(loadAtlas(assets/"obj2_16.tex")),commonAtlas_(loadAtlas(assets/"obj1_16.tex")) {}
+    :gaugeAtlas_(loadAtlas(assets/"obj2_16.tex")),commonAtlas_(loadAtlas(assets/"obj1_16.tex")),slotOneAtlas_(loadAtlas(assets/"obj0_16.tex")) {}
 
 void RageGaugeRenderer::paintClock(const BattleClockState& clock,std::span<uint8_t> pixels) const {
     if(pixels.size()!=screenWidth*screenHeight*4)
@@ -388,10 +392,12 @@ void RageGaugeRenderer::paintRage(const RageGaugeState& state,std::span<uint8_t>
     for(int side=0;side<2;++side) {
         const auto& p=state.players[side];
         const auto& art=spirits.at(p.system);
+        if(p.system==6||p.system==7)throw std::runtime_error("Spirit 6/7 HUD art is not ported");
+        const auto& spiritAtlas=art.slot1?slotOneAtlas_:gaugeAtlas_;
         const bool mu=p.system==4&&p.lifeGauge.phase==3;
         const bool spent=p.system==4&&p.lifeGauge.phase==4;
         const int x=side?376:56;
-        if(p.state!=3) sprite(pixels,gaugeAtlas_,art.base,side?574:6,378,60,64);
+        if(p.state!=3) sprite(pixels,spiritAtlas,art.base,side?574:6,378,60,64);
         sprite(pixels,gaugeAtlas_,backdrop,x,422,208,16,64);
         if(flashing(p.state)) sprite(pixels,gaugeAtlas_,flame,x,422,208,16);
         if(mu)sprite(pixels,gaugeAtlas_,concentrationFrame,x,422,208,16);
@@ -413,7 +419,7 @@ void RageGaugeRenderer::paintRage(const RageGaugeState& state,std::span<uint8_t>
             sprite(pixels,commonAtlas_,p.system==4?Sprite{434,152,38,38}:exhaustedEmblem,side?585:17,396,38,38);
         } else {
             const int extra=p.emblemExpansion;
-            sprite(pixels,gaugeAtlas_,art.emblem,art.x+568*side-extra/2,art.y-extra/2,53+extra,53+extra);
+            sprite(pixels,spiritAtlas,art.emblem,art.x+568*side-extra/2,art.y-extra/2,53+extra,53+extra);
         }
         // 1c1160 / 1c1300 submit the fill closer than the frame and emblem.
         fill(pixels,p,side);

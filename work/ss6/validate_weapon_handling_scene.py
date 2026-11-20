@@ -23,7 +23,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         tmp=Path(temp);source=tmp/'driver.cpp';source.write_text(CAPTURE_DRIVER)
         exe=tmp/'driver'
-        subprocess.run(['c++','-std=c++20','-I',ROOT/'src',source,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-I',ROOT/'src',source,LIB,'-o',exe],check=True)
         for slot in range(2):
             forward=(128,64)[slot]
             # Separate button edges by a full natural recovery so state 49

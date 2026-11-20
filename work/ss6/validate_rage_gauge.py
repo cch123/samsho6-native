@@ -120,7 +120,7 @@ def main():
  p=original();total=0; gallery=[]
  with tempfile.TemporaryDirectory() as td:
   td=Path(td);(td/'test.cpp').write_text(SAMPLE_DRIVER);exe=td/'probe'
-  subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',td/'test.cpp',ROOT/'src/rage_gauge.cpp','-o',exe],check=True)
+  subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',td/'test.cpp',ROOT/'src/rage_gauge.cpp','-o',exe],check=True)
   run=subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
   for i,(systems,(reset,s0,a0,s1,a1)) in enumerate((systems,row) for systems in combinations for row in cases):
    amounts=[a0*256+i%255,a1*256+255-i%255]

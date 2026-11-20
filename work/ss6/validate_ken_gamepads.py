@@ -68,7 +68,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='ss6-ken-controllers-') as path:
         folder=Path(path)
         sdl=shlex.split(run(['pkg-config','--cflags','--libs','sdl3']))
-        subprocess.run([*shlex.split(os.getenv('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',
+        subprocess.run([*shlex.split(os.getenv('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',
                         HERE/'sdl_gamepad_input_test.cpp',BUILD/'libss6-runtime.a',*sdl,'-o',folder/'pads'],check=True)
         cases=[verify(folder,original,side,weapon) for side in range(2) for weapon in (False,True)]
     assert digest(PKG/'ss6-viewer')==package_sha and digest(BUILD/'ss6-match-replay')==replay_sha

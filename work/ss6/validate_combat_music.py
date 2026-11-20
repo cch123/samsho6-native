@@ -269,7 +269,7 @@ def main():
     assert any(expected)
     with tempfile.TemporaryDirectory() as tmp:
         tmp=Path(tmp);src=tmp/'test.cpp';src.write_text(CPP);exe=tmp/'mix';raw=tmp/'music.raw'
-        subprocess.run(['c++','-O2','-std=c++20','-I',SOURCE,src,SOURCE/'combat_audio.cpp',SOURCE/'combat_music.cpp',SOURCE/'combat_sound_bank.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',SOURCE,src,SOURCE/'combat_audio.cpp',SOURCE/'combat_music.cpp',SOURCE/'combat_sound_bank.cpp','-o',exe],check=True)
         subprocess.run([exe,RES,raw],input='\n'.join(commands)+'\n',text=True,check=True)
         got=raw.read_bytes()
     if got!=expected:

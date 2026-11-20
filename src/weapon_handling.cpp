@@ -7,6 +7,7 @@ uint32_t AuxiliaryObjects::placeWeapon(TaggedTaskPools& pools,std::span<uint32_t
         unsigned player,unsigned character,uint32_t& actorFlags,const AuxiliaryObject& parent) {
     if(character>=positions_.size())throw std::runtime_error("Invalid weapon character");
     if(!(actorFlags&0x1000))return 0;
+    if(character>=43&&character<=47)return 0; // 16fe30 / 169388: the weaponless fighters keep no weapon object
     requireDropCapacity(pools,registry);
     // 16fe20 removes the weapon from the fighter before the child inherits
     // actor flags. Its ACT is queued; the registry commits it later this tick.
@@ -43,7 +44,8 @@ void updateWeaponDiscard(PlayerObject& body,StateEntryActor& actor,StateEntryCon
     body.setFlags(clock.flags104&~0x100u,clock.flags108);
     if(!ready)return;
     if(!frame.weaponLock)throw std::runtime_error("Weapon discard needs the live owner registry");
-    frame.weaponLock->objects.placeWeapon(entry.tasks,frame.weaponLock->objectTasks,entry.player,
+    // 16a610: Kuroko (48) keeps his weapon; no discard object, the armed bit stays.
+    if(actor.character!=48)frame.weaponLock->objects.placeWeapon(entry.tasks,frame.weaponLock->objectTasks,entry.player,
                                           actor.character,actor.flags23c,body.childParentWords());
     actor.callbacks260[0]=0x169a50;
     actor.callbacks260[1]=0;

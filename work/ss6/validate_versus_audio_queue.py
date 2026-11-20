@@ -129,7 +129,7 @@ def main():
     runs={}
     with tempfile.TemporaryDirectory() as d:
         temp=Path(d);src=temp/'run.cpp';exe=temp/'run';src.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',str(ROOT/'src'),str(src),*pkg,'-o',str(exe)],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',str(ROOT/'src'),str(src),*pkg,'-o',str(exe)],check=True)
         for name,frames in [('standard','512'),('long_device_period','4096')]:
             env=dict(os.environ,SDL_AUDIO_DRIVER='dummy',SDL_AUDIO_DEVICE_SAMPLE_FRAMES=frames)
             values=list(map(int,subprocess.check_output([str(exe)],env=env,text=True,timeout=30).split()))

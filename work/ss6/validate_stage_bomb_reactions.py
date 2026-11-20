@@ -124,7 +124,7 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as tmp:
         folder=Path(tmp);cpp=folder/'bomb.cpp';exe=folder/'bomb';cpp.write_text(DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,LIB,'-o',exe],check=True)
         rows=[];boundaries=[]
         for seat in range(2):
             for pose in ('standing','crouch','jump','guard crouch','guard stand'):

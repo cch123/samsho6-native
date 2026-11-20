@@ -30,7 +30,8 @@ void stopAtGround(PlayerObject& object) {
 }
 void KnockoutPlayback::begin(PlayerObject& object,uint32_t& actorFlags,unsigned variant,int32_t* actorAction) {
     if (variant>2) throw std::runtime_error("Invalid ordinary KO variant");
-    if (actorFlags&0xd00000) throw std::runtime_error("Special-character KO action remapping not implemented");
+    // 0x400000 (Amakusa) and 0x800000 (riding Rera) are remapped by the caller's 14d788 pass (GroundStateRuntime::visit).
+    if (actorFlags&0x100000) throw std::runtime_error("Special-character KO action remapping not implemented");
     const bool airborne=actorFlags&0x10;
     if (airborne) variant=2;
     // 0x172b38 uses pose28 on the ground (stop and clamp), pose29 in the

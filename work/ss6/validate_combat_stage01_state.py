@@ -233,7 +233,7 @@ def main():
         binary=Path(tmp)/'stage'
         cpp.write_text(DRIVER)
         src=ROOT/'src'
-        subprocess.run(['c++','-std=c++20','-O2','-I',src,cpp,src/'combat_stage_state.cpp',
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',src,cpp,src/'combat_stage_state.cpp',
                         src/'game_random.cpp',src/'stage_camera.cpp',src/'scalar_float.cpp','-o',binary],check=True)
         result=clocks(binary)
     report=dict(original=PIN,archive_files=files,stage_asset_inventory=inventory,

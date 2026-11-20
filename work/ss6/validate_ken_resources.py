@@ -80,7 +80,7 @@ def main():
                 expected.append([p.read(a+off,4) for off in fields])
     with tempfile.TemporaryDirectory() as td:
         folder=Path(td);cpp=folder/'probe.cpp';cpp.write_text(CPP);exe=folder/'probe'
-        subprocess.run(['c++','-O2','-std=c++20','-I',ROOT/'src',cpp,ROOT/'src/damage.cpp',ROOT/'src/battle_gauges.cpp',
+        subprocess.run(['c++','-O2','-std=c++20','-ffp-contract=off','-I',ROOT/'src',cpp,ROOT/'src/damage.cpp',ROOT/'src/battle_gauges.cpp',
                         ROOT/'work/ss6/build-native/libss6-runtime.a','-o',exe],check=True)
         out=subprocess.run([exe,ASSETS],input=''.join(' '.join(map(str,r))+'\n' for r in cmd),text=True,capture_output=True,check=True)
     rows=[list(map(int,r.split())) for r in out.stdout.splitlines()]

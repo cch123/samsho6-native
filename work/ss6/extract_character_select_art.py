@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Extract parameterized character select display lists from the Japanese menu."""
+"""Extract parameterized character select display lists from the Japanese menu.
+
+The native port presents the fully unlocked select screen: unlock bytes 0x43d06e+c for
+c = 40..48 are 0 (the network "original" setting 1d9258), so 1281e0 chooses the 8x6
+layout of 48 cells whose 8th column is 41,44,45,47,46,40 and cell 36 is Purple Nakoruru.
+"""
 from concurrent.futures import ProcessPoolExecutor
 from functools import cache
 import hashlib
@@ -14,14 +19,16 @@ FACES=(0x12a91c,0x12ae1c,0x12b4b0,0x12ba1c)
 NAME=(0x12c340,0x12c3bc,0x12c580,0x12c5fc)
 NAMES=(0x12c3bc,0x12c5fc)
 LIMITS=(0,59,69,9,9,14,9,5,14,14,0,14)
+CELLS=48
 
 @cache
 def setup():
     p=canvas();p.run(0x1113e8,[0x43d058]);p.write(0x4c3808,3,4)
+    for c in range(40,49):p.write(0x43d06e+c,0,1)  # every hidden character unlocked
     # The startup helper prints the roster to its debugging terminal. Stub
     # only that printf and stop where the task is registered; neither draws.
     p.write(0x323050,0x03e00008,4);p.write(0x323054,0,4)
-    for i,v in enumerate((7,6,9,42)):p.write(0x4c8838+4*i,v,4)
+    for i,v in enumerate((8,6,9,CELLS)):p.write(0x4c8838+4*i,v,4)
     for side in (0,1):p.run(0x128c78,[side],stop_before=(0x1129c8,),limit=500000)
     return p
 
@@ -44,7 +51,7 @@ def capture(p,fn,args,tags=False):
         vals=[x,y,r,b,u,v,ur,vb];assert all(float(a).is_integer() for a in vals),(hex(caller),vals)
         x,y,r,b,u,v,ur,vb=map(int,vals);kind=ref=0
         if tags and slot==5 and caller in FACES:
-            kind=1;ref=u//85+12*(v//66);assert ref in range(42),(hex(caller),ref,u,v)
+            kind=1;ref=u//85+12*(v//66);assert ref in range(CELLS),(hex(caller),ref,u,v)
             ur-=u;vb-=v;u=v=0
         elif tags and slot==5 and caller in NAME:
             kind=3 if caller in NAMES else 2
@@ -60,7 +67,7 @@ def one(args):
     side,cell,phase=args;p=setup()
     # Tag the sampled cell indices. Moving by a whole column only rotates
     # the faces; the runtime uses the original character-to-atlas table.
-    for i in range(42):
+    for i in range(CELLS):
         p.write(0x4c8370+200*side+4*i,i,4);p.write(0x4c82a8+4*i,i,4)
         struct.pack_into('<3h',p.memory,0x5e0530+6*i,5,i%12,i//12)
     p.write(0x4c82a0+4*side,cell,4)

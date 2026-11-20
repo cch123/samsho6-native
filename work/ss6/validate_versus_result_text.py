@@ -108,7 +108,7 @@ def validate():
     with tempfile.TemporaryDirectory(prefix='ss6-result-text-') as name:
         tmp=Path(name);cpp=tmp/'check.cpp';exe=tmp/'check'
         cpp.write_text(NATIVE_DRIVER)
-        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-O2','-I',ROOT/'src',cpp,
+        subprocess.run([*shlex.split(os.environ.get('CXX','c++')),'-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,
                         ROOT/'src/versus_result_text.cpp','-o',exe],check=True)
         with subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE) as native:
             def compare(q,limit,n,expected):

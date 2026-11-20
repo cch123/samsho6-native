@@ -1,6 +1,14 @@
 #include "round_initialization.hpp"
+#include "cpu_execution.hpp"
 #include "mamahaha.hpp"
 #include "konru.hpp"
+#include "chample.hpp"
+#include "poppy.hpp"
+#include "rera_wolf.hpp"
+#include "karuta.hpp"
+#include "karakuri_puppet.hpp"
+#include "chamcham_pet.hpp"
+#include "kazuki_fire.hpp"
 #include "fighter_roster.hpp"
 #include <algorithm>
 #include <stdexcept>
@@ -11,9 +19,7 @@ void resetActorControl(StateEntryActor& a,GameRandom& random) {
     //This draw occurs even for human players. Skipping it shifts every
     //later draw made by the shared battle random generator.
     a.controlCC=uint32_t(random.bounded(2));a.control88=0;a.control8c=0xffffffff;
-    a.controlC4=0;a.controlTimers0c[0]=0;
-    a.controlMotion38.fill(0);a.controlMotion38[3]=a.controlMotion38[4]=0xffffffff;
-    a.controlD8=a.controlE4=a.controlE8=0xffffffff;
+    resetCpuSequence(a);
     a.controlTimers0c[9]=0;
     const auto mode=a.controlModeC8;
     const bool delayed=mode-38<32||mode-4<7||mode-15<5||mode-21<4||mode-26<4||mode-31<4;
@@ -22,10 +28,11 @@ void resetActorControl(StateEntryActor& a,GameRandom& random) {
 void RoundInitialization::begin(GroundStateRuntime& ground,PlayerObject& body,StateEntryActor& a,
         ActorCommandInput& input,const InputSystemConfig& config,StateEntryContext& context,
         const GroundStateFrame& frame,RoundActorStorage& storage,bool first) {
-    if(!playableFighter(a.character)||a.character!=config.character||config.system>5||frame.training||context.player>=2||
-       !frame.random||body.resourceSlot0c>=3||(a.flags23c&0x400000)||a.rageState120<0||a.rageState120>3)
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8)||frame.training||context.player>=2||
+       !frame.random||body.resourceSlot0c>=3||((a.flags23c&0x400000)&&a.character!=11)||a.rageState120<0||a.rageState120>3)
         throw std::runtime_error("Round initialization requires a supported fighter, spirit, default options and a random context");
-    const unsigned neededObjects=3+(a.character==1||a.character==2);
+    const unsigned c=a.character;
+    const unsigned neededObjects=3+(c==1||c==2||c==4||c==16||c==19||c==24||c==32||c==33||c==34||c==45); // the companion of 1a3220
     if(context.tasks.freeObjectCount<neededObjects||
        std::count(storage.objectTasks.begin(),storage.objectTasks.end(),0u)<neededObjects)
         throw std::runtime_error("Round initialization needs space for the companion and afterimages");
@@ -74,8 +81,34 @@ void RoundInitialization::begin(GroundStateRuntime& ground,PlayerObject& body,St
     const auto parent=body.childParentWords();
     // 149174 creates the companion before the three history objects.
     switch(a.character) {
-    case 1:a.auxiliaryObject04=spawnMamahaha(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);break;
+    case 1:case 45:a.auxiliaryObject04=spawnMamahaha(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);break;
     case 2:a.auxiliaryObject04=spawnKonru(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);break;
+    case 24:
+        a.auxiliaryObject04=spawnChample(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);
+        // 149184 -> 1a3340 runs only for the first-round introduction.
+        if(first)commandChamplePresentation(context.tasks.objects.at(a.auxiliaryObject04-1),33);
+        break;
+    case 19: // 1f95e8 (1a32dc); the first round's 1a3340 introduction is command 0x13
+        a.auxiliaryObject04=spawnReraWolf(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);
+        if(first)commandPoppy(context.tasks.objects.at(a.auxiliaryObject04-1),0x13);
+        break;
+    case 33: // 2038a0 (1a330c)
+        a.auxiliaryObject04=spawnKaruta(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);
+        break;
+    case 32: // 201ac0 (1a32fc)
+        a.auxiliaryObject04=spawnKarakuriPuppet(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);
+        break;
+    case 34: // 203e08 (1a331c); the first round's 1a3340 introduction is command 0x13
+        a.auxiliaryObject04=spawnChamchamPet(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);
+        if(first)commandPoppy(context.tasks.objects.at(a.auxiliaryObject04-1),0x13);
+        break;
+    case 16: // 1f7258 at the current fire level (f15)
+        a.auxiliaryObject04=spawnKazukiFire(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent,a.characterBytesF14[1]);
+        break;
+    case 4:
+        a.auxiliaryObject04=spawnPoppy(objects_,context.tasks,storage.objectTasks,context.player,a.flags23c,parent);
+        if(first)commandPoppy(context.tasks.objects.at(a.auxiliaryObject04-1),0x2e); // 1a3340
+        break;
     default:a.auxiliaryObject04=0;break;
     }
     for(unsigned i=0;i<3;++i) {

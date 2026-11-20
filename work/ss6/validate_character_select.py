@@ -51,6 +51,7 @@ class Source:
         for pc in LEAVES:
             p.memory[pc:pc+8]=struct.pack('<II',0x03e00008,0x0000102d)
         p.run(0x1113e8,[0x43d058])
+        for c in range(40,49):p.write(0x43d06e+c,0,1)  # the native port presents every character unlocked
         for pc in (0x1123a8,0x112570,0x11e290,0x127eb0):
             p.run(pc,limit=200000)
         p.write(0x443150,1,4);p.write(0x4c3808,6,4);p.write(0x4c38a8,2,4)
@@ -61,7 +62,8 @@ class Source:
         p.write(self.seed,seed,8);p.run(0x128008,limit=500000)
         self.last=[0,0];self.requested=0;self.complete=0;self.visits=0
         self.drawSpirit=[[0,0,5,0] for _ in range(2)]
-        self.grid=[p.read(0x4c82a8+i*4,4) for i in range(42)]
+        self.grid=[p.read(0x4c82a8+i*4,4) for i in range(48)]
+        assert [p.read(0x4c8838+4*i,4) for i in (0,1,3)]==[8,6,48],'unlocked layout'
     def observe(self,pc):
         p=self.p;r=p.registers
         if pc==0x12a418:
@@ -110,18 +112,17 @@ def make_case(name):
         key(0,99,1024)
     elif name=='random-mirror':
         seed=455
-        # Both random tiles are distinct cells with the same random lookup.
+        # Both seats pick the unlocked grid's only random tile (cell 41: two columns back, three rows up).
         for s in range(2):
-            key(s,64,64 if not s else 128);key(s,78,16);key(s,80,16)
-            if s:key(s,82,16)
-            key(s,87,0x400000|0x80000|0x100000)
+            key(s,64,64 if not s else 128);key(s,76,64 if not s else 128);key(s,88,16);key(s,90,16);key(s,92,16)
+            key(s,99,0x400000|0x80000|0x100000)
     elif name=='all-cells':
-        inputs=[[0,0] for _ in range(790)]
+        inputs=[[0,0] for _ in range(840)]
         tick=65
-        for col in range(7):
+        for col in range(8):
             for seat in range(2):
                 for row in range(6):key(seat,tick+row*2,32)
-                if col<6:key(seat,tick+12,128 if not seat else 64)
+                if col<7:key(seat,tick+12,128 if not seat else 64)
             tick+=25
         for seat in range(2):key(seat,tick,0x80000|4)
     elif name=='stages':
@@ -129,13 +130,18 @@ def make_case(name):
         for s in (0,1):key(s,72,1024)
     elif name=='palette':
         for s in range(2):key(s,70,32);key(s,74,2)
+    elif name=='kuroko':
+        # P1: Start, then moves during and after the 21-update wipe, Kuroko confirmed.
+        # P2: toggles off mid-wipe and on again, then confirms Kuroko on the random cell.
+        key(0,66,8);key(0,72,32);key(0,90,128);key(0,96,32);key(0,104,1024)
+        key(1,66,8);key(1,71,8);key(1,78,8);key(1,102,64);key(1,104,64);key(1,106,16);key(1,108,16);key(1,110,16);key(1,116,2)
     elif name=='repeat':
         for s in range(2):
             for t in range(62,103):key(s,t,128|32)
             key(s,125,0x100000|4)
     else:raise ValueError(name)
     shift=220 if name=='all-cells' else 0
-    steps={'opposite':(2,-2),'reselect':(2,-2),'palette':(0,1),'random-mirror':(3,-1),'repeat':(-1,0),'all-cells':(-3,-2),'stages':(1,-1)}[name]
+    steps={'opposite':(2,-2),'reselect':(2,-2),'palette':(0,1),'random-mirror':(3,-1),'repeat':(-1,0),'all-cells':(-3,-2),'stages':(1,-1),'kuroko':(1,-1)}[name]
     for s,n in enumerate(steps):
         for k in range(abs(n)):key(s,shift+224+s*7+k*15,128 if n>0 else 64)
         key(s,shift+274+s*9,1024)
@@ -163,7 +169,7 @@ def check(args):
         state=tuple(row[i] for i in (10,20,31,41))
         if state!=last:history.append([frame,*state]);last=state
         if src.complete:
-            if name=='all-cells':assert [len(c) for c in visited]==[42,42]
+            if name=='all-cells':assert [len(c) for c in visited]==[48,48]
             if name=='stages':assert stages==set(range(11))
             return dict(stage_cells=sorted(stages),visited_cells=[len(c) for c in visited],name=name,owner=owner,seed=seed,frames=frame,executed_instructions=src.visits,
                         characters=[row[13],row[34]],palettes=[row[14],row[35]],spirits=[row[30],row[51]],
@@ -174,13 +180,13 @@ def main():
     assert digest(ELF)==PIN
     with tempfile.TemporaryDirectory() as temp:
         test=Path(temp)/'select.cpp';test.write_text(DRIVER);exe=Path(temp)/'select'
-        subprocess.run(['c++','-std=c++20','-O2','-I'+str(ROOT/'src'),str(test),str(ROOT/'src/character_select.cpp'),
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I'+str(ROOT/'src'),str(test),str(ROOT/'src/character_select.cpp'),
                         str(ROOT/'src/game_random.cpp'),str(ROOT/'src/scalar_float.cpp'),'-o',str(exe)],check=True)
-        names=['opposite','palette','random-mirror','repeat','all-cells','stages','reselect']
+        names=['opposite','palette','random-mirror','repeat','all-cells','stages','reselect','kuroko']
         with ProcessPoolExecutor(4) as pool:
             results=list(pool.map(check,[(str(exe),name) for name in names]))
     REPORT.write_text(json.dumps(dict(status='passed',elf_sha256=PIN,
         cpp_sha256=digest(ROOT/'src/character_select.cpp'),header_sha256=digest(ROOT/'src/character_select.hpp'),
-        scope='Factory local VS, Japanese SLPS-25559. Full original scheduler 112838 with 128008 and nested births, 117fd8 raw pad sampling, character/spirit/setting/stage controls, all reached draw-phase completion decisions and ordered SE requests; external graphics, platform I/O, and audio driver submitted at fixture boundaries. Stops at original 1252f0(1,1,12f800,125e10); the face-off and fight are separate scenes.', cases=results),indent=2)+'\n')
+        scope='Local VS with every character unlocked (8x6 grid, 47-entry random pool, Kuroko Start view, spirit 8 for 44..47), Japanese SLPS-25559. Full original scheduler 112838 with 128008 and nested births, 117fd8 raw pad sampling, character/spirit/setting/stage controls, all reached draw-phase completion decisions and ordered SE requests; external graphics, platform I/O, and audio driver submitted at fixture boundaries. Stops at original 1252f0(1,1,12f800,125e10); the face-off and fight are separate scenes.', cases=results),indent=2)+'\n')
     print(f'{len(results)} original/native selection sequences, {sum(c["frames"] for c in results)} scheduler visits through face-off')
 if __name__=='__main__':main()

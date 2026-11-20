@@ -60,7 +60,7 @@ def run():
     viewer=BUILD/'ss6-viewer'
     with tempfile.TemporaryDirectory() as folder:
         folder=Path(folder);f=folder/'observe.cpp';f.write_text(TRACE);driver=folder/'observer'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',f,BUILD/'libss6-runtime.a','-o',driver],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',f,BUILD/'libss6-runtime.a','-o',driver],check=True)
         trace=subprocess.run([driver,ASSETS],input=''.join(f'{a} {b}\n' for a,b in steps),text=True,capture_output=True,check=True)
         state={r[0]:r for line in trace.stdout.splitlines() if (r:=list(map(int,line.split())))}
         black=[t for t,r in state.items() if r[5]==0xff000000]

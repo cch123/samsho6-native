@@ -55,7 +55,7 @@ private:
     int32_t decay(int system,unsigned character) const;
     std::array<int32_t,59> rules_{};
     std::array<std::array<int32_t,7>,51> characters_{};
-    std::array<std::array<int32_t,10>,6> systems_{};
+    std::array<std::array<int32_t,10>,9> systems_{}; // 0x50dee0: systems 0..8 (8 = the companion fighters 44..47)
     std::array<ScalarFloat,12> constants_{};
 };
 } // namespace ss6

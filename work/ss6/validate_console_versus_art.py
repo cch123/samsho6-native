@@ -62,7 +62,7 @@ def main():
     profiles=[(0,0,1),(1,0,1),(2,0,1),(0,3,1),(0,3,0),(2,4,1),(2,4,0),(1,2,1)]
     with tempfile.TemporaryDirectory() as d:
         src=Path(d)/'driver.cpp';src.write_text(DRIVER);exe=Path(d)/'driver'
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',src,ROOT/'src/console_versus_art.cpp','-o',exe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',src,ROOT/'src/console_versus_art.cpp','-o',exe],check=True)
         proc=subprocess.Popen([exe,ASSETS],stdin=subprocess.PIPE,stdout=subprocess.PIPE)
         try:
             # Full entry and two border cycles; every Japanese description and confirm/cancel

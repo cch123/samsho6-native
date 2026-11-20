@@ -20,6 +20,8 @@ public:
     explicit InputBindings(const std::filesystem::path& assets);
     void initialize(ActorCommandInput&,const InputSystemConfig* config) const;
     bool normalAvailable(unsigned index,const InputSystemConfig&) const;
+    int techniqueCategorySlot(unsigned character,unsigned column) const;
+    bool allowsTechniqueCategory(unsigned character,unsigned slot,const InputSystemConfig&) const;
     bool specialAvailable(unsigned record,unsigned slot,const InputSystemConfig&) const;
     const std::vector<InputBindingRecord>& specialRecords() const {return special_;}
     const std::array<InputBindingRecord,31>& normalRecords() const {return normal_;}

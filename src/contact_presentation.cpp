@@ -9,7 +9,8 @@ namespace {
 void spawn(ScheduledOpening& effects,BattleRoundState& battle,unsigned descriptor,int x,int y,float scale=1) {
     effects.startContact(descriptor,float(x),float(y),scale,battle.entry.tasks,battle.effectResidency,battle.random);
 }
-AuxiliaryObject* commonElement(AuxiliaryObjects& objects,BattleRoundState& battle,unsigned victim,bool mirror,unsigned action) {
+AuxiliaryObject* commonElement(AuxiliaryObjects& objects,BattleRoundState& battle,unsigned victim,bool mirror,int action) {
+    if(action<0)return nullptr; // Some damage colors have no attached ACT.
     AuxiliaryObject facing{};facing[0x38/4]=mirror?0x80000:0;
     const auto handle=objects.createCommonEffect(battle.entry.tasks,battle.objectTasks,&facing,0x1396,0);
     if(!handle)return nullptr;
@@ -30,12 +31,13 @@ unsigned hitColumn(unsigned type,GameRandom& random) {
 struct ElementClips {int impact,attached,release;};
 // Three independent columns at 4e8758. Only ice (JDG remainder 5)
 // leaves a new set of fragments when the attached reaction retires.
-constexpr std::array<ElementClips,6> elements{{
-    {-1,-1,-1},{4,5,-1},{16,17,-1},{7,8,-1},{19,20,-1},{10,11,12}
+constexpr std::array<ElementClips,9> elements{{
+    {-1,-1,-1},{4,5,-1},{16,17,-1},{7,8,-1},{19,20,-1},{10,11,12},
+    {-1,-1,-1},{-1,-1,-1},{4,5,-1}
 }};
 }
 void spawnElementHurt(AuxiliaryObjects& objects,BattleRoundState& battle,unsigned victim,
-                      const PlayerObject& body,const StateEntryActor& actor) {
+                      const PlayerObject& body,const StateEntryActor& actor,int state) {
     const auto parent=body.childParentWords();
     auto* object=commonElement(objects,battle,victim,parent[0x38/4]&0x80000,elements.at(actor.contactKind252).attached);
     if(!object)return;
@@ -46,7 +48,7 @@ void spawnElementHurt(AuxiliaryObjects& objects,BattleRoundState& battle,unsigne
     o[0xf0/4]=ScalarFloat{o[0xf0/4]}.add(ScalarFloat::integer(anchor[1])).bits;
     o[0x108/4]=(o[0x108/4]|0x10000)&~0x2000u;
     battle.entry.tasks.tasks.at(o[1]-1)[0]=0x16e3b8;
-    o[0x128/4]=actor.contactKind252;o[0x12c/4]=unsigned(actor.stateIndex());o[0x130/4]=(actor.flags23c>>4)&1;
+    o[0x128/4]=actor.contactKind252;o[0x12c/4]=unsigned(state<0?actor.stateIndex():state); // 14a890's explicit state (scripted captures)o[0x130/4]=(actor.flags23c>>4)&1;
     o[0x134/4]=actor.landingCount253;
 }
 void updateElementHurt(AuxiliaryObjects& objects,BattleRoundState& battle,uint32_t task,

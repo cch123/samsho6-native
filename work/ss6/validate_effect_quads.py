@@ -8,8 +8,9 @@ ASSETS=ROOT/'work/ss6/extracted/resources'
 def bits(v):return struct.unpack('<I',struct.pack('<f',v))[0]
 def main():
  raw=(ROOT/'work/ss6/extracted/SLPS_255.59').read_bytes();p=Probe(raw,finite_model=True)
- banks=[(1,'01HitFlash.bin',[*range(20),21]),(2,'02Guard.bin',range(10)),(3,'03etc.bin',range(6,26)),(4,'04tenso.bin',range(19)),(5,'Display.bin',range(32)),(6,'Display2.bin',range(6)),
-        (7,'Display3.bin',list(range(18))+[24,25,26])]
+ # Every non-empty action of every bank (the runtime admits exactly these).
+ banks=[(b,n,[i for i in range(32) if (ASSETS/n).read_bytes()[0x180+i]]) for b,n in
+        ((1,'01HitFlash.bin'),(2,'02Guard.bin'),(3,'03etc.bin'),(4,'04tenso.bin'),(5,'Display.bin'),(6,'Display2.bin'),(7,'Display3.bin'))]
  commands=[];expected=[];instructions=records=rotated=0;angles={}
  angle_units={0}
  for bank,name,actions in banks:

@@ -12,21 +12,23 @@ int main(int argc,char** argv) {
     try {
         if(argc<2)throw std::runtime_error("Expected an asset directory");
         std::string_view trace;
+        std::array<bool,2> cpuSeats{};
         auto mode=ss6::VersusMode::FixedMatch;
-        int roundTime=-1;bool startAtSelect=false,timed=false;std::array<unsigned,2> spirits{};
+        int roundTime=-1;bool timed=false;auto entry=ss6::VersusEntry::Fight;std::array<unsigned,2> spirits{};
         for(int i=2;i<argc;++i) {
             const std::string_view arg=argv[i];
             if(arg=="--round-time"&&i+1<argc){roundTime=std::stoi(argv[++i]);timed=true;}
+            else if(arg=="--cpu"&&i+1<argc)cpuSeats=ss6::versusCpuSeats(argv[++i]);
             else if((arg=="--p1-spirit"||arg=="--p2-spirit")&&i+1<argc)spirits[arg=="--p2-spirit"]=ss6::versusSpirit(argv[++i]);
             else if(arg=="--mode"&&i+1<argc) {
                 const std::string_view name=argv[++i];
-                startAtSelect=name=="select";
-                if(!startAtSelect&&name!="versus"&&name!="fixed-versus")throw std::runtime_error("Unknown match mode");
-                mode=(startAtSelect||name=="versus")?ss6::VersusMode::Console:ss6::VersusMode::FixedMatch;
+                entry=name=="title"?ss6::VersusEntry::Title:name=="select"?ss6::VersusEntry::CharacterSelect:ss6::VersusEntry::Fight;
+                if(entry==ss6::VersusEntry::Fight&&name!="versus"&&name!="fixed-versus")throw std::runtime_error("Unknown match mode");
+                mode=name=="fixed-versus"?ss6::VersusMode::FixedMatch:ss6::VersusMode::Console;
             } else if(trace.empty())trace=arg;
             else throw std::runtime_error("Unexpected replay argument");
         }
-        const bool selectFields=trace=="--select-fields";
+        const bool selectFields=trace=="--select-fields",titleFields=trace=="--title-fields";
         const bool soundFields=trace=="--sound-fields";
         const bool shakeFields=trace=="--shake-fields";
         const bool stageFields=trace=="--stage-fields",itemFields=trace=="--stage-item-fields";
@@ -42,10 +44,10 @@ int main(int argc,char** argv) {
         const bool risingFields=trace=="--rising-fields",finishFields=trace=="--finish-fields";
         const bool contactFields=finishFields||whirlwindFields||risingFields||trace=="--contact-fields";
         const bool projectileFields=trace=="--projectile-fields";
-        if(!trace.empty()&&!selectFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields)
+        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields)
             throw std::runtime_error("Unknown replay trace");
         if(menuFields)mode=ss6::VersusMode::Console;
-        ss6::LocalVersus session(argv[1],roundTime,mode,spirits,startAtSelect);
+        ss6::LocalVersus session(argv[1],roundTime,mode,spirits,entry,cpuSeats);
         std::vector<ss6::BattleSoundEvent> sounds;
         ss6::GameRandom soundRandom=session.match().battle().random;
         if(soundFields)session.onTick([&](const ss6::NativeMatch& match) {
@@ -94,6 +96,15 @@ int main(int argc,char** argv) {
             if(soundFields) {
                 std::cout<<' '<<soundRandom.gameSeed<<' '<<soundRandom.librarySeed<<' '<<sounds.size();
                 for(const auto& sound:sounds)std::cout<<' '<<int(sound.kind)<<' '<<sound.bank<<' '<<sound.tone;
+            }
+            if(titleFields) {
+                const auto& title=match.title();
+                const auto d=title?title->draw:ss6::ConsoleTitleFrame{};
+                const auto& s=match.battle().consoleMenu.session;
+                std::cout<<' '<<bool(title)<<' '<<d.modeMenu<<' '<<d.firstRow<<' '<<d.scrollDirection
+                         <<' '<<d.scrollTick<<' '<<d.titleTick<<' '<<d.idleTick<<' '<<match.selectWhiteLevel()
+                         <<' '<<bool(match.characterSelect())<<' '<<s.originalEntrant<<' '<<s.lastEntrant
+                         <<' '<<s.wins[0]<<' '<<s.wins[1]<<' '<<s.losses[0]<<' '<<s.losses[1];
             }
             if(selectFields) {
                 const auto& s=match.characterSelect();

@@ -55,7 +55,7 @@ def main():
     with tempfile.TemporaryDirectory() as temp:
         folder=Path(temp);exe=folder/'audio-loop'
         flags=shlex.split(subprocess.check_output(['pkg-config','--cflags','--libs','sdl3'],text=True))
-        run(['c++','-std=c++20','-O2','-I',ROOT/'src',HERE/'sdl_audio_input_test.cpp',BUILD/'libss6-runtime.a',*flags,'-o',exe])
+        run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',HERE/'sdl_audio_input_test.cpp',BUILD/'libss6-runtime.a',*flags,'-o',exe])
         start,keys,full,wav,video,pcm=[folder/name for name in ('warm.pad','keys.pad','full.pad','mix.wav','video.rgba','mix.s16')]
         for path,rows in ((start,prior),(keys,blocks(live)),(full,blocks(inputs[:end]))):path.write_text(encode(rows))
         run([VIEWER,'--mode','versus',*options,'--match-replay',full,'--audio-out',wav],env=DUMMY)

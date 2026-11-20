@@ -31,7 +31,7 @@ def main():
         probe=tmp/'probe'
         source=tmp/'probe.cpp'
         source.write_text(CAPTURE_DRIVER)
-        subprocess.run(['c++','-std=c++20','-O2','-I',ROOT/'src',source,LIB,'-o',probe],check=True)
+        subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',source,LIB,'-o',probe],check=True)
         for player in (0,1):
             other=1-player
             for move,inputs,targets in [

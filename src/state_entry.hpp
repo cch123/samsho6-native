@@ -3,11 +3,15 @@
 #include "tagged_tasks.hpp"
 
 namespace ss6 {
+struct StateEntryActor;
 struct StateEntryActor : PermissionActor {
     //These historical field names hold the weapon/range variant (0..3),
     //not a character ID.14b798 writes the main variant even in alias mode.
     int16_t stateCharacter198=0,aliasCharacter1a8=0;
     uint32_t damageCharacterA18=0;
+    // actor+a14: the selected id. 148df0 runs Purple Nakoruru (42) as Nakoruru (a10 = 1) but
+    // keeps 42 here for voices, the HUD, endings and the intro order; -1 = same as character.
+    int32_t characterA14=-1;
     uint32_t bodyFieldE4=0,bodyFieldE8=0,bodyField124=0;
     uint32_t bodyColor8c=0xff808080,bodyField20=0,fieldA28=0;
     int32_t queuedActionA3c=-1;
@@ -20,8 +24,24 @@ struct StateEntryActor : PermissionActor {
     //Control-owner fields touched by1588c0. Existing B4/B8/C0/C8 fields
     //remain authoritative; do not reset a parallel AI/input snapshot.
     std::array<uint32_t,10> controlTimers0c{},controlMotion38{};
+    // 1588c0 resets motion+00..24. The following per-command scratch words
+    // survive a sequence change until its next callback overwrites them.
+    std::array<uint32_t,10> controlMotion60{};
+    int32_t cpuTimerDelta08=256;
+    // The final word identifies a script table row. It is a row handle in
+    // native code, independent of where the resource is mapped.
+    std::array<uint32_t,6> cpuTechnique98{};
+    uint32_t controlTimer34=0; // Eleventh timer. The ten earlier counters share older probe layouts.
+    uint32_t controlB0=0; // 158990 stores whether a forced reaction consumed this decision.
     uint32_t control88=0,control8c=0,controlFlagsBC=0,controlC4=0;
     uint32_t controlCC=0,controlD8=0,controlE4=0,controlE8=0;
+    uint32_t controlD0=0,controlDC=0,controlEC=0,controlF0=0,controlF8=0;
+    // Signed halfwords published by the CPU perception pass. Mode 3 can
+    // recalculate the threat's distance independently during dispatch.
+    int16_t cpuRange168=0,cpuRange16a=0,cpuRange16c=0,cpuRange16e=0,cpuRange170=0;
+    uint32_t cpuWall178=0;
+    int16_t cpuPrevious174=0,cpuSituation180=0,cpuSituation182=0,cpuSituation184=0;
+    int16_t cpuSituation186=0,cpuSituation188=0,cpuSituation18a=0;
     std::array<uint32_t,7> callbacks260{};
     std::array<uint32_t,4> override27c{};
     std::array<uint32_t,13> registry28c{};
@@ -79,4 +99,6 @@ private:
     std::array<uint8_t,69*2> specialExceptions_;
     std::array<int32_t,9> swordLimits_;
 };
+inline int voiceCharacter(const StateEntryActor& a){return a.characterA14>=0?a.characterA14:int(a.character);} // 1e8298(seat, id, a14)
+inline int selectedCharacter(const StateEntryActor& a){return voiceCharacter(a);} // actor+a14 (endings, same-character tests)
 }

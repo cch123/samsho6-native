@@ -38,9 +38,16 @@ void updateDelta(AuxiliaryObject& o,const AuxiliaryFrame& f) {
         if(own.flags23c&0x08000000)o[0x30/4]=(*own.body)[0x30/4];
     }else if(flags&0x20000)o[0x30/4]=(*owner(o,f,true).body)[0x30/4];
 }
-void completion(AuxiliaryObject& o,const AuxiliaryFrame& f) {
+void completion(AuxiliaryObject& o,const AuxiliaryFrame& f,TaggedTaskPools& p) {
     auto& flags=o[0x108/4];
-    if(flags&0x4000)flags=(flags&~0x4000u)|0x2000;
+    if(flags&0x4000) {
+        if(o[0xcc/4]!=3)flags=(flags&~0x4000u)|0x2000;
+        else if((o[0xc0/4]&&!(o[0x104/4]&1))||std::bit_cast<float>(o[0x44/4])<0.0f) {
+            // 147558: a companion (kind 3) lent out with 0x4000 (victim end op 25) returns to its own
+            // task once its ACT ends or it drops below the floor: task[0] = o+8, 128 = 0, 12c = -1.
+            p.tasks.at(o[1]-1)[0]=o[2];o[0x128/4]=0;o[0x12c/4]=0xffffffffu;flags&=~0x4000u;
+        }
+    }
     if((flags&0x2000)&&o[0xc0/4]&&!(o[0x104/4]&1))flags|=0x1000;
     if((flags&0x8000)&&owner(o,f).effectiveTable==2)flags|=0x1000;
 }
@@ -130,6 +137,7 @@ void AuxiliaryObjects::move(AuxiliaryObject& o,const GaugeState& g) {
         o[0x8c/4]=color;
     }
 }
+void objectCompletion(AuxiliaryObject& o,const AuxiliaryFrame& f,TaggedTaskPools& p){completion(o,f,p);}
 void AuxiliaryObjects::updateRegistry(TaggedTaskPools& p,std::span<const uint32_t> registry,const AuxiliaryFrame& f) {
     for(auto task:registry)if(task) {
         auto& o=p.objects.at(p.tasks.at(task-1)[7]-1);admit(o);updateDelta(o,f);
@@ -138,7 +146,7 @@ void AuxiliaryObjects::updateRegistry(TaggedTaskPools& p,std::span<const uint32_
             const ScalarFloat x{o[0x40/4]},lo=ScalarFloat::integer(34),hi=ScalarFloat::integer(606);
             if(x.less(lo))o[0x40/4]=lo.bits;else if(hi.less(x))o[0x40/4]=hi.bits;
         }
-        completion(o,f);
+        completion(o,f,p);
     }
 }
 void AuxiliaryObjects::visitRegistry(TaggedTaskPools& p,std::span<uint32_t> registry,const std::function<void(uint32_t)>& visit) {

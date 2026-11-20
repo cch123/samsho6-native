@@ -1,10 +1,15 @@
 #pragma once
+#include "object_frame.hpp"
 
 namespace ss6 {
 struct StateEntryActor;
 struct PlayerMatchStats;
 struct ContactEvent;
 class InputBindings;
+
+int contactFinishCategory(const StateEntryActor&,const InputBindings&); //14dac8
+int projectileFinishCategory(const AuxiliaryObject&,const StateEntryActor& owner,const StateEntryActor& opponent,
+                             const InputBindings&);
 
 // Sample counter status before changing
 // the target's state or increasing the source's per-combo hit counter.

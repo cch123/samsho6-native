@@ -1117,6 +1117,37 @@ void NativeMatch::enterTitleAudio() {
     sounds_.bindPlayers(51,lineup_[1].character);
     sounds_.playMusic(1,0x3200);
 }
+void NativeMatch::enterOption(OptionScene scene) {
+    // 1ce478 seeds the animated background from the C library generator:
+    // 1800 draws in 1e1620, the variant draw, then one in 1e2358/1e23a0.
+    auto& random=battle_.random;
+    for(unsigned i=0;i<1800;++i)random.nextLibrary();
+    const int variant=int(random.nextLibrary());
+    random.nextLibrary();
+    option_->enter(scene,variant);
+}
+void NativeMatch::tickOption(const std::array<NormalizedPadSample,2>& pads) {
+    if(titleFadeTick_ && ++titleFadeTick_>=27)titleFadeTick_=0;
+    const auto menuPads=menuRepeat_.sample({resultPad(pads[0].held),resultPad(pads[1].held)},
+                                           {resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
+    const auto result=option_->tick(menuPads);
+    for(int id:result.sounds)sounds_.sample(-1,id);
+    if(result.request!=OptionScene::None && !sceneFade_.active()) {
+        pendingOption_=result.request;sceneFade_.begin(true);
+    }
+    // The transition task (priority 3c) runs after the page task (14).
+    if(!sceneFade_.tick())return;
+    if(pendingOption_==OptionScene::Title) {
+        // 1cfc88 clears GameData (124d50) before the title scene 127940.
+        option_.reset();
+        battle_.matchEnd={};battle_.matchEnd.winner08=-1;
+        title_.emplace(true,system_->modeMenuUnlock(),menuRow_);
+        titleFadeTick_=0;
+    }
+    // KEY CONFIGURATION (13cdb0) is not ported: its request returns to the top page.
+    else enterOption(pendingOption_==OptionScene::KeyConfig?OptionScene::Top:pendingOption_);
+    pendingOption_=OptionScene::None;
+}
 void NativeMatch::openTitle(bool returningFromVersus) {
     title_.emplace(returningFromVersus,system_->modeMenuUnlock());
     titleFadeTick_=0;titleAudioPending_=!returningFromVersus;
@@ -1221,6 +1252,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
     // 118148 visits the global PRESS START task before the scene and even
     // while 2P menus or combat hide its text. It survives scene replacement.
     promptClock_=(promptClock_+1)%120;
+    if(option_){tickOption(pads);return;}
     if(title_) {
         auto& menu=battle_.consoleMenu;
         menu.samplePads({resultPad(pads[0].held),resultPad(pads[1].held)},
@@ -1233,6 +1265,19 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         for(int tone:title_->tones)if(tone>=0)sounds_.sample(tone==1?0:-1,tone);
         if(title_->announce)sounds_.voice(49,0);
         titleFadeTick_=title_->transitionTick;
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Option) {
+            // 1cd5fc: mode word 11/12, sub-mode 0, 1cfda0 clears the top cursor.
+            menuRow_=int(title_->firstRow());
+            battle_.gameMode=0x11+title_->confirmingSeat;battle_.matchEnd.submodeA0=0;
+            title_.reset();
+            if(!optionTables_)optionTables_=std::make_unique<ConsoleOptionTables>(assets_);
+            option_.emplace(*optionTables_,*system_);
+            option_->save=[this]{system_->saveFile();};
+            option_->load=[this]{system_->loadFile();};
+            option_->resetTopCursor();
+            enterOption(OptionScene::Top);
+            return;
+        }
         if(titleFadeTick_==15) {
             menu.beginSet(title_->confirmingSeat);
             title_.reset();

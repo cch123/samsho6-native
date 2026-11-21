@@ -15,6 +15,7 @@
 #include "console_title.hpp"
 #include "versus_faceoff.hpp"
 #include "system_data.hpp"
+#include "console_option.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -71,6 +72,9 @@ public:
     void enableCpu(unsigned seat,int level=4);
     void openTitle(bool returningFromVersus);
     const auto& title() const {return title_;}
+    // OPTION MODE scenes (1cfa10 and its sub-pages) and their white fade.
+    const std::optional<ConsoleOption>& option() const {return option_;}
+    const SceneFade& sceneFade() const {return sceneFade_;}
     bool titlePromptVisible() const {return promptClock_<60;}
     void openCharacterSelect(bool boot=false);
     void leaveUnportedFight(const UnportedFighterState&);
@@ -103,6 +107,14 @@ private:
     void enterSelectAudio();
     void enterTitleAudio();
     std::optional<ConsoleTitle> title_;
+    std::unique_ptr<ConsoleOptionTables> optionTables_;
+    std::optional<ConsoleOption> option_;
+    OptionScene pendingOption_=OptionScene::None;
+    MenuPadRepeat menuRepeat_;
+    SceneFade sceneFade_;
+    int menuRow_=-1;
+    void enterOption(OptionScene);
+    void tickOption(const std::array<NormalizedPadSample,2>&);
     bool titleAudioPending_=false;
     int titleFadeTick_=0;
     unsigned promptClock_=0;

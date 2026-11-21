@@ -21,6 +21,10 @@ public:
     // truncated or corrupt file, as 10f088 does after a failed card read.
     bool load(const std::filesystem::path& file);
     void save(const std::filesystem::path& file) const;
+    // Native replacement of the memory card slot. Empty: nothing persists.
+    std::filesystem::path file;
+    bool loadFile() {return !file.empty()&&load(file);}
+    void saveFile() const {if(!file.empty())save(file);}
     static uint16_t checksum(std::span<const uint8_t> bytes); // 10dcc0
     static std::array<uint8_t,fileSize> seal(std::span<const uint8_t,imageSize> image); // 10ddd8
     static bool verify(std::span<const uint8_t,fileSize> file); // 10dd98

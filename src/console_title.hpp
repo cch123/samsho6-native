@@ -32,7 +32,9 @@ inline ConsoleModeRows consoleModeRows(unsigned unlock) {
 // Japanese factory system data, with both local input ports present.
 class ConsoleTitle {
 public:
-    explicit ConsoleTitle(bool returningFromVersus,unsigned unlock=0);
+    // returnRow restores the raw cursor 582af8, which survives a mode's scenes.
+    explicit ConsoleTitle(bool returningFromVersus,unsigned unlock=0,int returnRow=-1);
+    unsigned firstRow() const {return firstRow_;}
     void tick(const std::array<uint32_t,2>& menuCommands,bool startPressed);
     ConsoleTitleFrame draw;
     std::array<int,2> tones{-1,-1};
@@ -40,7 +42,7 @@ public:
     int confirmingSeat=-1;
     ConsoleMode confirmedMode=ConsoleMode::None;
     // Rows whose scene exists natively; other rows only report unavailableMode.
-    uint32_t supportedModes=1u<<unsigned(ConsoleMode::Versus);
+    uint32_t supportedModes=1u<<unsigned(ConsoleMode::Versus)|1u<<unsigned(ConsoleMode::Option);
     int transitionTick=0;
 private:
     unsigned firstRow_,direction_=0,scroll_=0,inputAge_=0,titleTick_=0,idleTick_=0;

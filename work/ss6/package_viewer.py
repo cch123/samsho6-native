@@ -24,7 +24,7 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  *[f'vs_voice_{i:02}.bin' for i in (*range(1,43),*range(44,49))],
                  *[f'vs_sounds_{i:02}.bin' for i in (*(c for c in SELECTABLE if c),51,52)],
                  *[f'bg{arena:02}_{page}.{ext}' for arena in (0,1) for ext,pages in (('tex',(1,2,3,4)),('pal',(1,3))) for page in pages],
-                 'save_default.bin','console_versus_art.bin','combat_stage.bin','combat_stage_01.bin']:
+                 'save_default.bin','console_option.bin','color_edit.bin','console_versus_art.bin','combat_stage.bin','combat_stage_01.bin']:
  shutil.copy2(ROOT/'work/ss6/extracted/resources'/resource,ROOT/'outputs/ss6-feasibility/native-viewer/assets'/resource)
 target=ROOT/'outputs/ss6-feasibility/native-viewer/ss6-viewer'
 shutil.copy2(ROOT/'README.txt',target.parent/'README.txt')

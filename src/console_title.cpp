@@ -1,10 +1,10 @@
 #include "console_title.hpp"
 
 namespace ss6 {
-ConsoleTitle::ConsoleTitle(bool returningFromVersus,unsigned unlock)
+ConsoleTitle::ConsoleTitle(bool returningFromVersus,unsigned unlock,int returnRow)
     :joined_(returningFromVersus),rows_(consoleModeRows(unlock)),unlock_(unlock&3) {
     // 1ccf10 parks the raw cursor on the last row, which highlights ARCADE.
-    firstRow_=returningFromVersus?0:rows_.count-1;
+    firstRow_=returningFromVersus?(returnRow>=0?unsigned(returnRow)%rows_.count:0):rows_.count-1;
     draw={joined_,firstRow_};draw.unlock=unlock_;
 }
 

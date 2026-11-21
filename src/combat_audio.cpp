@@ -46,7 +46,7 @@ void CombatAudio::clearVoices() {
     queue_={};read_=write_=transfer_=0;
 }
 void CombatAudio::reset() {
-    channels_={};players_={};nextEffect_=14;clearVoices();music_.reset();
+    channels_={};players_={};common_=50;nextEffect_=14;clearVoices();music_.reset();
 }
 int CombatAudio::playEffect(const CombatSoundSample* sample,int volumeCode) {
     // ADPCMST.IRX e40: no priority comparison or free-slot scan. Even a
@@ -61,7 +61,7 @@ int CombatAudio::playEffect(const CombatSoundSample* sample,int volumeCode) {
 }
 int CombatAudio::play(int bank,int tone) {
     if(bank<0||bank>2||tone<0)return 0;
-    const auto* sample=bank?bank_.fighterEffect(players_[bank-1],unsigned(tone)):bank_.find(0,unsigned(tone));
+    const auto* sample=bank_.bankEffect(bank?players_[bank-1]:common_,unsigned(tone));
     return playEffect(sample,sample?sample->volumeCode:0);
 }
 // 212d80 applies the music setting to the same resident sample used by
@@ -111,22 +111,47 @@ int CombatAudio::playVoice(int character,int tone,unsigned voiceVariant) {
     write_=(write_+1)%queue_.size();
     return -1;
 }
-void CombatAudio::preloadMusic(int variant,int track) {music_.request(variant,track,true,0);}
+void CombatAudio::requestMusic(MusicEntry entry,int variant,int track,int flag,int volume) {
+    // 213ff0 plays track 23 as the resident jingle 212d80(12): it scales the
+    // music volume 5a9e78 to a code (skipped when zero) and leaves both the
+    // request block and any running stream untouched.
+    if(entry==MusicEntry::Play&&track==23) {
+        if(volume)playResidentJingle(12,volume>>9);
+        return;
+    }
+    if(!music_.exists(variant,track))return; // 214210 would open a file the disc lacks
+    music_.request({variant,track,flag!=0,entry==MusicEntry::Preload,entry==MusicEntry::Gallery},volume);
+}
+// The battle and menu callers of the original pass these repeat flags:
+// 13abb0 2140b8(stage + 5, 1); 1282d0 213ff0(2, 1); title 1 and 1e7ce8(24) zero.
+void CombatAudio::preloadMusic(int variant,int track) {requestMusic(MusicEntry::Preload,variant,track,1,0);}
 void CombatAudio::startMusic(int volume) {music_.release(volume);}
-void CombatAudio::playMusic(int variant,int track,int volume) {music_.request(variant,track,false,volume);}
+void CombatAudio::playMusic(int variant,int track,int volume) {requestMusic(MusicEntry::Play,variant,track,track==2,volume);}
 void CombatAudio::stopMusic() {
-    music_.stop();
-    channels_[0]={};channels_[1]={};
+    music_.stop(bool(channels_[0].sample));
+    if(!music_.fading()) {channels_[0]={};channels_[1]={};}
+}
+void CombatAudio::loadBank(int group,int bank) {
+    if(group<0||group>2||bank<0)return;
+    // 1e79c8 first stops the effect voices (1e7a78 -> 213be8(1)); 212dd8's
+    // 2135e0 then stops a running stream until the IOP reports idle.
+    stopGroup(1);
+    if(channels_[0].sample)stopMusic();
+    if(group)players_[size_t(group-1)]=unsigned(bank);
+    else common_=unsigned(bank);
 }
 void CombatAudio::tick() {
-    const auto change=music_.tick();
-    if(change!=CombatMusic::Event::None) {
+    const auto change=music_.tick(bool(channels_[0].sample));
+    if(change==CombatMusic::Event::Fade) {
+        // 214438's first lowered volume reaches both stream voices once.
+        for(unsigned i=0;i<2;++i)if(channels_[i].sample)channels_[i].volume=music_.fadeLevel();
+    } else if(change!=CombatMusic::Event::None) {
         for(unsigned i=0;i<2;++i) {
             auto& voice=channels_[i];
             voice={};
             if(change==CombatMusic::Event::KeyOn) {
                 voice.sample=&music_.track().sides[i];
-                voice.streamEnd=music_.track().endSample;
+                voice.streamEnd=music_.endSample();
                 voice.repeat=music_.repeat();
                 voice.volume=music_.volume();
             }

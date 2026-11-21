@@ -17,15 +17,22 @@ public:
     void bindPlayers(std::array<unsigned,2> ids){players_=ids;clearVoices();}
     int playVoice(int character,int tone,unsigned voiceVariant=0);
     int playResidentJingle(int tone,int volumeCode);
+    // The EE stream entry points that fill the request block.
+    enum class MusicEntry { Play /*213ff0, behind 1e7c00*/, Gallery /*214060*/, Preload /*2140b8*/ };
+    // flag is the second argument of the entry point (the IOP repeat flag).
+    void requestMusic(MusicEntry entry,int variant,int track,int flag,int volume);
     void preloadMusic(int variant,int track);
     void startMusic(int volume);
     void playMusic(int variant,int track,int volume);
+    // 1e79c8(group - 1, bank) -> 212dd8: BVOICE2[bank] into group 0 (common), 1 or 2.
+    void loadBank(int group,int bank);
     void stopMusic();
     void stop(int physicalChannel);
     void stopGroup(int group);
     void clearVoices();
     void reset();
     void tick();
+    const CombatMusic& music() const {return music_;}
     void render(std::span<int16_t> interleavedStereo);
     static constexpr int sampleRate=48000;
 
@@ -47,6 +54,7 @@ private:
     };
     CombatSoundBank bank_;
     std::array<unsigned,2> players_{};
+    unsigned common_=50;
     CombatMusic music_;
     std::array<Channel,22> channels_{};
     std::array<Request,4> queue_{};

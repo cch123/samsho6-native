@@ -547,7 +547,7 @@ void EditArt::frame(Context& c,const EditFrame& g,MenuBackdrop* backdrop,GameRan
         if(g.hasMessage) {c.pen.colour=0xffffffff;markup(c,g.messageText,1,false,float(x+0x10),float(y+0xc));}
     }
     for(const EditFrame::Keys* bar:{&g.keys,&g.extra}) {   // 181c30
-        if(bar->layout==-1)continue;
+        if(bar->layout==-1||(bar->layout==0&&g.mode11))continue;
         const int x=bar->slide.x,y=bar->slide.y;
         const float z=layer(c,0x5f2378);
         shade(c,float(x),float(y),z,float(bar->w),float(bar->h));
@@ -599,7 +599,6 @@ void EditArt::buttonListMenu(Context& c,const EditListView& v) const {
 
 void EditArt::spiritPanel(Context& c,const SpiritPanel& p,bool raised) const {
     if(!p.visible)return;
-    int visibleRows=p.visibleRows;
     if(raised)c.list.cursorBase=f(0x6647ac);            // 17c250
     EditBox box;
     focus(c,box,p.active);
@@ -611,7 +610,7 @@ void EditArt::spiritPanel(Context& c,const SpiritPanel& p,bool raised) const {
         bar.x=float(p.slide.x+p.width+3);bar.y=float(p.slide.y+3);bar.h=float(p.height-6);bar.w=f(0x6647b0);
         scrollBar(c,bar,count,p.visibleRows,p.scroll,1);
     }
-    visibleRows=std::min(visibleRows,count);
+    const int visibleRows=std::min(p.visibleRows,count);
     // A panel without a value column (the option list) is drawn in the
     // focused colours whatever its focus; its cursor row is then marked
     // only while the panel is active.
@@ -798,7 +797,6 @@ void EditArt::dialog(Context& c,const ColorEdit::Panel& p,std::string_view messa
     const int span=int(message.size())*0x16;
     c.pen.colour=0xffffffff;
     text(c,message,0x140-((span<0?span+3:span)>>2),0xbc,2);
-    c.pen.colour=0xffffffff;
     c.pen.colour=rowColour(true,p.list.cursor==0);
     text(c,assets_.text(EditArtAssets::Yes),0xf8,0xe4,2);
     c.pen.colour=rowColour(true,p.list.cursor!=0);

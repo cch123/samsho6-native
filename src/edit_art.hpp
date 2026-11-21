@@ -76,6 +76,9 @@ struct EditFrame {
     bool hasTitleText=false;std::string titleText;   // +5c (181e68)
     Bar message;bool hasMessage=false;std::string messageText; // +60; +a8
     Keys keys,extra;                                 // +ac, +108
+    // 181c30 skips a key bar of layout 0 while the mode word 4c3808 is 0x11.
+    // Neither edit scene uses layout 0; the owner of such a scene sets this.
+    bool mode11=false;
 
     // seat is 178f90(): several key-hint layouts slide in from that seat's side.
     EditFrame(const EditArtAssets& art,const EditWidgetAssets& widgets,unsigned seat=0);
@@ -119,7 +122,8 @@ public:
     void setFade(bool enabled,int level,uint32_t colour);
 
     // Per-frame drawing context. seat is 178f90() (the operating seat tints
-    // the borders); markSkip is option byte 7e (43d0d6) == 0.
+    // the borders). option7e is option byte 7e (43d0d6): while it is zero,
+    // icon 2d is not drawn and an "MS" token ends a markup line.
     struct Context {
         MenuDrawList& list;
         EditPen& pen;

@@ -1,0 +1,240 @@
+ARCADE RESULT SCENES (SLPS-25559): win quote, VS result, challenger banner, name entry overlay,
+unlock notice, unlock predicates
+==================================================================================================
+Native port: src/arcade_results.hpp / .cpp. Tables: work/ss6/extract_arcade_results.py ->
+arcade_results.bin. Evidence: work/ss6/validate_arcade_results.py ->
+outputs/ss6-feasibility/arcade_results_validation.json. Everything below is OBSERVED in the
+disassembly and, unless marked otherwise, compared against the original routine in Probe.
+Record layout of every sheet record: {u, v, w, h, flags, slot} (six words).
+
+1. WIN QUOTE 135e30 (Task_VS_Next)
+----------------------------------
+The arcade scene is the SAME task as the VS winner screen ported in src/versus_result.* (handler
+136000, priority 14, tag bbf, destructor 136288). Differences that matter in arcade:
+  - sheet "win_%02d" of the winner's character (g+8 -> seat record +0) in slot 8, palette at
+    116478(100, n) with entry 0 cleared, 10add8(8, 10); the existing port only packages win_00.
+    win_40, 41 and 44..48 have 32-bit palettes (1024 bytes): 116478 then copies the parallel
+    buffer (439b68 / 43cc60 / 3ebf28) and the cleared halfword (135f70) has no effect;
+  - quote record 1a3070(character, 2, g+8c): table 50d550 (system byte 43d052 == 0) or 50d618
+    (!= 0: English lines, characters 0..42 only; 43 null; 44..48 lie past the table). Character 43
+    and >= 49 return null. Record +8 / +c / +10 are up to three line pointers;
+  - the gate g+18 (challenger freeze) and the exit 1362d8 (ArcadeRun::winQuoteExit).
+Entry: 112670(14, 136000, 10, bbf); task+1c = g+8; 118320(136288); 4ca1b0 / b4 / b8 / bc / c0 / c4
+= 0; texture + palette; 116200(8, 20); 135300(0) (board: menu_bg00_00 in slot 4, 10add8(4, 0),
+116478(80, 80) of its .pvp upper half); 4ca1c8 = quote record; 112f08(20); 112f30(ffffff, 0);
+3d3aa0 = 0; 1e7c00(19, 0).
+Handler 136000 (F = 4ca1b4, FB = 4ca1b8, MF = 4ca1bc, E = 4ca1c0, M = 4ca1b0, latch 4ca1c4,
+reveal limit L = 3d3aa0, pad = 118128(g+8).pressed):
+    F >= 10, latch 0, pad & 8, g+18 == 0           -> 1362d8()
+    F >= 3c, E < 1c2, latch 0, pad & 607           -> M == 0: L = 100, MF = 400;  M == 1: E = 1c2
+    136400(F, FB, record)                          (draw; sets M when F >= 3c)
+    g+18 == 0: F++, FB++; F > 3c: L = MF / 4, MF++; M == 1: E++
+    g+18 != 0: L = 400                             CORRECTION: the static spec omitted this write
+    E == 1e0, latch 0, g+18 == 0                   -> 1362d8()
+1362d8 sets the latch itself. The scene keeps running (and drawing) during the outgoing fade.
+Destructor 136288: g+1c = 0 unless g+0 == 3; frees bbf; 1e7ad0; 116268(8, 20); 112f08(8).
+Draw 136400(F, FB, record), in submission order:
+  136930  60 <= F < 64: 1145c0(0, 0, 640, 480, ffffffff), z -350.
+  1364a8  F < 60: 1148f0(ff000000; 0, 0, z 29999, 640, 480); else the board 135438(FB).
+  1366e0  portrait, when 136500 shows it (colour ffffffff, blend 1):
+          113f98(8; X + ((S-1)*130 + 130), Y, z 29902, S*510, S*380; u 1, v 0, 510 x 380)
+          114118(8; (X, B) (R, B) (X, Y) (R, Y); z 29902; u 1, v 381, uw 380, vh 130) with
+          B = (Y + 380) + (S-1)*380, R = (X + 130) + (S-1)*130 and, for F < 60 only, R + 1.
+          The second piece is stored turned by a quarter in the sheet (texel u runs down the
+          screen). EE rounding: ADDA / MADD round product and sum separately.
+          114118 culls through 114f20(x0, x1, x2, x3, y0, y1, y2, y3), whose left-edge test
+          reads y3 in place of x3 (x0, x1, x2 < 0 and y3 < 0). The defect is reproduced: during
+          the entrance the strip piece is still submitted while it lies wholly left of the
+          screen (validator case F = 4).
+  1369b0  F >= 60: blend 0, colour ffffffff; 1148f0(ff000000; 0, 364, z 29901, 640, 100).
+  136a28  F >= 60: M = 1a2870(record).
+136500 (pose): F 0..9: S = 3, X = -128*(winner == 0 ? F : 10 - F), Y = 0;
+  10..19 hidden; 20..29: S = 3, X = -128*(winner == 0 ? 10 - (F-20) : F-20), Y = -660;
+  30..39 hidden; 40..59: S = 3 - (F-40)*0.08675, Y = -(S*380*0.5 - 240), X = -(S*640*0.5 - 320);
+  F >= 60: S = 1, X = Y = 0.
+1a2870(record): n lines; y = 16e + (3 - n)*c; per line 113028(text, 140 - 6*strlen, y, ffffffff),
+  y += 18; returns counter 3d3ab0 < L. 113028 draws a character only while L < 0 or the counter
+  is below L and counts each drawn character (full-width spaces included).
+Board 135438(FB): eleven bands of ten 83-pixel records each (tables 4c96f0, 4c97e0, 4c98d0, 4c99c0,
+  4c9ab0, 4ca050, 4c9ba0, 4c9c90, 4c9d80, 4c9e70, 4c9f60 in drawing order), z 29999.
+  band(period, shift): q = FB / period, r = FB % period; column i draws record (i + q) % 10 at
+  x = 83*i + shift(r); the record's own flag word is the 117de8 flag argument (0x100 hides the
+  record: the lower bands have holes; 0x200 = opaque blend).
+    band 0:      period trunc(83 / 0.1) = 830, shift trunc(r * -0.1), y 0, blend 0
+    bands 1..6:  period trunc(83 / 0.4) = 207, shift trunc(r * -0.4), y = running sum of heights
+    bands 7..10: period 83, shift -r, y = 262, then 262 + running sum of heights
+Background 135de0 (variant 1, VS result): 117de8(record 4ca140 = (0, 0, 640, 480) of menu_bg01_00;
+  0, 0, z 29999). menu_bg01_00 has no appended CLUT: bank 0, i.e. global entries 00..7f are the
+  resident obj0 CLUT and 80..ff the upper half of menu_bg01_00.pvp.
+
+2. VS RESULT 136a60 (Task_VS_Result)
+------------------------------------
+CORRECTION to docs/mode-arcade-flow.txt 5.7: the task priority is 19 (112670(19, 136c58, 10, bc2)).
+Entry: 118320(136f88); F (4ca1e4) = E (4ca1e8) = latch (4ca1f0) = 0; char_face_1024 in slot 5 with
+its 32-bit palette at 116478(200, n), 10add8(5, 20); font_otherscene2_16 in slot c, 10add8(c, 0);
+116200(8, 10); 135300(1); winner W = g+8: 11d448(); 11d488(W, character); object = 11e2e8(bc2)
+-> 4ca1ec; 11d528(object); 11d570(object, W, x, 0, flags) with x = 260, flags 0 for W == 0 and
+x = 380, flags 80000 otherwise; object+20 = colour (seat record +4); 11d908(object, 0, 1, 0);
+camera 122e98(320, 120, -400), 122eb8(-160, -120, 0); 1e7c00(19, 0).
+Handler 136c58 (pad = 118128(g+8).pressed):
+    F >= 1f, latch 0, pad & 8, g+18 == 0                       -> 136fc8(); latch = 1
+    object+24 == 1fb, object+c0 != 0, E < d2, latch 0, pad & 607 -> E = d2
+    1370c8(F); 11d6c8 / 11d868 / 11d730(object)
+    g+18 == 0: F++; object+24 == 1fb and object+c0 == 1: E++
+    F == 64: 11d908(object, 1fb, 1, 0)                          (tested after the increment)
+    E == f0, latch 0, g+18 == 0                                 -> 136fc8(); latch = 1
+Destructor 136f88: 11e3a0(bc2); frees bc2 and fa1; 1e7ad0; 116268(8, 10).
+Draw 1370c8(F): 135de0; 137100: F == 64: 1145c0 white screen, z -350; 137150; 137320.
+  137150 (colour ffffffff, blend 1): n = min(g+38, 999) - (F < 64 ? 1 : 0); digits of slot c
+    through 117de8(record 4c3c10 + 18*d, flags 1): hundreds at x 128, tens 192, ones 256, label
+    record 4c3d18 at x 336; all y 128, z -50. (A streak of 0 before frame 64 indexes digit -1 =
+    record 4c3bf8.) Flags 1 = CLUT bank 1 of the resident obj0 palette.
+  137320: count = min(g+38, 20); entry i at x = 30 + 70*(i % 5), y = 30 + 60*(i / 5) shows
+    character g+3c[(g+38 - i + 13) % 14]; face = table 5e1360[character] = {slot 5, column, row}:
+    113f98(5; x, y, z 29902, 85, 66; u = 85*column, v = 66*row, 85 x 66).
+    i == 0 (the newest): F < 3c: colour = trunc(F * 4.25) << 24 | ffffff (fade in);
+      F >= 64 and F - 64 < 18: position offset 5e14c8[(F - 64) % 8] (dx, dy);
+      the mark 117de8(record 4c3d30, flags 0; x - 10, y - c, z 29901) only from F >= 64.
+    i > 0: face and mark always.
+The winner object's action 1fb (win pose) and its word +c0 belong to the fighter pipeline; the
+native scene takes +c0 as an input of tick().
+
+3. CHALLENGER BANNER: 1252f0 kind 4
+-----------------------------------
+Task 1251d0 (tag bc1), state 1239da4, age 1239da8; word 3db908 is set to 1 around every worker of
+kinds 3 / 4 and restored (108118 then skips the size-1 texel clamp).
+  state 1: 125c68(speed, n): unless (g+a0 == 5 and word 443140 != 0):
+              117de8(record 4c5188, flags 0; 60, 150, z -400) and 117de8(record 4c51a0, flags 3;
+              same position) - two 511 x 166 pieces of slot 1 (obj0_16);
+           n == 0: 1e7d60(31, 4d); n >= 5b: returns 125778(speed, n - 5a) (the kind-3 shutter),
+           otherwise 1. The state ends on the visit where 125778 returns 0 (n - 5a == e):
+           visits n = 0 .. 68 (0x5a + 0xf visits).
+  state 2: 125da8 = 125848 (three visits; 1e7b70(-1, f) on the first; 1253e0, the old destructor
+           and the new entry run after the third).
+  state 3: 125dc0 = 1258a8 (fifteen visits), then g+94 = 0, g+2c = 0.
+Packets: while 3db908 == 1, 108118 submits tag ff4 instead of ff2: normalised STQ coordinates
+(u + 0.5) / size .. (u + w - 0.5) / size with Q = 1 and no size-1 clamp, i.e. a half-texel inset on
+every side. The native banner records carry these texel positions (u + 0.5, w - 1). NOTE for
+src/vs_curtain.*: validate_vs_curtain.py calls 125778 directly with 3db908 == 0 (ff2 packets);
+inside the real 1251d0 task the same shutter is submitted as inset ff4 quads. Whether the pixel
+result differs was not measured here.
+The shutter frames are those of kind 3 (src/vs_curtain.*): VsCurtain frame = n - 5a in state 1
+(frames 1..14; frame 0 is never shown), f + age in state 2, 12 + age in state 3.
+CORRECTION to docs/mode-arcade-flow.txt 6.2 / U9: the banner art is in obj0_16 (slot 1), not in a
+separate sheet; src/vs_curtain.* covers the shutter but not the banner.
+
+4. NAME ENTRY OVERLAY (drawing of 1c9928)
+-----------------------------------------
+Logic: ArcadeNameEntry (src/arcade_run.*). Per visit: 1ca248, 1c99c8, commit test, 1c9ec8.
+  1ca248 (skipped once finished): two digits of the seconds 133f7c8 as 117de8(record 4c40d8 + 18*d,
+    flags 0) at x = c6 (mode 1) or 246, +e per digit, y 24, z -100; a leading zero is drawn.
+    Then the countdown step. The digits therefore show the value BEFORE this visit's step.
+  1c9ec8: 582a4c = 1c9d20() (blink); 1135e8("NAME>", 20 or 1a0, 18, ffffffff); name x X = 66 or 1e6.
+    cell = cursor, or 3 when cursor == 2 and name[2] != 0.
+    while entering: 1135e8("_", X + e*k, 1d) for k = 2 down to cell; position k == cell only while
+      the blink is on.
+    1ca018: 1135e8(name, X, 18) (once finished only while the blink is on).
+    1ca078 (blink on, entering): glyph 582998[index]: "END" -> 117de8(record 4c5368; X + e*cell,
+      y 24, z -100); "<-" -> record 4c5350; otherwise 1135e8(glyph, X + e*cell, 18).
+
+5. UNLOCK NOTICE 1e5d88 ("SecretAppear")
+----------------------------------------
+CORRECTION to docs/mode-arcade-demos.txt 6 / mode-arcade-flow.txt 5.10: 1e5d88 is NOT a ranking
+name entry or network registration; it announces newly unlocked items after Game Over.
+Entry: 112670(14, 1e5e90, 10, 1797); 118320(1e6130); 112f30(ffffff, 0); 1e5df0(); 1e79c8(0, 33);
+g+30 = 1. 1e5df0: 1cf788(); list 13430d0[16] cleared; index 584f60 = 0; 1e62b8(list, &count
+584f64) - this applies the setters, so the items are unlocked when the scene starts; latch 584f68,
+frame 584f6c, fading 584f70 = 0.
+Handler 1e5e90 (seat = 0 in mode 1, 1 in mode 2):
+    frame >= 3c and (118128(seat).pressed & 60e) and index < count -> frame = 0, fading = 1
+    fading != 0: frame == 0: 1e7b70(-1, 0); alpha = ff + frame * -ff / 3c
+    fading == 0: frame == 0 and index < count: 1e7b70(0, 1); alpha = frame * ff / 3c
+    index < count: 1e63c8(text 584f20[list[index]], 1e2950(text), alpha)
+    frame < 3c: frame++; on reaching 3c: fading == 1 -> frame = 0, index++;  fading = 0
+    index == count and latch 0 -> 10f158(); 1252f0(1, 1, 1e6130, 1e8850); latch = 1
+Destructor 1e6130: memset(3ebf30, 0, 800); 124d50(); frees 1797; g+2c = 1; g+30 = 0.
+Draw 1e63c8(text, lines, alpha): top = (lines odd ? d4 : e0) - (lines / 2)*18;
+  text depth 348a8c = trunc(114d88(-330)) for 109f08(text, 46, top + 2, 0, 0, 0, alpha) (shadow) and
+  109f08(text, 44, top, ff, ff, ff, alpha); then 1e64a8(lines, alpha): a = alpha >> 1;
+  1145c0(18, top - 18, 250, lines*18 + 30, a << 24 | fcfcfc), z -50; four 1c1528 edges
+  (14, top - 1c, 258, 4), (14, top + lines*18 + 14, 258, 4), (14, top - 18, 4, lines*18 + 30),
+  (268, top - 18, 4, lines*18 + 30) between a << 24 | ff8020 and a << 24 | 802020, period 78,
+  counter / direction words 584ff8 / 584ffc (never reset), z -311.
+Texts 584f20[0..15]: fighters 2a, 29, 28, 2c, 2d, 2f, 2e, 30 (Kuroko), then the "beast" spirit,
+  "demon" spirit, "festival" spirit, unlimited festival spirit, GALLERY MODE, SPIRITS EDIT MODE,
+  SURVIVAL MODE and the alternate versions of four fighters (extracted verbatim).
+
+6. UNLOCK PREDICATES 584f78[16] / SETTERS 584fb8[16]
+----------------------------------------------------
+p(endings, spirits, force) with endings = 1e3f70 (non-zero bytes of g_GameOption+47..77),
+spirits = 1e3fa0 (non-zero bytes of +81..89). o[x] = byte g_GameOption+x (43d058 + x);
+T = (word +90 > 2bf1f, unsigned); S[i] = session words 13430b0 + 4*i (1e3fd0, survival wins).
+Fighter entries return 0 when the lock byte is already 0 unless force == 1; flag entries return 0
+when the flag is already set unless force == 1. base = o[40] == 0 and o[3e] == 0 and o[3f] == 0.
+   i  gate            condition                                                   setter byte
+   0  o[40] != 0      o[48] != 0 or endings >= 3 or S[0] or T                     o[40] = !v
+   1  o[3f] != 0      o[4b] != 0 or endings >= 6 or S[1] or T                     o[3f]
+   2  o[3e] != 0      o[51] != 0 or endings >= 9 or S[2] or T                     o[3e]
+   3  o[42] != 0      (base and o[4b] != 0) or S[3] or T                          o[42]
+   4  o[43] != 0      (base and o[5a] != 0) or S[4] or T                          o[43]
+   5  o[45] != 0      (base and o[56] != 0 and o[69] != 0) or S[5] or T           o[45]
+   6  o[44] != 0      (base and o[5f] == 1) or S[6] or T                          o[44]
+   7  o[46] != 0      endings >= (o[6e] and o[7e] ? 20 : 28) or S[7] or T         o[46]
+   8  o[80] == 0      (o[73] == 1 and (word +74 & ffffff) == 010101) or T         o[80] = v
+   9  o[7f] == 0      endings >= (o[52],o[62],o[54],o[61] all set and one of
+                      o[42],o[43],o[45],o[44] clear ? 10 : 18) or T               o[7f]
+  10  o[7e] == 0      R                                                           o[7e]
+  11  o[95] == 0      endings == 30 or T                                          o[95]
+  12  o[8a] == 0      endings == 1 or T                                           o[8a]
+  13  o[8b] == 0      R                                                           o[8b]
+  14  o[8c] == 0      endings == 1 or T                                           o[8c]
+  15  o[94] == 0      endings == 30 or T                                          o[94]
+  R = endings >= (o[65..68] all set and o[7f] ? 18 : 20) or spirits >= 8 or T.
+  Setters: v == 1 -> unlocked (lock byte 0 / flag byte 1), any other value -> locked.
+  (Hexadecimal thresholds: 3, 6, 9, 10, 18, 20, 28, 30.) Note the exact equalities of entries
+  11, 12, 14 and 15.
+1e3640: endings / spirits once, then for i = 0..15 in order: setter[i](p[i](endings, spirits, 1));
+  later entries see the bytes written by earlier ones.
+1e6180: 1 when any p[i](endings, spirits, 0) != 0 (Game Over and survival exits use it to choose
+  1e5d88 over 1e8850). 1e62b8(out, &n): for each such i: setter[i](1), out[n++] = i.
+
+7. RANKING 1e8850 AFTER GAME OVER (not ported in this slice)
+------------------------------------------------------------
+It is the same scene as the attract ranking (ConsoleAttractRanking / ConsoleRankingArt), entered
+through 1252f0(1, 1, 138a48 or 1e6130, 1e8850), and it starts the same CPU-vs-CPU demonstration
+fight (1483f8). Differences after Game Over, OBSERVED statically only:
+  - the display rows are copied from the save tables at entry, so the row inserted by 1c5150
+    (score, three letters, character) is shown; ConsoleRankingArt replays draw lists captured from
+    the factory table and cannot show other data;
+  - row draw 1e9c50(.., row): when 1c5280() (word 582450, the inserted row or -1) equals the row,
+    the colour is modulated by the counter 585294 (0..3c) / direction 585298 through 1ea708 - the
+    new row pulses. Destructor 1e89f0 resets 582450 to -1 (1c5270), so the attract loop that
+    follows shows no highlight.
+
+8. DIFFERENCES FROM ArcadeSession::follow() AND WIRING
+------------------------------------------------------
+follow() applies winQuoteExit / versusResultExit at once. The original differs in three ways:
+  - the exit happens only on START (frame >= 10 resp. 1f, g+18 == 0) or when the end counter
+    reaches 1e0 (resp. f0); the scenes request music 19 at entry;
+  - destructor 136288 clears g+1c (versusInterrupted) unless g+0 == 3. follow() never clears it,
+    so after one challenger fight every later arcade win quote would again lead to the VS result.
+    The destructor runs at the transition midpoint, AFTER winQuoteExit has read g+1c;
+  - kind-4 exits (intruder due) play the challenger banner (125c68) before the shutter.
+Unlock: ArcadeSession::tickGameOver passes unlockPending = false; the original reads 1e6180 at
+frame 12c and then enters 1e5d88, whose entry applies the setters (1e62b8) and whose exit is
+1252f0(1, 1, 1e6130, 1e8850) after the autosave 10f158.
+
+  win quote / VS result:  enter()  -> tick() once per 1126f0 visit, draw() from the .draw state
+                          the exit leaves run.transition; at its midpoint call leave() (136288).
+                          ArcadeVersusResult: the fighter object (ArcadeResultFighter, action
+                          1fb from frame 64) is drawn by the fighter pipeline; pass its +c0.
+  banner (kind 4):        on a kind-4 request begin(); tick(hidden) per visit; draw the banner
+                          when .banner, VsCurtain::paint(.curtain) when >= 0; run
+                          transitionMidpoint + old destructor + new entry on .swap; on
+                          .finished call ArcadeRun::transitionFinished().
+  name entry:             per 1c9928 visit drawArcadeNameCountdown(before tick), then
+                          ArcadeNameEntry::tick, then drawArcadeNameEntry.
+  unlock:                 UnlockSessionFlags = words 13430b0..cc (survival 1e3fd0; zero
+                          otherwise); unlockPending() for the Game Over choice; enter()/tick()/
+                          drawArcadeUnlockNotice with one ArcadeEdgePulse that lives for the
+                          whole process (584ff8 / 584ffc are never reset); leave() at 1e6130.

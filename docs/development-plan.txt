@@ -21,7 +21,7 @@
 - 上方战斗界面已接入双方角色头像、胜局标记、剑气、生命条和倒计时。按日版任务顺序先读取体力，再处理本次命中。换局、持续受击、道具回血及各剑质的低血量提示使用同一条实战更新路径。见 life-hud-state-validation.json、life-food-window-validation.json 和 battle-life-hud-window-validation.json。
 - 莉姆露露（资源 02）已加入双席选人、开场、跳跃、44／66、持刀与空手通常技、冰系必杀、终局和再战。自身冰精灵、飞行冰块、冰台和受击者身上的冰各有独立时钟与绘制。双方实战覆盖 28 种持刀通常攻击；必杀技的 27 个指令槽已覆盖两边玩家，共 212 场输入回放。原程序对照见 rimururu_normals_validation.json、rimururu-special-validation.json 与 konru-validation.json。选人至再战见 rimururu-session-validation.json，键盘和手柄事件下的跳轻与冰击画面见 rimururu-window-input-validation.json。
 - 场地 0、1 都可开启有道具 VS。选人时可切换「アイテムなし／あり」，支持飞脚投送、双方拾取、四类食物回血、道具投掷和定时炸弹。地上道具会在换局时清理；直接再战保留开关，重选时可关闭。3252 组投送调度、双方真实拾取与跨局回放见 stage-item-schedule-validation.json、stage-item-contact-validation.json 和 select-session-validation.json。
-- 场地 0 在实战中随镜头平移和缩放。七个动画时钟在 KO 减速、赛后冻结、再战和 GAME OVER 交接时已与日版核对。场地 1（雪村）的十处景物、地面透视和共享随机数已接入同一调度。原盘场景回调的几何和像素对照见 combat_stage01_validation.json，跨场地时钟见 combat-stage-01-state-validation.json。场地 2 至 9 仍待移植。霸王丸 421＋斩、斩钢闪和旋风命中的震屏触发与回收已接入共用镜头。
+- 场地 0 在实战中随镜头平移和缩放。七个动画时钟在 KO 减速、赛后冻结、再战和 GAME OVER 交接时已与日版核对。场地 1（雪村）的十处景物、地面透视和共享随机数已接入同一调度。原盘场景回调的几何和像素对照见 combat_stage01_validation.json，跨场地时钟见 combat-stage-01-state-validation.json。场地 2 至 11 的景物任务已全部移植（2026-11-21），每个场地以整段原任务逐访问对照完整 GS 提交带、顺序号、库随机种子和抽样像素，见 docs/combat-stages.txt 与 combat_stageNN_validation.json。VS 选人可选 0 至 9；场地 10、11 仅能用 --stage 直接进入，其音乐未确定。场地 3 两条锁链首节位于角色平面之前，查看器尚未做前景分层。霸王丸 421＋斩、斩钢闪和旋风命中的震屏触发与回收已接入共用镜头。
 - 本地双人以持刀霸王丸、system0开局。实际方向输入驱动前后走、蹲起、防御、44后撤、66跑动和7/8/9跳跃。
 - 27种持刀普通攻击可由两边玩家的键盘输入打出。54个对局样例覆盖命中、受击和恢复。跳轻斩另有站姿、蹲姿及最早反击时机的原版对照。
 - 已接通236三种斩与踢佯攻、623三种斩、跑动中623三种斩、421三种斩，以及近身前后投、落空和双方同时投。

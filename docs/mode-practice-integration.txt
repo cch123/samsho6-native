@@ -1,0 +1,113 @@
+PRACTICE MODE -- native integration status and corrections to docs/mode-practice.txt
+===================================================================================
+
+Scope: how the validated logic of src/practice_mode.* is wired into the playable game
+(src/native_match_practice.cpp, src/practice_dummy.*, src/local_versus.cpp), what was read from
+the executable for that wiring, and what is still a placeholder. Addresses are hexadecimal EE
+addresses of SLPS-25559. OBSERVED = read from the disassembly during this work; the two
+validators named below executed the original code.
+
+1. Session flow (native)
+------------------------
+  title mode menu, PRACTICE row            NativeMatch::tick -> openPracticeSelect(seat)
+        |   1cd428: mode word 9/10, sub-mode 3     (ConsoleTitle::supportedModes has Practice)
+        v
+  character select, mode 9/10              CharacterSelect::configure(9/10); LocalVersus creates
+        |                                  the PracticeState (139280(1), 210368) on first sight
+        v
+  VS faceoff 125e10
+        |
+        v
+  battle: MatchRules{gameMode 9/10, submode 3, battleKind 1, requiredWins 1, practice}
+        |      NativeMatch::enterPractice  (17f5a0 + practice part of 1398c0 / 13f9f0)
+        |      NativeMatch::tickPractice   (one iteration of 138f48)
+        +--> CHARACTER SELECT: NativeMatch::reopenPracticeSelect (settings kept)
+        +--> RETURN TO TITLE:  NativeMatch::openModeMenu(row)   (PracticeState destroyed)
+
+  tickPractice order (138f48, OBSERVED 13908c..139174):
+    damage.beginFrame (123a17c = 1)
+    reset request 123a0cc -> practiceRestart (11e600, 13f9f0(0))
+    battleFrame(pads, held)          held = pause request 123a0c4 of the previous frame;
+                                     a held frame still dispatches the scheduler and draws
+                                     (the same path as the KO pause 123a0ec), 140270 is skipped
+    key history 13a030(139488())
+    window 17f790: PracticeWindow::begin / finish, sub-windows, requests
+    180260 for both actors (practiceEnforceGauges); 139308() there is this frame's request
+
+2. Corrections and additions to the static specification (all OBSERVED)
+----------------------------------------------------------------------
+  a. 148d58 clears the whole actor (0xf2c bytes) and 1587d0 then stores AI+0xc0 = 0x23.
+     13f9f0 reaches 148df0 twice per actor (directly at 13faa4 and inside 148ed8), so
+     158830 -> 15aa18 -> 15a0e0 runs twice on a controller holding 0x23: every code other
+     than 0x23 draws 112300(2) twice per actor in 1588c0 and leaves AI+0x100 = 0x31.
+     The answer to "where are +0x240 and +0x2c0 cleared" (spec section 6) is this clear:
+     every 13f9f0, including the soft restart 13f9f0(0).
+  b. 13f930 clears the setup block 4d3d04 (0x30 bytes) at scene entry and 1398c0 does not
+     write setup[0] in modes 9/10: the AI level of CPU TYPE = CPU is 0 after PRACTICE START.
+     A change to 0x23 without a restart keeps the level the previous code left (0x31).
+  c. 14ff58 initialises both state records to table -1 / index -1. Without an introduction
+     the first request of 149008 is normal state 0; a native actor whose state word starts
+     at 0 treats it as a repeat, loads no descriptor and keeps the movement gates
+     (actor+0x244 bits 0..2) closed. Demo and survival need the same initial -1.
+  d. 15ab30 calls 1588c0 on every posture visit (one 112300(2) draw per visit; 158d98
+     returns AI+0xdc/+0xe0 to -1). The guard routine 161658 used by codes 3 and 14 can
+     therefore only take its attack-table branch or the 1a3798 companion branch.
+  e. 158990 runs 15de40(AI, 9) and returns early on a running timer 1 (15de18) before
+     15aa18; posture visits end in 158fa0 (AI+0xac &= ~0x7f0 outside the damage table).
+  f. 14a8d0 calls 1394e0 without testing 139388; 139588 is reached in every mode but its
+     counters are only drawn in practice. The amount passed is the unscaled argument.
+  g. 149f10: the combo flag 123a0f0 is set inside the state-entry path of 149d08, on the
+     entry that also clears the opponent's combo counter (1409b8) and the contact history
+     (152220): new table != 2, or table 2 with 169760(index) == 0, and only when
+     139488() == the opponent seat.
+  h. 14ec80 (round gauge reset): with 14f3b0 or 14f428 true and rage state != 3 it calls
+     14edc0: rage state 1, value 0xb800, decay from the character/system formula, and
+     when the state was <= 0 the sword gauge and its cap = system row +0x1c << 8.
+  i. 11ec9c: the practice recharge limit of the time gauge is 211198(seat) << 9; native
+     BattleGauges uses bonusLimits[seat] << 8, so the limit byte is 2 * mikiri.
+  j. 13aaf8 is entered from the state-4 entry 143b5c: in practice it writes battle+0x18 = 1
+     after starting the stage stream. 1432e0 (inside 13f9f0) writes battle+0x18 = 0 again,
+     so every soft restart passes through the stream start once more (the native side
+     re-issues startMusic; what 214118 does with an already playing stream was not read).
+  k. 1418f8 returns battle+0x14 = setup[0] (the AI level given to 1432e0), or 0x31 in
+     practice. The native CPU frames call this value `roundIndex` and feed
+     match.roundIndex outside practice: UNVERIFIED naming, not changed here.
+
+3. Dummy behaviour codes
+------------------------
+  Ported (src/practice_dummy.cpp, validate_practice_dummy.py):
+    0, 1 (COUNTER bit actor+0x240:1), 2 GUARD, 3 1HIT GUARD, 11, 12, 13, 14, 20, 25, 30,
+    0x25 without the replay bit, the air recovery 1594c8 for CPU UKEMI TYPE 0..3 with
+    15ace8, 0x23 (ordinary CPU, existing src/cpu_*.cpp), 0x24 (pad of the dummy's own port)
+    and 0x25 with the replay bit (sampler playback).
+  Not ported, served by the posture code of the same stance (practiceSupportedBehaviour):
+    4..8   stand LIGHT/MIDDLE/STRONG/KICK1/KICK2     -> 0
+    9, 10  HYPER SLASH / COMBO SLASH                 -> 0
+    15..19 crouch attacks                            -> 11
+    21..24, 26..29, 31..34 jump attacks              -> 20 / 25 / 30
+    0x26.. ACTION (SPECIAL nn)                       -> 0
+    Missing original code: 15a150 (sequence replacement, tables 5eb744/5eb760/5eb774),
+    the attack-code branches of 1618d0, 162828, 1624a4, 1613e8, 15fac0, 15f7dc, and
+    1f23f0. src/cpu_execution.cpp still throws "CPU practice sequence paging is pending"
+    for a non-0x23 code in the ordinary pipeline; the substitution keeps it unreachable.
+  Known difference: with CPU TYPE = CPU the air recovery of src/cpu_reactions.cpp uses the
+    non-practice value of 139ce8 (3, RANDOM); CPU UKEMI TYPE is honoured only by the posture
+    controller and by the get-up callback 172158.
+
+4. Placeholders
+---------------
+  The practice window 2109b0, the gauge sub-window 2118a0, the confirm dialog, the damage
+  box and key history 13a280 and the REC/PLAY clock 141dd0 are shown as text rows through
+  the viewer's sessionOverlay (NativeMatch::practiceOverlay). KEY CONFIGURATION and SKILL
+  LIST run the ported KeyConfigWindow / SkillListWindow logic without art; the skill list
+  keeps the practice window in state 6 until it closes (states 7 and 8 are not entered).
+  The help window requests (PracticeHelp) are produced and ignored.
+
+5. Validation
+-------------
+  work/ss6/validate_practice_dummy.py    whole 15aa18 and whole 158990 (posture) vs native
+  work/ss6/validate_practice_session.py  replay-driven session: entry for both seats, life
+                                         floor and refill timing, counters, soft restart,
+                                         record/replay round trip with the 720 wrap, dummy
+                                         codes, both exits and settings persistence
+  work/ss6/validate_practice_mode*.py    unchanged logic validators of src/practice_mode.*

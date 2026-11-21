@@ -44,7 +44,8 @@ int main(int argc,char** argv) {
         const bool risingFields=trace=="--rising-fields",finishFields=trace=="--finish-fields";
         const bool contactFields=finishFields||whirlwindFields||risingFields||trace=="--contact-fields";
         const bool projectileFields=trace=="--projectile-fields";
-        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields)
+        const bool practiceFields=trace=="--practice-fields";
+        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields&&!practiceFields)
             throw std::runtime_error("Unknown replay trace");
         if(menuFields)mode=ss6::VersusMode::Console;
         ss6::LocalVersus session(argv[1],roundTime,mode,spirits,entry,cpuSeats);
@@ -96,6 +97,30 @@ int main(int argc,char** argv) {
             if(soundFields) {
                 std::cout<<' '<<soundRandom.gameSeed<<' '<<soundRandom.librarySeed<<' '<<sounds.size();
                 for(const auto& sound:sounds)std::cout<<' '<<int(sound.kind)<<' '<<sound.bank<<' '<<sound.tone;
+            }
+            if(practiceFields) {
+                // Columns from 23: scene words, then the practice window, counters and both actors.
+                const auto& b=match.battle();
+                const auto* p=match.practiceBattle();
+                const auto state=match.practiceState();
+                std::cout<<' '<<b.gameMode<<' '<<bool(match.title())<<' '<<bool(match.characterSelect())<<' '<<bool(match.faceoff())
+                         <<' '<<bool(session.practice())<<' '<<bool(p)<<' '<<b.requestedState<<' '<<b.match.roundIndex;
+                if(p&&state) {
+                    const auto& w=p->window;const auto& s=state->settings;
+                    std::cout<<' '<<w.state<<' '<<w.lastState<<' '<<w.menu.rows.value<<' '<<w.menu.level<<' '<<w.menu.values.value
+                             <<' '<<w.confirm.choice.value<<' '<<state->recording<<' '<<state->replay
+                             <<' '<<p->damage.last<<' '<<p->damage.total<<' '<<p->damage.maxDamage<<' '<<p->damage.newCombo
+                             <<' '<<p->resets<<' '<<p->exit<<' '<<p->exitDone<<' '<<p->pauseRequested
+                             <<' '<<s.committedA[2]<<' '<<s.committedA[3]<<' '<<s.committedA[5]<<' '<<s.committedA[6]<<' '<<s.committedB[0]
+                             <<' '<<s.committedB[6]<<' '<<s.committedB[10]<<' '<<p->keys.index<<' '<<p->keys.shown[unsigned(p->keys.index)];
+                    for(unsigned i=0;i<2;++i) {
+                        const auto& f=match.fighter(i);const auto& a=f.actor;
+                        std::cout<<' '<<a.controlKindA20<<' '<<int32_t(a.controlModeC8)<<' '<<a.flags240<<' '<<f.sampling.replayIndex
+                                 <<' '<<a.maximumLifeA34<<' '<<a.rageState120<<' '<<a.rageAmount124<<' '<<a.timers[28]<<' '<<match.cpuLevel(i)
+                                 <<' '<<a.flags23c;
+                    }
+                    std::cout<<' '<<b.random.gameSeed;
+                }
             }
             if(titleFields) {
                 const auto& title=match.title();

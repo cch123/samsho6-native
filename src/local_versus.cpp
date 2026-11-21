@@ -151,7 +151,57 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
         match_=std::move(title);
     }
 }
+bool LocalVersus::tickPracticeSession() {
+    const int mode=match_->battle().gameMode;
+    if(!practice_) {
+        if(!match_->characterSelect()||(mode!=9&&mode!=10))return false;
+        // 1cd428: 139280(1) and 210368 (settings defaults) at the mode-menu confirm.
+        practice_=std::make_shared<PracticeState>();
+        practice_->settings.reset();
+        practice_->battleType=1;practice_->mode=mode;
+        practiceRow_=match_->menuRow();
+        return false;
+    }
+    if(const int exit=match_->practiceExit()) {
+        // 180110: 1252f0(2,0,139778,128008 or 127940). Both leave the battle kind byte as it is;
+        // the settings survive CHARACTER SELECT and end with the next mode-menu confirm.
+        MatchRules rules;
+        rules.gameMode=practice_->mode;rules.submode=3;rules.battleKind=0;
+        const auto random=match_->battle().random;
+        if(exit==1) {
+            auto select=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_,std::nullopt,0,
+                                                      std::array<CpuSeatDecision,2>{},&rules);
+            practice_->recording=false; // 139378(0)
+            select->reopenPracticeSelect(random);
+            match_=std::move(select);
+        } else {
+            rules.gameMode=3;rules.submode=2;
+            auto title=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_,std::nullopt,0,
+                                                     std::array<CpuSeatDecision,2>{},&rules);
+            title->openModeMenu(practiceRow_);
+            match_=std::move(title);
+            practice_.reset();
+        }
+        return true;
+    }
+    if(match_->faceoff()&&match_->faceoff()->complete) {
+        // 1398c0 mode 9/10 and 13f9f0: one required win, no clock, the dummy seat is CPU kind 1.
+        const auto& data=match_->system();
+        MatchRules rules;
+        rules.gameMode=practice_->mode;rules.submode=3;rules.battleKind=1;rules.requiredWins={1,1};
+        rules.gameTime=data.gameTime();rules.damagePercent=data.damageLevel();rules.gameLevel=data.gameLevel();
+        rules.practice=practice_;
+        auto next=std::make_unique<NativeMatch>(assets_,-1,mode_,match_.get(),std::array<unsigned,2>{},
+                                                match_->selectedLineup(),match_->characterSelect()->stage,
+                                                std::array<CpuSeatDecision,2>{},&rules);
+        ++matchNumber_;
+        match_=std::move(next);
+        return true;
+    }
+    return false;
+}
 void LocalVersus::restart() {
+    practice_.reset();practiceRow_=-1;
     arcade_.reset();arcadeNotice_.clear();arcadeSelecting_=false;
     match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
     match_->adoptSystem(system_);
@@ -174,6 +224,7 @@ void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
     }
     // Deliver the old match's last sound requests before its state is replaced.
     if(observer_)observer_(*match_);
+    if(tickPracticeSession())return;
     if(match_->faceoff()&&match_->faceoff()->complete) {
         const auto rules=versusRules();
         auto next=std::make_unique<NativeMatch>(assets_,-1,mode_,match_.get(),std::array<unsigned,2>{},

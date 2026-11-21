@@ -28,7 +28,7 @@ void resetActorControl(StateEntryActor& a,GameRandom& random) {
 void RoundInitialization::begin(GroundStateRuntime& ground,PlayerObject& body,StateEntryActor& a,
         ActorCommandInput& input,const InputSystemConfig& config,StateEntryContext& context,
         const GroundStateFrame& frame,RoundActorStorage& storage,bool first) {
-    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8)||frame.training||context.player>=2||
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8)||context.player>=2||
        !frame.random||body.resourceSlot0c>=3||((a.flags23c&0x400000)&&a.character!=11)||a.rageState120<0||a.rageState120>3)
         throw std::runtime_error("Round initialization requires a supported fighter, spirit, default options and a random context");
     const unsigned c=a.character;
@@ -46,6 +46,7 @@ void RoundInitialization::begin(GroundStateRuntime& ground,PlayerObject& body,St
     RoundActorFlags flags{a.flags23c,a.flags240,a.flags244,a.flags248,a.flags24c};flags.resetRound();
     a.flags23c=flags.flags23c;a.flags240=flags.flags240;a.flags244=flags.flags244;
     a.flags248=flags.flags248;a.flags24c=flags.flags24c;
+    if(frame.training&&frame.trainingRage==1)a.flags248&=~2u; // 149048: SPIRIT GAUGE MAX
     a.fieldA50=0;a.characterBytesF14[8]=3;a.characterBytesF14[7]=a.characterBytesF14[4]=0;
     a.characterBytesF22.fill(0);
     if((a.characterBytesF14[5]&0x3f)==0x3f)a.characterBytesF14[5]=0;
@@ -72,6 +73,11 @@ void RoundInitialization::begin(GroundStateRuntime& ground,PlayerObject& body,St
     meters_.resetOrdinaryRoundMeters(meter);
     a.rageState120=meter.rageState;a.rageAmount124=meter.rageAmount;a.rageDecay128=meter.rageDecay;
     a.swordCurrent134=meter.swordCurrent;a.swordMaximum138=meter.swordMaximum;
+    if(frame.training&&(frame.trainingRage==1||frame.trainingRage==2)&&a.rageState120!=3) {
+        // 14ecdc: 14f3b0/14f428 (practice gauge MAX or INFINITY) select the full-rage start 14edc0.
+        if(a.rageState120<=0)a.swordCurrent134=a.swordMaximum138=meters_.raisedSwordLimit(int(config.system));
+        a.rageState120=1;a.rageAmount124=0xb800;a.rageCharge12c=0;a.rageDecay128=meters_.decay(int(config.system),a.character);
+    }
     ActorTimers timers{a.timerDelta,a.timers};timers.resetRound();a.timerDelta=timers.delta;a.timers=timers.values;
     resetActorControl(a,*frame.random);
     //14ff80 only queues the new state. Preserve existing18c and let149d08

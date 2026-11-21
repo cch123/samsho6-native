@@ -22,6 +22,7 @@ void BattleRoundState::queueLifeChange(StateEntryActor& recipient,uint32_t oppon
     const int32_t scaled=fixedRules()?amount:
         std::bit_cast<int32_t>(uint32_t(amount)*uint32_t(damagePercent43d061)+99)/100;
     recipient.pendingDamageA38=std::bit_cast<int32_t>(uint32_t(recipient.pendingDamageA38)+uint32_t(scaled));
+    if(practiceDamage)practiceDamage(recipient,amount);
 }
 void BattleRoundInitialization::begin(GroundStateRuntime& ground,const std::array<RoundPlayerRef,2>& players,
                                      BattleRoundState& battle,BattleEffects& effects) {
@@ -52,6 +53,8 @@ void BattleRoundInitialization::begin(GroundStateRuntime& ground,const std::arra
         frame.objects=&p.objects;frame.effects=&effects;frame.random=&battle.random;
         frame.matchStats=&battle.match.players[i];
         frame.opponentStats=&battle.match.players[1-i];
+        // 169d10, 149048 and 14ec80 read the practice gauge setting 139d78.
+        if(battle.practice()&&battle.practiceRules){frame.training=true;frame.trainingRage=battle.practiceRules->spiritGauge(int(i));}
         actors_.begin(ground,p.body,p.actor,p.input,p.config,battle.entry,frame,p.storage,first);
         other.actor.flagsB8=battle.entry.opponentFlagsB8;
     }

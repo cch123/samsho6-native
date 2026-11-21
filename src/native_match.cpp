@@ -180,6 +180,7 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
     // 139760 runs 13fd80 inside the scene-transition callback. At the
     // black midpoint the fighters and clock already exist; priority 50
     // can sample the next pad only on the following scheduler dispatch.
+    if(b.practice())enterPractice();
     if(mode==VersusMode::Console)initialize_.begin(ground_,players(),b,effects_);
     if(explicitRules_&&b.arcadeSeat()>=0) {
         tallyTables_=std::make_unique<ArcadeTallyTables>(path);
@@ -334,8 +335,10 @@ bool NativeMatch::resolveStrike(const ContactEvent& e,const CollisionPlayer& fro
     b.flags23c=t.flags23c;b.flags244=t.flags244;
     const int category=projectile?projectileFinishCategory(*projectile,a,b,human_.bindings()):10;
     if(projectile&&!guard&&category==11)a.flags244|=0x80000000u; // 157b50 also records nonlethal technique hits.
-    recordContactFinish(a,b,stats,e,projectile!=nullptr,guard,counter,human_.bindings(),category);
-    const bool matchBlow=b.fieldA30>0&&b.pendingDamageA38>=b.fieldA30&&stats.wins+1>=stats.requiredWins;
+    // 157668: no finishing blow is recorded in practice.
+    if(!battle_.practice())recordContactFinish(a,b,stats,e,projectile!=nullptr,guard,counter,human_.bindings(),category);
+    // 156f08: practice never arms the match-point blow.
+    const bool matchBlow=!battle_.practice()&&b.fieldA30>0&&b.pendingDamageA38>=b.fieldA30&&stats.wins+1>=stats.requiredWins;
     sounds_.contact(group,decision.defense,b.flags23c&0x1000,matchBlow,
                     counter,source.body.timeline.action().id(),battle_.random);
     if(!guard) {
@@ -430,7 +433,7 @@ void NativeMatch::scriptDamage(unsigned target,int base,DamageOrigin origin,int 
     battle_.queueLifeChange(victim,source.flags23c,amount);
     storeMeter(source,from);storeMeter(victim,to);
     interruptConcentration(target);
-    recordScriptFinish(source,victim,battle_.match.players[1-target],
+    if(!battle_.practice())recordScriptFinish(source,victim,battle_.match.players[1-target],
                        origin==DamageOrigin::ProjectileRecord,origin==DamageOrigin::CaptureScript,human_.bindings(),projectileCategory);
 }
 void NativeMatch::strikeMikiri(const ContactEvent& event,const CollisionPlayer& from,const CollisionPlayer& to,
@@ -837,6 +840,9 @@ void NativeMatch::visitActor(unsigned i,const std::array<NormalizedPadSample,2>&
             a.flags248|=0x80;
         }
     }
+    // 14959c: with timer 28 expired a practice fighter's life returns to its maximum.
+    if(practice_&&practiceRefillsLife(*practice_,a.timers[28],int(a.character),int(f.body.timeline.action().id())))
+        a.fieldA30=a.maximumLifeA34;
     SystemCancelContext cancel;cancel.controlOwner=&a;cancel.controlInput=&f.input;cancel.controlConfig=&f.config;
     std::function<CpuCommand()> decideCpu;
     if(cpuLevels_[i]>=0)decideCpu=[this,i,&permission,&threat]{return runCpu(i,permission,threat);};
@@ -894,6 +900,12 @@ void NativeMatch::visitActor(unsigned i,const std::array<NormalizedPadSample,2>&
     frame.opponentInput=&other.input;
     frame.sound=&sounds_;frame.objects=&f.objects;frame.random=&b.random;frame.effects=&effects_;frame.weaponLock=&shared;
     frame.matchStats=&b.match.players[i];frame.opponentStats=&b.match.players[1-i];
+    if(practice_&&b.practice()) {
+        frame.training=true;frame.trainingRage=practice_->spiritGauge(int(i));
+        frame.trainingAction=practiceBehaviour();frame.trainingRecovery=practice_->ukemi();
+        // 149f20: the combo total restarts when the practising player's combo counter is cleared.
+        if(practice_->humanSeat()==int(1-i))frame.comboEnded=[this]{practiceBattle_->damage.comboEnded();};
+    }
     b.entry.player=i;b.entry.opponentFlagsB8=other.actor.flagsB8;
     std::array<uint32_t,4> wolfBefore{};
     if(a.character==19&&a.auxiliaryObject04) {
@@ -1326,6 +1338,8 @@ void NativeMatch::openCharacterSelect(bool boot) {
         characterSelect_->stageOption=battle_.stageItemsOption4c3828;
         for(unsigned i=0;i<2;++i)characterSelect_->seats[i].palette=lineup_[i].palette;
     }
+    // The practice select (mode word 9/10) keeps its routing when it is reopened.
+    if(battle_.gameMode==9||battle_.gameMode==10)characterSelect_->configure(battle_.gameMode);
     faceoff_.reset();unavailable_=false;unavailableStage_=-1;missingMove_.clear();
     selectFade_=0;selectAudioPending_=boot;
     if(!boot)enterSelectAudio();
@@ -1438,6 +1452,14 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             title_.reset();
             sounds_.stopMusic();sounds_.stopGroup(2);
             openSoloSelect(seat);
+            return;
+        }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Practice) {
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            title_.reset();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            openPracticeSelect(seat);
             return;
         }
         if(titleFadeTick_==15) {
@@ -1577,6 +1599,10 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         updateVersusResult(result,{resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
         return;
     }
+    if(battle_.practice()){tickPractice(pads);return;}
+    battleFrame(pads);
+}
+void NativeMatch::battleFrame(const std::array<NormalizedPadSample,2>& pads,bool held) {
     auto refs=players();auto& b=battle_;
     ++updates;objectDraws_.beginFrame();draws_.clear();effects_.update();
     TaskDispatch tasks;tasks.call=[&](uint32_t handler,uint32_t task){
@@ -1600,7 +1626,8 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
     // Priority 50 publishes the delta for the next dispatch even after the
     // priority-5 gauge task has ended. KO slowdown still affects the arena.
     b.gauges.words910[5]=0;
-    if(b.pause.advance()){
+    // 139104..139134: the KO pause counts on every outer frame, also under a window pause.
+    if(const bool stopped=b.pause.advance();stopped||held){
         b.gauges.paused46a940=1;
         auxiliaryPhase(ObjectPhase::Draw);
         return;
@@ -1651,7 +1678,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         // 1519a0 issues the heal label before HP is capped. A full notice
         // pool suppresses only the label and its sound, never the recovery.
         if(life.pendingDamage<0&&b.itemNotices.heal(int(f.body.timeline.motion().x)))sounds_.sample(-1,65);
-        ActorTimers timers{a.timerDelta,a.timers};commitLife(life,timers);
+        ActorTimers timers{a.timerDelta,a.timers};commitLife(life,timers,b.practice());
         a.fieldA30=life.life;a.pendingDamageA38=life.pendingDamage;a.flags23c=life.flags23c;
         a.queuedActionA3c=life.queuedAction;a.timers=timers.values;
     }

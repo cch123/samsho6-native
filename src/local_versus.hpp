@@ -20,6 +20,7 @@ public:
     // The running ARCADE MODE session, or null. While its scene is not the
     // fight, match() still holds the last fight for display only.
     const ArcadeSession* arcade() const {return arcade_.get();}
+    const PracticeState* practice() const {return practice_.get();}
     // The save image shared by every scene of this session; restart() keeps it.
     SystemData& system() {return *system_;}
     // Set when the scheduled stage or fighter has no native port yet.
@@ -42,6 +43,10 @@ private:
     std::shared_ptr<SystemData> system_;
     std::string arcadeNotice_;
     bool arcadeSelecting_=false; // CONTINUE reopened the character select
+    // PRACTICE MODE: settings 13738a0.. live from the mode-menu confirm (210368) to RETURN TO TITLE.
+    std::shared_ptr<PracticeState> practice_;
+    int practiceRow_=-1; // mode-menu cursor 582af8 at the confirm
+    bool tickPracticeSession();
     void startArcade(unsigned seat,int character,int colour,int spirit);
     void startArcadeFight();
     void tickArcade(const std::array<NormalizedPadSample,2>&);

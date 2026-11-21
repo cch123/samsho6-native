@@ -1058,6 +1058,8 @@ std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
             if(draw.dialog)lines.push_back(std::string(draw.dialog==1?"RETURN TO TITLE?":"CHARACTER SELECT?")+(draw.choice==0?"  [YES]  NO":"  YES  [NO]"));
         }
     }
+    // PRACTICE MODE: the window 2109b0, the damage box 13a280 and the REC/PLAY clock 141dd0 have no ported art.
+    for(auto& line:match.practiceOverlay())lines.push_back(std::move(line));
     const auto* arcade=session.arcade();
     if(!arcade)return lines;
     if(!session.arcadeNotice().empty())lines.push_back(session.arcadeNotice());

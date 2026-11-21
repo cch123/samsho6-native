@@ -12,6 +12,7 @@
 #include "versus_result.hpp"
 #include "console_versus_menu.hpp"
 #include "round_rules.hpp"
+#include "practice_mode.hpp"
 #include <vector>
 
 namespace ss6 {
@@ -57,6 +58,11 @@ struct BattleRoundState {
     // Option byte 43d061 (DAMAGE LEVEL) and 43d05c (GAME LEVEL).
     int32_t damagePercent43d061=100,gameLevel43d05c=4;
     bool practice() const {return battleKind123a0c0==1;}          // 139388
+    // Practice settings and the replay/recording words (13738a0.., 123a0d8/dc);
+    // owned by the session, set only while battleKind123a0c0 is 1.
+    const PracticeState* practiceRules=nullptr;
+    // 14a934: 139588 receives the unscaled amount queued for the dummy seat.
+    std::function<void(const StateEntryActor&,int32_t)> practiceDamage;
     bool survival() const {return battleKind123a0c0==2;}          // 1393a0
     bool networkSubmode() const {return matchEnd.submodeA0==5||matchEnd.submodeA0==6;} // 139408
     bool fixedRules() const {return survival()||practice()||networkSubmode();}        // 139430

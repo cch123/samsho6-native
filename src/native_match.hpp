@@ -22,6 +22,7 @@
 #include "pause_menu.hpp"
 #include "key_config.hpp"
 #include "skill_list.hpp"
+#include "practice_battle.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -49,6 +50,8 @@ struct MatchRules {
     int32_t score=0;      // GameData+90 carried between arcade fights
     // The process RNG at scene entry when the caller owns it between scenes.
     std::optional<GameRandom> random;
+    // Practice settings 13738a0.. and the replay/recording words; they outlive the battle scene.
+    std::shared_ptr<PracticeState> practice;
 };
 struct MatchFighter {
     explicit MatchFighter(ActionBank& bank):body(bank) {}
@@ -109,6 +112,21 @@ public:
     // A pause-menu exit the session must route (arcade runs only).
     PauseScene pauseExit() const {return pauseExitDone_?pauseExit_:PauseScene::None;}
     void openSoloSelect(unsigned seat);
+    // PRACTICE MODE: menu confirm 1cd428 (mode word 9/10, sub-mode 3), the
+    // battle-side window 17f790 and its exits.
+    void openPracticeSelect(unsigned seat);
+    // CHARACTER SELECT exit of the practice window: scene 128008 with the process RNG as the battle left it.
+    void reopenPracticeSelect(const GameRandom& random);
+    // Scene 127940 entered from a mode: the mode menu reopens on the row that started it.
+    void openModeMenu(int row);
+    int menuRow() const {return menuRow_;}
+    const PracticeBattle* practiceBattle() const {return practiceBattle_.get();}
+    const std::shared_ptr<PracticeState>& practiceState() const {return practice_;}
+    // 1 = CHARACTER SELECT (128008), 2 = RETURN TO TITLE (127940), once the fade has switched scenes.
+    int practiceExit() const {return practiceBattle_?practiceBattle_->exitDone:0;}
+    int practiceBehaviour() const;                 // 139c88
+    std::vector<std::string> practiceOverlay() const; // provisional text view of the window and displays
+    int cpuLevel(unsigned seat) const {return cpuLevels_.at(seat);}
     const ArcadeTallyTables* arcadeTables() const {return tallyTables_.get();}
     bool titlePromptVisible() const {return promptClock_<60;}
     void openCharacterSelect(bool boot=false);
@@ -171,6 +189,14 @@ private:
     PauseScene pauseExit_=PauseScene::None;
     bool pauseExitDone_=false,pauseHold_=false;
     bool tickPause(const std::array<NormalizedPadSample,2>&);
+    std::shared_ptr<PracticeState> practice_;
+    std::unique_ptr<PracticeBattle> practiceBattle_;
+    void enterPractice();                  // 17f5a0 and the practice part of 1398c0
+    void buildPracticeActor(unsigned seat);// practice parts of 148df0/158830 and 13fb64..13fd28
+    void practiceRestart();                // 13921c: 11e600, 13f9f0(0)
+    void tickPractice(const std::array<NormalizedPadSample,2>&); // one iteration of 138f48 in practice
+    // The scheduler dispatch, 140120 and 140270; `held` is the pause request 123a0c4 (140270 is skipped).
+    void battleFrame(const std::array<NormalizedPadSample,2>&,bool held=false);
     ArcadeTally tally_;
     int32_t arcadeScore_=0,arcadeFinishBonus_=0;
     std::array<uint32_t,2> menuPressed_{};

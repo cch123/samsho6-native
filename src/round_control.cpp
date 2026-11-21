@@ -101,6 +101,8 @@ void RoundControl::enterCombat(BattleRoundState& b,SoundSelection* sound) {
     // 143430 supplies the round owner to 13aaf8, which releases the
     // preloaded stream on the first round. Issen forces that same request.
     if(b.match.roundIndex==0)startStageMusic(b,sound);
+    // 13ab48: in practice the same helper marks the round as running (battle+0x18 = 1).
+    if(b.practice())b.match.roundIndex=1;
     b.camera.commands.clear();b.timers.set(3,0);
 }
 void RoundControl::combat(BattleRoundState& b,const std::array<RoundPlayerRef,2>& players,const StageEventRules& events) {

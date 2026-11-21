@@ -38,8 +38,8 @@ int StageItemSchedule::roll(BattleRoundState& b,unsigned stage,int second) const
 
 std::optional<StageItemDrop> StageItemSchedule::next(BattleRoundState& b,const StageEventPlayers& players) const {
     // 141860: never in the demo; two-human fights need the item option, while
-    // arcade always delivers. Practice and survival use other producers.
-    if(b.gameMode==0||b.practice()||b.survival()||(b.gameMode==3&&!b.stageItemsOption4c3828))return std::nullopt;
+    // arcade always delivers. Survival uses another producer.
+    if(b.gameMode==0||b.survival()||(b.gameMode==3&&!b.stageItemsOption4c3828))return std::nullopt;
     if(b.timers.decrease(3)>0||b.stageItems.busy())return std::nullopt;
     // 140fa0 looks up just the first kind-5 battle object. A live fuse
     // keeps another item off the stage even after its carrier has departed.
@@ -51,13 +51,21 @@ std::optional<StageItemDrop> StageItemSchedule::next(BattleRoundState& b,const S
         if(act==76||act==78||act==133)return std::nullopt;
         break;
     }
-    int second=60-b.timers.values[1]/0x5a00;
-    if(second<0){b.timers.clear(1);second=60;}
-    int kind=roll(b,b.matchEnd.metadataStage04,second);
-    if(kind<0)return std::nullopt;
-    // In local versus the three score awards are replaced by a bomb or
-    // a thrown item. Keep the extra random call in its original position.
-    if(b.gameMode==3&&kind>=4&&kind<=6)kind=b.random.bounded(2)?7:8;
+    int kind;
+    if(b.practice()) {
+        // 145068: the practice menu row ITEM chooses the kind; RANDOM draws 112300(0x13).
+        if(!b.practiceRules)return std::nullopt;
+        kind=practiceItemDelivery(*b.practiceRules,b.random);
+        if(kind<0)return std::nullopt;
+    } else {
+        int second=60-b.timers.values[1]/0x5a00;
+        if(second<0){b.timers.clear(1);second=60;}
+        kind=roll(b,b.matchEnd.metadataStage04,second);
+        if(kind<0)return std::nullopt;
+        // In local versus the three score awards are replaced by a bomb or
+        // a thrown item. Keep the extra random call in its original position.
+        if(b.gameMode==3&&kind>=4&&kind<=6)kind=b.random.bounded(2)?7:8;
+    }
     const int fromRight=b.random.bounded(2);
     const int anchor=b.random.bounded(4);
     auto scalar=[](float x){return ScalarFloat{std::bit_cast<uint32_t>(x)};};

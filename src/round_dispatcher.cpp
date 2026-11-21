@@ -8,7 +8,8 @@ bool RoundDispatcher::enter(BattleRoundState& b,const std::array<RoundPlayerRef,
     const auto& s=services_;
     // 14350c and 1434b0 bracket the battle with the same short/long
     // voice group stops. The IOP leaves its short-voice cursor intact.
-    if(s.sound&&(b.requestedState==0||b.requestedState==10)) {
+    // 1434a0: survival keeps the sound running through state 10 (145d98 is skipped).
+    if(s.sound&&(b.requestedState==0||(b.requestedState==10&&!b.survival()))) {
         s.sound->stopGroup(1);s.sound->stopGroup(2);
         if(b.voiceGate5850e0)s.sound->stopMusic();
     }
@@ -30,8 +31,9 @@ bool RoundDispatcher::enter(BattleRoundState& b,const std::array<RoundPlayerRef,
         b.tallyEnter(); // 1c7ce8
         break;
     case 10:
-        if(b.matchEnd.submodeA0==1||b.gameMode==0||b.practice()) {
-            // 145628 routes arcade to its next scene; the demo and practice do nothing.
+        if(b.matchEnd.submodeA0==1||b.gameMode==0||b.practice()||b.survival()) {
+            // 145628 routes arcade to its next scene and survival to its controller
+            // (180e28) or to 138340; the demo and practice do nothing.
             if(!b.matchEnd.field18)b.modeMatchEnded=true;
         } else if(b.matchEnd.submodeA0==2) {
             b.consoleMenu.enter(b.matchEnd.winner08,{p[0].config.character,p[1].config.character},!b.matchEnd.field18);

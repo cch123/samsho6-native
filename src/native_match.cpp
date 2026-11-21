@@ -110,6 +110,7 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         // the demo and practice always run without a clock.
         // An explicit round time (command line) or a rematch keeps its value.
         if(b.gameMode==0||b.practice())roundTime=0;
+        else if(b.survival())roundTime=99; // 13fc08: clock option 2
         else if(roundTime==-1)roundTime=rules_.gameTime==0?60:rules_.gameTime==1?90:0;
     }
     // Factory settings 111410 use 60 for VS. A zero supplied explicitly
@@ -181,6 +182,20 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
     // black midpoint the fighters and clock already exist; priority 50
     // can sample the next pad only on the following scheduler dispatch.
     if(b.practice())enterPractice();
+    if(b.survival()) {
+        survival_=rules_.survival;
+        if(!survival_)throw std::invalid_argument("A survival fight needs its run");
+        b.survivalLife=survival_->run.carriedLife();b.survivalClock=survival_->run.carriedClock();
+        b.matchEnd.endFlagA4=0;
+        for(unsigned i=0;i<2;++i) {
+            // 14ff58: without an introduction the first request (normal 0) must not read as a repeat.
+            fighters_[i].actor.state194=0xffffffffu;
+            // 148df0 stores the control kind of setup+8 before 13fd80 carries the human's life over.
+            if(rules_.cpuLevel[i]>=0){fighters_[i].actor.controlKindA20=1;fighters_[i].actor.controlModeC8=35;}
+        }
+    }
+    // The inherited scene-audio latch belongs to the previous fight or the select scene.
+    if(rules&&(b.arcadeSeat()>=0||b.survival())){sceneAudioEntered_=false;rebindAudio_=true;}
     if(mode==VersusMode::Console)initialize_.begin(ground_,players(),b,effects_);
     if(explicitRules_&&b.arcadeSeat()>=0) {
         tallyTables_=std::make_unique<ArcadeTallyTables>(path);
@@ -206,7 +221,7 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
     for(unsigned i=0;i<2;++i)if(explicitRules_&&rules_.cpuLevel[i]>=0) {
         // 158830: Sugoroku (33) and Kuroko (48) always fight at level 8.
         const auto raw=fighters_[i].actor.characterA14;
-        enableCpu(i,raw==0x21||raw==0x30?8:rules_.cpuLevel[i]);
+        enableCpu(i,cpuFightLevel(b.survival(),raw,rules_.cpuLevel[i]));
     }
 }
 ArcadeTallyWorld NativeMatch::tallyWorld() const {
@@ -336,7 +351,10 @@ bool NativeMatch::resolveStrike(const ContactEvent& e,const CollisionPlayer& fro
     const int category=projectile?projectileFinishCategory(*projectile,a,b,human_.bindings()):10;
     if(projectile&&!guard&&category==11)a.flags244|=0x80000000u; // 157b50 also records nonlethal technique hits.
     // 157668: no finishing blow is recorded in practice.
-    if(!battle_.practice())recordContactFinish(a,b,stats,e,projectile!=nullptr,guard,counter,human_.bindings(),category);
+    if(!battle_.practice())recordContactFinish(a,b,stats,e,projectile!=nullptr,guard,counter,human_.bindings(),category,
+                                               StateCallbacks::hasSystemEffect(source.config)&&a.systemState13c==3);
+    // 155c64: a counter hit by a body sets record+0 (140a48) and counts actor+f27.
+    if(!projectile&&!guard&&counter&&a.characterBytesF22[5]<99)++a.characterBytesF22[5];
     // 156f08: practice never arms the match-point blow.
     const bool matchBlow=!battle_.practice()&&b.fieldA30>0&&b.pendingDamageA38>=b.fieldA30&&stats.wins+1>=stats.requiredWins;
     sounds_.contact(group,decision.defense,b.flags23c&0x1000,matchBlow,
@@ -434,7 +452,8 @@ void NativeMatch::scriptDamage(unsigned target,int base,DamageOrigin origin,int 
     storeMeter(source,from);storeMeter(victim,to);
     interruptConcentration(target);
     if(!battle_.practice())recordScriptFinish(source,victim,battle_.match.players[1-target],
-                       origin==DamageOrigin::ProjectileRecord,origin==DamageOrigin::CaptureScript,human_.bindings(),projectileCategory);
+                       origin==DamageOrigin::ProjectileRecord,origin==DamageOrigin::CaptureScript,human_.bindings(),projectileCategory,
+                       StateCallbacks::hasSystemEffect(fighters_[1-target].config)&&source.systemState13c==3);
 }
 void NativeMatch::strikeMikiri(const ContactEvent& event,const CollisionPlayer& from,const CollisionPlayer& to,
                               const AuxiliaryObject& image,ContactMarks& source,ContactMarks& target) {
@@ -843,6 +862,8 @@ void NativeMatch::visitActor(unsigned i,const std::array<NormalizedPadSample,2>&
     // 14959c: with timer 28 expired a practice fighter's life returns to its maximum.
     if(practice_&&practiceRefillsLife(*practice_,a.timers[28],int(a.character),int(f.body.timeline.action().id())))
         a.fieldA30=a.maximumLifeA34;
+    // 1498d0: survival tracks the longest combo of the round in actor+f22.
+    else if(b.survival())a.characterBytesF22[0]=survivalMaxCombo(a.characterBytesF22[0],int32_t(b.match.players[i].hitCount0c));
     SystemCancelContext cancel;cancel.controlOwner=&a;cancel.controlInput=&f.input;cancel.controlConfig=&f.config;
     std::function<CpuCommand()> decideCpu;
     if(cpuLevels_[i]>=0)decideCpu=[this,i,&permission,&threat]{return runCpu(i,permission,threat);};
@@ -1462,6 +1483,14 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             openPracticeSelect(seat);
             return;
         }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Survival) {
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            title_.reset();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            openSurvivalSelect(seat);
+            return;
+        }
         if(titleFadeTick_==15) {
             menu.beginSet(title_->confirmingSeat);
             title_.reset();
@@ -1534,7 +1563,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         return;
     }
     if(!sceneAudioEntered_) {
-        if(lineup_[0].character||lineup_[1].character)sounds_.bindPlayers(lineup_[0].character,lineup_[1].character);
+        if(rebindAudio_||lineup_[0].character||lineup_[1].character)sounds_.bindPlayers(lineup_[0].character,lineup_[1].character);
         sounds_.enterBattleScene(battle_.voiceGate5850e0!=0);
         sceneAudioEntered_=true;
     }
@@ -1600,9 +1629,10 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         return;
     }
     if(battle_.practice()){tickPractice(pads);return;}
+    if(battle_.survival()){tickSurvival(pads);return;}
     battleFrame(pads);
 }
-void NativeMatch::battleFrame(const std::array<NormalizedPadSample,2>& pads,bool held) {
+bool NativeMatch::battleFrame(const std::array<NormalizedPadSample,2>& pads,bool held) {
     auto refs=players();auto& b=battle_;
     ++updates;objectDraws_.beginFrame();draws_.clear();effects_.update();
     TaskDispatch tasks;tasks.call=[&](uint32_t handler,uint32_t task){
@@ -1630,7 +1660,7 @@ void NativeMatch::battleFrame(const std::array<NormalizedPadSample,2>& pads,bool
     if(const bool stopped=b.pause.advance();stopped||held){
         b.gauges.paused46a940=1;
         auxiliaryPhase(ObjectPhase::Draw);
-        return;
+        return stopped;
     }
     b.gauges.paused46a940=0;
     b.gauges.delta46a908=(b.gauges.scale1239d84*b.gauges.scale1239d88)>>8;
@@ -1642,7 +1672,7 @@ void NativeMatch::battleFrame(const std::array<NormalizedPadSample,2>& pads,bool
         // continue on their own clock on subsequent visits.
         finished=true;
         auxiliaryPhase(ObjectPhase::Draw);
-        return;
+        return false;
     }
     for(unsigned i=0;i<2;++i)fighters_[i].body.animate(resolveObjectDelta(fighters_[i].body.delta30,i,b.gauges));
     for(unsigned i=0;i<2;++i)fighters_[i].body.move(resolveObjectDelta(fighters_[i].body.delta30,i,b.gauges));
@@ -1751,5 +1781,6 @@ void NativeMatch::battleFrame(const std::array<NormalizedPadSample,2>& pads,bool
         spawnStageBomb(aux_,b.entry.tasks,b.objectTasks,b.stageItems.itemX());
         b.stageItems.clear();
     }
+    return false;
 }
 }

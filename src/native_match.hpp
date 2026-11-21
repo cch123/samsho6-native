@@ -23,6 +23,7 @@
 #include "key_config.hpp"
 #include "skill_list.hpp"
 #include "practice_battle.hpp"
+#include "survival_session.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -52,7 +53,14 @@ struct MatchRules {
     std::optional<GameRandom> random;
     // Practice settings 13738a0.. and the replay/recording words; they outlive the battle scene.
     std::shared_ptr<PracticeState> practice;
+    // SURVIVAL: the run that outlives each opponent's fight (180510 .. 138340).
+    std::shared_ptr<SurvivalSession> survival;
 };
+// 158830: AI+0x100 for an ordinary fight CPU. Sugoroku (33) and Kuroko (48)
+// always fight at level 8, except in survival (158850), which keeps 17b890's level.
+inline int cpuFightLevel(bool survival,int rawCharacter,int level) {
+    return !survival&&(rawCharacter==0x21||rawCharacter==0x30)?8:level;
+}
 struct MatchFighter {
     explicit MatchFighter(ActionBank& bank):body(bank) {}
     PlayerObject body;
@@ -126,6 +134,13 @@ public:
     int practiceExit() const {return practiceBattle_?practiceBattle_->exitDone:0;}
     int practiceBehaviour() const;                 // 139c88
     std::vector<std::string> practiceOverlay() const; // provisional text view of the window and displays
+    // SURVIVAL MODE: menu confirm 1cd494 (mode word b/c, sub-mode 4) and the battle-side controller 180630.
+    void openSurvivalSelect(unsigned seat);
+    const SurvivalSession* survivalSession() const {return survival_.get();}
+    int survivalFade() const;                          // 12d4cc8: alpha of the black rectangle 1806e4
+    std::vector<std::string> survivalOverlay() const;  // provisional text view of the windows and the panel 1810f8
+    // 13a6c0 frees tag fa1 (the arena task) one frame before 1a4a98 loads the next arena.
+    void survivalReleaseStage();
     int cpuLevel(unsigned seat) const {return cpuLevels_.at(seat);}
     const ArcadeTallyTables* arcadeTables() const {return tallyTables_.get();}
     bool titlePromptVisible() const {return promptClock_<60;}
@@ -196,7 +211,11 @@ private:
     void practiceRestart();                // 13921c: 11e600, 13f9f0(0)
     void tickPractice(const std::array<NormalizedPadSample,2>&); // one iteration of 138f48 in practice
     // The scheduler dispatch, 140120 and 140270; `held` is the pause request 123a0c4 (140270 is skipped).
-    void battleFrame(const std::array<NormalizedPadSample,2>&,bool held=false);
+    // Returns true on a frame the KO pause 123a0ec counted (s1 of 138f48).
+    bool battleFrame(const std::array<NormalizedPadSample,2>&,bool held=false);
+    std::shared_ptr<SurvivalSession> survival_;
+    bool survivalEndHandled_=false;
+    void tickSurvival(const std::array<NormalizedPadSample,2>&); // one iteration of 138f48 in survival
     ArcadeTally tally_;
     int32_t arcadeScore_=0,arcadeFinishBonus_=0;
     std::array<uint32_t,2> menuPressed_{};
@@ -266,6 +285,9 @@ private:
     std::vector<EffectDraw> draws_;
     ObjectDrawQueue objectDraws_;
     bool sceneAudioEntered_=false;
+    // A fight whose opponent the session chose (arcade schedule, survival candidate):
+    // 139660 loads both fighters' banks at scene entry, whatever the previous scene bound.
+    bool rebindAudio_=false;
     uint32_t auxiliaryJumpFlags_=0;
     BattleClockState hudClock_;
     FighterIdentityHudState identityHud_;

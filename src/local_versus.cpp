@@ -1,5 +1,7 @@
 #include "local_versus.hpp"
+#include "fighter_roster.hpp"
 #include <istream>
+#include <utility>
 #include <stdexcept>
 
 namespace ss6 {
@@ -130,7 +132,11 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
         break;
     }
     case ArcadeScene::Continue:arcade_->tickContinue(pressed);break;
-    case ArcadeScene::GameOver:arcade_->tickGameOver(pressed);break;
+    case ArcadeScene::GameOver:
+        arcade_->tickGameOver(pressed);
+        // 10f158 at frame 12c writes the card only while AUTO SAVE is on.
+        if(arcade_->gameOver.autosave&&match_->system().autoSave())match_->system().saveFile();
+        break;
     default:break;
     }
     if(arcade_->scene==ArcadeScene::CharacterSelect) {
@@ -146,9 +152,122 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
         // The ranking scene leads back to the title (127940).
         const auto system=match_->systemHandle();
         arcade_.reset();
-        auto title=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_);
+        // 124d50 after a survival run: the mode word, the sub-mode and the battle kind
+        // of the last fight must not reach the title's battle block.
+        MatchRules rules;
+        const bool survival=std::exchange(survivalOver_,false);
+        auto title=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_,std::nullopt,0,
+                                                 std::array<CpuSeatDecision,2>{},survival?&rules:nullptr);
         title->openTitle(false);
         match_=std::move(title);
+    }
+}
+void LocalVersus::startSurvival(unsigned seat,int character,int colour,int spirit) {
+    // 139660 for mode word b/c: 180510 (first candidates), 17ac98, 1398c0, 13f9f0(1).
+    survival_=std::make_shared<SurvivalSession>(assets_);
+    auto& s=*survival_;
+    s.modeWord=0xb+int(seat);
+    s.run.table=survivalTable_;
+    auto& human=s.config[seat];
+    human.character=character;human.colour=colour;human.spiritChosen=human.spirit=spirit;
+    s.config[0].roundsToWin=s.config[1].roundsToWin=1; // 111710
+    GameRandom random=match_->battle().random;
+    s.pauseRequested=s.run.begin(random,s.modeWord,character).pauseRequests!=0; // 180510 calls 1392e8
+    // 1398c0 reads the candidate copy T+0x104 before any row is confirmed: the
+    // scene starts with a hidden placeholder fight built from the previous
+    // run's last candidate (all zero after boot) and draws its RNG(6).
+    survivalApplyCandidate(s.run.table,random,s.modeWord,s.config,s.setup,false);
+    survivalReload_=0;
+    if(!startSurvivalFight(random,false))endSurvival();
+}
+bool LocalVersus::startSurvivalFight(const GameRandom& random,bool confirmed) {
+    auto& s=*survival_;
+    const unsigned h=unsigned(s.humanSeat()),c=1-h;
+    const auto& data=match_->system();
+    MatchRules rules;
+    rules.gameMode=s.modeWord;rules.submode=4;rules.battleKind=2;rules.requiredWins={1,1};
+    rules.gameTime=data.gameTime();rules.damagePercent=data.damageLevel();rules.gameLevel=data.gameLevel();
+    rules.cpuLevel[c]=s.setup.level;
+    rules.stage=s.setup.stage;rules.random=random;rules.survival=survival_;
+    if(confirmed)s.notice.clear();
+    std::string notice;
+    if(!CombatStageState::supports(unsigned(rules.stage))) {
+        // The arena is not ported yet; the fight is held on arena 0 instead.
+        notice="STAGE "+std::to_string(rules.stage)+" IS IN DEVELOPMENT";
+        rules.stage=0;
+    }
+    VersusLineup lineup;
+    for(unsigned i=0;i<2;++i) {
+        lineup[i]={unsigned(s.setup.character[i]),unsigned(s.setup.spirit[i]),unsigned(s.setup.colour[i])};
+        if(lineup[i].spirit>5&&lineup[i].spirit!=8) {
+            // Spirits 6 and 7 have no native port; the fight runs with spirit 0.
+            notice+=(notice.empty()?"":" / ")+std::string(i==h?"YOUR":"OPPONENT")+" SPIRIT "+std::to_string(lineup[i].spirit)+" IS IN DEVELOPMENT (SPIRIT 0 USED)";
+            lineup[i].spirit=0;
+        }
+        if(!playableFighter(logicCharacter(lineup[i].character))) {
+            if(confirmed) {
+                s.notice=std::string(i==h?"FIGHTER ":"OPPONENT ")+std::to_string(lineup[i].character)+" IS IN DEVELOPMENT: THE RUN ENDS HERE";
+                return false;
+            }
+            lineup[i].character=0; // the placeholder fight is never played
+        }
+    }
+    try {
+        auto next=std::make_unique<NativeMatch>(assets_,-1,VersusMode::Console,match_.get(),std::array<unsigned,2>{},
+                                                lineup,rules.stage,std::array<CpuSeatDecision,2>{},&rules);
+        match_=std::move(next);
+        if(confirmed){s.notice=notice;++matchNumber_;}
+        return true;
+    } catch(const std::exception& error) {
+        s.notice=std::string("SURVIVAL FIGHT IS IN DEVELOPMENT: ")+error.what();
+        return false;
+    }
+}
+void LocalVersus::endSurvival() {
+    // 145628 -> 1252f0(2,0,139778,138340). The mode word is 1/2 from here on
+    // and Task_GameOver stores the record (1384f8) before its common part.
+    auto& s=*survival_;
+    survivalTable_=s.run.table;
+    const int word=s.modeWord==0xb?1:2;
+    for(auto& seat:s.config)seat.arcadeProgress=0;
+    arcadeNotice_=s.notice;
+    arcade_=std::make_unique<ArcadeSession>(assets_,match_->system());
+    arcade_->random=match_->battle().random;
+    auto& run=arcade_->run;
+    run.game.clear();
+    for(unsigned i=0;i<2;++i) {
+        run.resetPlayer(i);
+        run.players[i].character=s.config[i].character;run.players[i].colour=s.config[i].colour;run.players[i].spirit=s.config[i].spirit;
+    }
+    run.game.mode=word;run.game.submode=4;run.game.stage=s.setup.stage;
+    run.game.winner=match_->battle().matchEnd.winner08;
+    // The winner display of a cleared run (138400, g+0x34 with sub-mode 4) is
+    // not ported: the scene runs its ordinary GAME OVER part.
+    run.game.levelEnding=0;
+    survivalStoreRecord(match_->system(),word,s.config,s.run.winCount(),s.run.playSeconds());
+    arcade_->scene=ArcadeScene::GameOver;arcade_->gameOver.enter(run);
+    survival_.reset();survivalReload_=0;
+    survivalOver_=true;
+}
+void LocalVersus::tickSurvival(const std::array<NormalizedPadSample,2>& pads) {
+    auto& s=*survival_;
+    // 138f48 after 13a6c0: the next frame reloads the arena (123a0d0), the one
+    // after it runs 13f9f0(1) (123a0cc) before its own battle-update decision.
+    if(survivalReload_==1)survivalReload_=2;
+    else if(survivalReload_==2) {
+        survivalReload_=0;
+        if(!startSurvivalFight(match_->battle().random,true)){endSurvival();return;}
+    }
+    try {match_->tick(pads);}
+    catch(const UnportedFighterState& move) {
+        s.notice="MOVE "+std::to_string(move.table)+"/"+std::to_string(move.state)+" IS IN DEVELOPMENT: THE RUN ENDS HERE";
+        s.ended=true;
+    }
+    if(observer_)observer_(*match_);
+    if(s.ended){endSurvival();return;}
+    if(s.reload) {
+        s.reload=false;survivalReload_=1;
+        match_->survivalReleaseStage();
     }
 }
 bool LocalVersus::tickPracticeSession() {
@@ -202,6 +321,7 @@ bool LocalVersus::tickPracticeSession() {
 }
 void LocalVersus::restart() {
     practice_.reset();practiceRow_=-1;
+    survival_.reset();survivalReload_=0;survivalOver_=false;
     arcade_.reset();arcadeNotice_.clear();arcadeSelecting_=false;
     match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
     match_->adoptSystem(system_);
@@ -213,8 +333,11 @@ void LocalVersus::restart() {
 }
 void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
     if(arcade_){tickArcade(pads);return;}
+    if(survival_){tickSurvival(pads);return;}
     if(const auto pick=match_->soloSelection()) {
-        startArcade(pick->seat,pick->character,pick->colour&0xffff,pick->spirit);
+        const int word=match_->battle().gameMode;
+        if(word==0xb||word==0xc)startSurvival(pick->seat,pick->character,pick->colour&0xffff,pick->spirit);
+        else startArcade(pick->seat,pick->character,pick->colour&0xffff,pick->spirit);
         return;
     }
     try {match_->tick(pads);}

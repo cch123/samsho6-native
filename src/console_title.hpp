@@ -44,7 +44,7 @@ public:
     // Rows whose scene exists natively; other rows only report unavailableMode.
     uint32_t supportedModes=1u<<unsigned(ConsoleMode::Versus)|1u<<unsigned(ConsoleMode::Option)|
                            1u<<unsigned(ConsoleMode::SpiritsEdit)|1u<<unsigned(ConsoleMode::Arcade)|
-                           1u<<unsigned(ConsoleMode::Practice);
+                           1u<<unsigned(ConsoleMode::Practice)|1u<<unsigned(ConsoleMode::Survival);
     int transitionTick=0;
 private:
     unsigned firstRow_,direction_=0,scroll_=0,inputAge_=0,titleTick_=0,idleTick_=0;

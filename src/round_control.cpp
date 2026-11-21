@@ -1,4 +1,5 @@
 #include "round_control.hpp"
+#include "survival_run.hpp"
 #include "fighter_roster.hpp"
 #include "battle_clock.hpp"
 #include "ending_playback.hpp"
@@ -110,7 +111,6 @@ void RoundControl::combat(BattleRoundState& b,const std::array<RoundPlayerRef,2>
     //140788 only recognizes exact zero, and only when time is enabled and
     //battle+8 is not exactly1. A timeout returns BEFORE announcer/items.
     if(b.timeExpired()){b.requestedState=5;return;}
-    if(b.survival())throw std::runtime_error("Combat control does not support survival");
     for(const auto& p:players)if(p.actor.flags23c&0x80)b.requestedState=5;
     combatStageEvent(b,players,events);
     if(const auto drop=events.items.next(b,stagePlayers(players)))
@@ -125,13 +125,20 @@ void RoundControl::snapshotPlayers(BattleRoundState& b,const std::array<RoundPla
 void RoundControl::enterEnding(BattleRoundState& b,const std::array<RoundPlayerRef,2>& players,
                                ScheduledOpening& captions,const MatchEndingRules& results,SoundSelection* sound) {
     // 123a168 is the network result reporter (sub-mode 6).
-    if(b.survival()||b.matchEnd.profileActive123a168)
-        throw std::runtime_error("Round end does not support survival or network reporting");
+    if(b.matchEnd.profileActive123a168)
+        throw std::runtime_error("Round end does not support network reporting");
     for(const auto& p:players)if(!playableFighter(p.actor.character)||(p.config.system>5&&p.config.system!=8))
         throw std::runtime_error("Round end requires a supported fighter and spirit");
     BattleGauges::stop(b,players);
-    b.match.recordRound({players[0].actor.fieldA30,players[1].actor.fieldA30},
-                        {players[0].actor.maximumLifeA34,players[1].actor.maximumLifeA34});
+    const std::array<int32_t,2> life{players[0].actor.fieldA30,players[1].actor.fieldA30};
+    const std::array<int32_t,2> maximum{players[0].actor.maximumLifeA34,players[1].actor.maximumLifeA34};
+    if(const unsigned leader=life[0]>life[1]?0:1;b.survival()&&life[0]!=life[1]&&life[1-leader]>0) {
+        // 143f9c: a survival time-up with unequal life is won by the CPU seat.
+        // The perfect flag (143f98) was already taken from the life leader.
+        const int winner=survivalRoundWinner(int(leader),life[1-leader],b.gameMode);
+        b.match.result={winner,2,19,false};
+        b.match.players[unsigned(winner)].record(5,life[leader]==maximum[leader],false,false);
+    } else b.match.recordRound(life,maximum);
     // 143d6c: a round the arcade seat wins with a recorded finish other than
     // kind 5 counts toward the hidden opponent (17a718).
     if(const int seat=b.arcadeSeat();seat>=0&&b.match.result.winner==seat) {

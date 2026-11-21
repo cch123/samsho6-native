@@ -64,6 +64,9 @@ struct BattleRoundState {
     // 14a934: 139588 receives the unscaled amount queued for the dummy seat.
     std::function<void(const StateEntryActor&,int32_t)> practiceDamage;
     bool survival() const {return battleKind123a0c0==2;}          // 1393a0
+    // 180e98 / 180ec8: the human's life and the round clock (battle+114) saved by the
+    // survival controller before 13a6c0, or -1 before the first win.
+    int32_t survivalLife=-1,survivalClock=-1;
     bool networkSubmode() const {return matchEnd.submodeA0==5||matchEnd.submodeA0==6;} // 139408
     bool fixedRules() const {return survival()||practice()||networkSubmode();}        // 139430
     // 13fd80: the demo, practice and survival skip the character introduction.
@@ -87,6 +90,14 @@ struct BattleRoundState {
     StageItemDelivery stageItems;
     StageItemNotices itemNotices;
 };
+// 140930 loads a battle timer through 143228 with divisor 8 only while 11f450(100,-1)
+// is not 100 (global pause) and only for timers 5 and 6 (140960: index - 5 < 2).
+inline int32_t battleTimerDivisor(unsigned index,bool paused) {return paused&&index-5<2?8:1;}
+// 13ffa0..13ffe0: the life saved by the survival controller (180e98, -1: none)
+// replaces the round-start life of a human-controlled actor (actor+a20 == 0).
+inline int32_t survivalRoundLife(int32_t roundLife,uint32_t controlKind,int32_t carried) {
+    return carried!=-1&&controlKind==0?carried:roundLife;
+}
 struct RoundPlayerRef {
     PlayerObject& body;
     StateEntryActor& actor;

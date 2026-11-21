@@ -1,12 +1,14 @@
 #include "battle_round.hpp"
 #include "fighter_roster.hpp"
+#include "survival_run.hpp"
 #include <bit>
 #include <stdexcept>
 
 namespace ss6 {
 int BattleRoundState::remainingSeconds() const {
     if(timeOption13c==3)return -1;
-    constexpr int count=90*256;
+    // 140800: one displayed count spans b400 units in survival.
+    const int count=(survival()?180:90)*256;
     return int((int64_t(timers.values[0])+count-1)/count);
 }
 bool BattleRoundState::timeExpired() const {
@@ -26,17 +28,22 @@ void BattleRoundState::queueLifeChange(StateEntryActor& recipient,uint32_t oppon
 }
 void BattleRoundInitialization::begin(GroundStateRuntime& ground,const std::array<RoundPlayerRef,2>& players,
                                      BattleRoundState& battle,BattleEffects& effects) {
-    // Survival needs the 180630 controller and its life/clock carry-over.
-    if(battle.survival()||battle.networkSubmode()||(battle.gameMode!=0&&battle.gameMode!=1&&battle.gameMode!=2&&
-       battle.gameMode!=3&&battle.gameMode!=9&&battle.gameMode!=10))
+    if(battle.networkSubmode()||(battle.gameMode!=0&&battle.gameMode!=1&&battle.gameMode!=2&&
+       battle.gameMode!=3&&battle.gameMode!=9&&battle.gameMode!=10&&battle.gameMode!=0xb&&battle.gameMode!=0xc)||
+       battle.survival()!=(battle.gameMode==0xb||battle.gameMode==0xc))
         throw std::runtime_error("Battle round initialization does not support this game mode");
     for(const auto& p:players)if(!playableFighter(p.actor.character)||p.actor.controlKindA20>1||
         (p.actor.controlKindA20==1&&p.actor.controlModeC8!=35&&!battle.practice())||p.config.character!=p.actor.character||(p.config.system>5&&p.config.system!=8))
         throw std::runtime_error("Battle round initialization requires supported fighters, controllers and spirits");
+    // 13fddc: survival restarts the round count and both win counters on every 13fd80.
+    if(battle.survival()){battle.match.roundIndex=0;for(auto& p:battle.match.players)p.wins=0;}
     const bool first=battle.match.roundIndex==0&&!battle.skipsIntroduction();
     battle.sampler.resetRoundSampling();battle.camera.resetRound();battle.timers={};
     const int timeLimit=BattleRoundState::roundTimeLimits.at(battle.timeOption13c);
-    battle.timers.set(0,timeLimit*90,battle.gauges.paused46a940?8:1);
+    // 1406e0. 140930 divides by 8 under a global pause only for timers 5 and 6
+    // (140960: index - 5 < 2), so the clock always loads undivided.
+    battle.timers.set(0,battle.survival()?survivalRoundTicks(battle.survivalClock):timeLimit*90,
+                      battleTimerDivisor(0,battle.gauges.paused46a940!=0));
     battle.flags138&=2;
     battle.entry.tasks.clearRegistry(battle.objectTasks);
     for(unsigned i=0;i<2;++i) {
@@ -59,6 +66,10 @@ void BattleRoundInitialization::begin(GroundStateRuntime& ground,const std::arra
         other.actor.flagsB8=battle.entry.opponentFlagsB8;
     }
     battle.camera.resetRound();battle.field140=0;
+    // 13ffa8: the life carried over from the previous opponent replaces 149008's 200
+    // for every human-controlled actor.
+    if(battle.survival())
+        for(const auto& p:players)p.actor.fieldA30=survivalRoundLife(p.actor.fieldA30,p.actor.controlKindA20,battle.survivalLife);
     // 13fd80: without an introduction the round opens directly in combat.
     if(battle.skipsIntroduction()) {battle.requestedState=battle.survival()?3:4;battle.timers.set(2,1);}
     else if(first) {battle.timers.set(2,60);battle.requestedState=1;}

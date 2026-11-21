@@ -14,10 +14,12 @@ int main(int argc,char** argv) {
         std::string_view trace;
         std::array<bool,2> cpuSeats{};
         auto mode=ss6::VersusMode::FixedMatch;
+        bool unlockModes=false;
         int roundTime=-1;bool timed=false;auto entry=ss6::VersusEntry::Fight;std::array<unsigned,2> spirits{};
         for(int i=2;i<argc;++i) {
             const std::string_view arg=argv[i];
             if(arg=="--round-time"&&i+1<argc){roundTime=std::stoi(argv[++i]);timed=true;}
+            else if(arg=="--unlock-modes")unlockModes=true; // byte 43d0d6: SURVIVAL and SPIRITS EDIT rows
             else if(arg=="--cpu"&&i+1<argc)cpuSeats=ss6::versusCpuSeats(argv[++i]);
             else if((arg=="--p1-spirit"||arg=="--p2-spirit")&&i+1<argc)spirits[arg=="--p2-spirit"]=ss6::versusSpirit(argv[++i]);
             else if(arg=="--mode"&&i+1<argc) {
@@ -45,10 +47,12 @@ int main(int argc,char** argv) {
         const bool contactFields=finishFields||whirlwindFields||risingFields||trace=="--contact-fields";
         const bool projectileFields=trace=="--projectile-fields";
         const bool practiceFields=trace=="--practice-fields";
-        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields&&!practiceFields)
+        const bool survivalFields=trace=="--survival-fields";
+        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields&&!survivalFields&&!practiceFields)
             throw std::runtime_error("Unknown replay trace");
         if(menuFields)mode=ss6::VersusMode::Console;
         ss6::LocalVersus session(argv[1],roundTime,mode,spirits,entry,cpuSeats);
+        if(unlockModes){session.system().option(0x7e)=1;session.restart();}
         std::vector<ss6::BattleSoundEvent> sounds;
         ss6::GameRandom soundRandom=session.match().battle().random;
         if(soundFields)session.onTick([&](const ss6::NativeMatch& match) {
@@ -120,6 +124,43 @@ int main(int argc,char** argv) {
                                  <<' '<<a.flags23c;
                     }
                     std::cout<<' '<<b.random.gameSeed;
+                }
+            }
+            if(survivalFields) {
+                const auto& b=match.battle();
+                const auto* run=session.survival();
+                const auto* arcade=session.arcade();
+                std::cout<<' '<<b.gameMode<<' '<<bool(match.title())<<' '<<bool(match.characterSelect())<<' '<<bool(run)
+                         <<' '<<(arcade?int(arcade->scene):-1)<<' '<<session.matchNumber()<<' '<<b.requestedState
+                         <<' '<<b.timers.values[0]<<' '<<b.remainingSeconds()<<' '<<b.random.gameSeed<<' '<<b.matchEnd.metadataStage04
+                         <<' '<<b.match.result.winner<<' '<<b.matchEnd.winner08;
+                if(run) {
+                    const auto& r=run->run;const auto& t=r.table;
+                    const unsigned h=unsigned(run->humanSeat());
+                    std::cout<<' '<<r.state<<' '<<r.prev<<' '<<r.delay<<' '<<r.fade<<' '<<t.wins<<' '<<r.wins<<' '<<r.elapsedFrames
+                             <<' '<<r.savedLife<<' '<<r.savedClock<<' '<<r.pendingReward<<' '<<r.lifeGain<<' '<<r.clockGain
+                             <<' '<<r.messageTimer<<' '<<r.messageText<<' '<<r.cursor<<' '<<r.selectorFocus<<' '<<r.hud.line
+                             <<' '<<run->pauseRequested<<' '<<run->notice.empty();
+                    for(const auto* c:{&r.rows[0],&r.rows[1],&r.rows[2],&t.current})
+                        std::cout<<' '<<c->stage<<' '<<c->humanSpirit<<' '<<c->character<<' '<<c->colour<<' '<<c->reward<<' '<<c->mission;
+                    const auto& u=run->setup;
+                    std::cout<<' '<<u.level<<' '<<u.stage;
+                    for(unsigned i=0;i<2;++i)std::cout<<' '<<u.control[i]<<' '<<u.character[i]<<' '<<u.colour[i]<<' '<<u.spirit[i];
+                    for(unsigned i=0;i<2;++i) {
+                        const auto& f=match.fighter(i);
+                        std::cout<<' '<<f.actor.characterA14<<' '<<f.config.system<<' '<<f.actor.controlKindA20<<' '<<match.cpuLevel(i)
+                                 <<' '<<f.actor.flags248<<' '<<b.match.players[i].outcome1c<<' '<<b.match.players[i].outcome20;
+                    }
+                    for(auto v:r.mission)std::cout<<' '<<v;
+                    for(auto v:match.fighter(h).actor.characterBytesF22)std::cout<<' '<<unsigned(v);
+                    const auto record=ss6::survivalRecord(session.system(),unsigned(ss6::survivalRecordIndex(run->config[h])));
+                    std::cout<<' '<<record.wins<<' '<<record.seconds;
+                } else if(arcade) {
+                    const auto& g=arcade->run.game;
+                    const auto& p=arcade->run.players[g.mode==2?1:0];
+                    const auto record=ss6::survivalRecord(session.system(),unsigned(p.character));
+                    std::cout<<' '<<g.mode<<' '<<g.submode<<' '<<g.winner<<' '<<arcade->gameOver.frame<<' '<<p.character
+                             <<' '<<record.wins<<' '<<record.seconds<<' '<<session.arcadeNotice().empty();
                 }
             }
             if(titleFields) {

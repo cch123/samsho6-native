@@ -1033,7 +1033,8 @@ public:
         text(r,20,453,"P1 WASD  J/U/L/M  E:F  START:T     P2 ARROWS  O/[/I/]  E:\\  START:ENTER");
         text(r,20,468,"LIGHT / MEDIUM / HEAVY / KICK     SPACE PAUSE    H BOXES");
         }
-        present(r,result,paused,menu.fadeAlpha);
+        // 1806e4: the survival controller covers the arena with a black rectangle of alpha 12d4cc8.
+        present(r,result,paused,std::max(menu.fadeAlpha,match.survivalFade()));
     }
 };
 // Session-wide save data options (--save FILE, --unlock-modes yes).
@@ -1060,6 +1061,9 @@ std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
     }
     // PRACTICE MODE: the window 2109b0, the damage box 13a280 and the REC/PLAY clock 141dd0 have no ported art.
     for(auto& line:match.practiceOverlay())lines.push_back(std::move(line));
+    // SURVIVAL MODE: the candidate window 211e18, the message window 182600, the panel 1810f8
+    // and the defeated count of the HUD header 1bb2c8 have no ported art.
+    for(auto& line:match.survivalOverlay())lines.push_back(std::move(line));
     const auto* arcade=session.arcade();
     if(!arcade)return lines;
     if(!session.arcadeNotice().empty())lines.push_back(session.arcadeNotice());

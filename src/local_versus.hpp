@@ -21,6 +21,8 @@ public:
     // fight, match() still holds the last fight for display only.
     const ArcadeSession* arcade() const {return arcade_.get();}
     const PracticeState* practice() const {return practice_.get();}
+    // The running SURVIVAL MODE run, or null (its Game Over scene is arcade()).
+    const SurvivalSession* survival() const {return survival_.get();}
     // The save image shared by every scene of this session; restart() keeps it.
     SystemData& system() {return *system_;}
     // Set when the scheduled stage or fighter has no native port yet.
@@ -47,6 +49,16 @@ private:
     std::shared_ptr<PracticeState> practice_;
     int practiceRow_=-1; // mode-menu cursor 582af8 at the confirm
     bool tickPracticeSession();
+    // SURVIVAL MODE. The charaTable 12d3668 keeps its history rows and the last
+    // confirmed candidate between runs (17ac98 only clears the win count).
+    std::shared_ptr<SurvivalSession> survival_;
+    SurvivalTable survivalTable_;
+    bool survivalOver_=false; // the Game Over scene on screen ends a survival run
+    int survivalReload_=0; // frames since 13a6c0: 1 arena load (1a4a98), 2 fighters (13f9f0(1))
+    void startSurvival(unsigned seat,int character,int colour,int spirit);
+    bool startSurvivalFight(const GameRandom& random,bool confirmed);
+    void tickSurvival(const std::array<NormalizedPadSample,2>&);
+    void endSurvival();
     void startArcade(unsigned seat,int character,int colour,int spirit);
     void startArcadeFight();
     void tickArcade(const std::array<NormalizedPadSample,2>&);

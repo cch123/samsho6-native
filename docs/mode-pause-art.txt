@@ -1,0 +1,164 @@
+Pause menu, KEY CONFIGURATION and SKILL LIST drawing (SLPS-25559) - what src/pause_art.* ports
+==========================================================================================
+
+Scope: the submissions (queue 68c3c0 entries) of the in-battle pause task 1d9e10, of the
+KEY CONFIGURATION coroutine 13ce08 and of the SKILL LIST coroutine 13d680.  Logic is in
+docs/mode-pause-menu.txt and docs/mode-skill-list.txt; the window library (17c210..17f090,
+1817f0..182600, 20ef38, 17e228, 17e428, 17e038) is documented in docs/mode-gallery-art.txt
+and used unchanged through GalleryArt.  Everything below is OBSERVED in the disassembly and
+confirmed by work/ss6/validate_pause_art.py unless marked otherwise.
+Colour words are AARRGGBB (the convention of src/menu_canvas.hpp).
+
+1. Pause menu, draw half of 1d9e10
+----------------------------------
+    state != 5 (WINDOW OFF draws nothing):
+        1daca8(owner) 1da918() 1da9c0(cursor) 1dab38(cursor) 1dae00()
+    state == 6: 1cf598(choice, 0)        title prompt
+    state == 2: 1cf598(choice, 1)        character-select prompt
+  (sub-mode 5 replaces both questions by the NEOGEO LAND one inside 1cf598.)
+  A visit with 582f50 != 0 (a child window owns the pads) returns before the draw.
+
+1daca8(owner):
+    1145c0(b4, 78, 118, H, c0000000), z = -320 [658bec]; H = d0, sub-mode 5: a0
+    1c1528(b0, 74, 120, 4, ...)  1c1528(b0, H+78, 120, 4, ...)
+    1c1528(b0, 78, 4, H, ...)    1c1528(1cc, 78, 4, H, ...)
+    colour pair: owner 0 (c00000ff, c0000040), owner 1 (c0ff0000, c0400000).
+1c1528(x, y, w, h, c1, c2, &counter, &direction, period): the pulsing edge.
+    counter += direction ? -1 : +1                       (BEFORE the colour is computed)
+    per channel (bits 16..23, 8..15, 0..7), a from c1 and b from c2:
+        a >= b:  (int)(a - ((a - b) / period) * counter)
+        a <  b:  (int)(a + ((b - a) / period) * counter)       single precision, cvt.w.s
+    alpha = ((c1 >> 24) + (c2 >> 24)) >> 1
+    direction == 0 and counter >= period: direction = 1, counter = period
+    direction != 0 and counter <= 0:      direction = 0, counter = 0
+    1145c0(x, y, w, h, colour), z = -311 [654d84]
+  CORRECTION to mode-pause-menu.txt section 8 ("the texture of 1c1528 ... UNKNOWN"): 1c1528
+  draws no texture.  Words 582f60 / 582f64 are its counter and direction, period 0x78.  They
+  are shared by the four edges, so the counter moves four steps per visit and each edge of a
+  frame has a slightly different colour (top, bottom, left, right in that order).  No routine
+  writes them besides 1c1528 (the two words are referenced only from 1daca8): the pulse is
+  not reset when the menu opens and continues where the last pause left it.
+1da918(): saves 3db900; 3db8fc = 1; 3db900 = ffffffff; 113f98(slot 2e; 204, 130, -350
+    [658b34..3c]; w, h, u, v, w, h of record 5 of 4c7660 (CONFIRMED: MenuCanvas::banners()[5]));
+    restores 3db900.  The blend word stays 1.
+1da9c0(cursor): 113828(-350 [658be0]); 1135e8(row text, cc, b4 + 18 i, i == cursor ? ffff0000 :
+    ffffffff) for the 6 rows of 658ba8, sub-mode 5 the 4 rows of 658bd0; 113838().
+1dab38(cursor): text depth = (int)114d88(-350 [658be4]) FIRST (one tie-break count), then
+    1145c0(0, 174, 280, 24, c0000000) at -320 [658be8]; x = 1ceb10(flag, strlen, 0); 10a460(help,
+    x, 17a, ff, ff, ff, ff) while x < 280; a second copy only when the record flag is 1
+    (no record has it); text depth restored.
+1dae00(): 1145c0(14c, 19a, 134, 1c, c0000000) at -320 [658bf0]; 1ced08(0, 19d).
+1cf598: MenuCanvas::dialog (docs of the menu canvas).
+Depth: nothing in the pause task uses the 17c228 cursor.  The frame, bars and legend lie at
+-320 / -311, the texts and the title plate at -350, i.e. the texts are in front (queue depth
+= 10000000 - 100 z + tie counter).
+
+2. KEY CONFIGURATION, coroutine 13ce08
+--------------------------------------
+Per visit: 17c210(); 1825b8(guide); 2121c8(widget) ... ; 182600(guide); 212478(widget); 112a28.
+The draw also runs on the visit that calls 1da7e8 / 1252f0.
+212478(W): nothing when W+0 (shown) == 0.  P = slide panel position (W+c, W+10).
+    17c260(F); F.style = 1; F.x = P.x - 18; F.y = P.y - 8; F.w = 528 [665224]; F.h = 286
+    [665228]; F.fill = c0000000; 17c718(F, 0).  17c2d0 is NOT called: the border keeps
+    ff000000 and the line ffffffff of 17c260, the box is not tinted by the operating seat.
+    17db28(ffffffff); 17e428(legend 665208, 1, 0; P.x + e0, P.y + f2)
+    rows i = 0..9: 17db28(colour); 17e228(59cfb8[i], P.x + c, P.y + 10 + 19 i (+6 for row 9), 0)
+        colour: both cursors on the row ffff00ff, seat 0 only ff0000ff, seat 1 only ffff0000,
+        otherwise ffffffff.
+    seat s = 0..1, slot k = 0..7:
+        g = 212780(s, k)
+        g == -1: 17db28(ffffffff); 17e228(665220, P.x + c + 64 s + 10c, P.y + 10 + 19 k, 0)
+        else:    z = 17c228([4ee54c] - 800 [66522c]); 17e038(g; P.x + c + 64 s + (g in 19..1c ?
+                 10b : 108), P.y + 10 + 19 k, z)
+        selector[s].current == k: F.w = 48 [665230]; F.h = 29 [665234]; F.x = P.x + c + fc + 64 s;
+                 F.y = P.y + 10 + 19 k - 7; F.border = s ? ffc04040 : ff4040c0; F.line = ffffffff;
+                 17d790(F)
+    The button icons are on the frame layer 800, not on the text layer 900: a text of the
+    same visit submitted later is nearer through the cursor only.
+17d790(F): sixteen rectangles, each at its own 17c228([4ee54c] - 800 [5f1fc4]); arm = 12
+    [5f1fc8]; per corner two border rectangles (12 x 6, 6 x 12) and two line rectangles
+    (8 x 2, 2 x 8) - src/edit_art.cpp transcribes the same routine.
+
+3. SKILL LIST, coroutine 13d680
+-------------------------------
+Per visit: 17c210(); 1825b8; 20ee70 x 2; 210210; state machine;
+    dim > 0: 1145c0(0, 0, 280, 1c0, dim << 24) at 17c228([4ee54c] - 700 [5e7e24])
+    182600(guide); 20ef38(category list); 20ef38(sub-list); 210298(detail); 112a28.
+  The dim plane takes the first cursor step of the visit, so it lies behind the soft bars of
+  the guide (same layer 700, later steps) and behind both lists.
+210298(D): nothing when the record pointer D+74 is null or D+14 (shown) is 0.
+    13d0d0(record, 38, 28, selection, top, c, 8)       - fixed position, the page does not slide
+    visible < count: 17c260(F); F.x = D.panel.x + 268; F.y = D.panel.y + 28; F.w = 14 [6648f4];
+        F.h = 368 [6648f8]; 17f090(F, count + b, visible, top, c).  Untinted (white bar).
+13d0d0(record, x, y, id, scroll, lines, gap): control flow as mode-skill-list.txt; the draws:
+    heading (scroll <= 0, type not ff / 6):
+        13d548(type, y, flags & 8 ? 4 : 0): z = 17c228([4ee54c] - 700 [5e7df8]);
+            17e0b0(type, 220, extra + 11; 48.0 [5e7dfc], y + 8, z)
+        flag 2: z = 17c228(base - 900 [5e7df4]); 17e038(f; x - 16, y + 3, z)
+        flag 1: the same with icon e, one step further left
+        flag 4: 17e038(2d; x + 208, y + 2)
+        spirits bit 8..0: 17e038(10 + bit; x + 1fe - 18 n, y), bits 6 / 7 / 8 gated by option
+            bytes 7f / 80 / 7e.  Every icon takes its own cursor step.
+    lines: name column 17db28(ff000000 | shadow), 17e428(text, 2, 0; x + 1, y + 1), 17e428(text,
+        2, 0; x + 3, y + 2), 17db28(ff000000 | name colour of the type), 17e428(text, 2, 1; x, y);
+        other columns 17db28(ffffffff), 17e428(text, 1, 0; x, y).  Shadow colour 4cef50[0..2]
+        for type 1, 4cef50[3..5] otherwise; name colour 4cef38[3 type ..].
+17e0b0(type, w, h; x, y, z): nothing for type ff or 6.  depth = 114d88(z); four vertices
+    (x, y) (x + w, y) (x, y + h) (x + w, y + h) with the colours L, R, L, R:
+        L = c0000000 + RGB 4ee830[6 type + 0..2],  R = 40000000 + RGB 4ee830[6 type + 3..5]
+    submitted through 114c10 directly.  Neither 114e98 (screen cull) nor 117288 (scene fade)
+    is called: the strip keeps its colours during a 1252f0 fade (only BRIGHT 43d064 scales
+    them, inside 105790).  It is the only four-colour entry of these windows; MenuDrawRecord
+    has no such primitive, so pause_art marks a Flat record (glyph = 1, right colour in
+    corner[0..3]) and rasterises it itself.
+
+4. 109de8 - the "backdrop" of a guide window over a battle
+----------------------------------------------------------
+1817f0 (first call of 182600): backdrop kind -1 -> nothing; 17ea48() == 0 -> 109de8().
+109de8 submits NOTHING to the queue.  It sets bit 4 of the frame flag word 3451c8.
+    107208 (start of a frame): 3451cc = 3451c8; 3451c8 = 0.
+    107280 (frame flush) and 1074b0 (re-send of the previous lists): when the flag is set,
+        109d70 / 109d98 = 109c40(buffer, 1, [34516c] ^ 1) is sent before the display lists.
+    109c40 links four prebuilt GS register words of table 348d00 (index 16 a1 + 8 a2):
+        BITBLTBUF (50), TRXPOS (51) = 0, TRXREG (52) = 640 x 224, TRXDIR (53) = 2 (local ->
+        local).  a1 = 0 copies frame buffer block 0 -> 1a40 and 8c0 -> 2300 (save), a1 = 1
+        copies 1a40 -> 0 and 2300 -> 8c0 (restore); a2 selects the field buffer.
+So the flag asks for the frame buffer saved in GS memory to be copied back before anything
+of the frame is drawn.  The save (109d00(0, 2)) is issued by the system screens (1019bc,
+101f68, 10cae8.., 111c20, 1b6548), not by the pause code.
+INFERRED (not executed: no GS model): in a battle the restore is invisible, because the
+stage and the fighters are submitted again on every paused frame and cover the whole
+picture; the child windows are then composed over the live (paused) battle frame.  The
+native functions return the request as a bool; the validator compares it with bit 4 of
+3451c8 on every visit.
+The validator found the flag set on every visit of both child windows in the battle modes
+and never in mode 0x11 / 0xd (page backdrop through 1ce628 / 1ce570 instead).
+
+5. Depth cursor summary of the child windows
+--------------------------------------------
+17c228(z) = z - cursor; cursor += 0.1; 17c210 clears the cursor at the top of every visit.
+    700  skill dim plane, soft bars of the guide, heading strips
+    800  frame rings and fill, scroll bars, title sprite, key-config button icons, brackets
+    900  texts (17e228 / 17e428), icons inside 17e428, heading icons of the skill page
+Within a visit a later submission is nearer than an earlier one of the same layer.
+
+6. Not ported / not verified here
+---------------------------------
+  * GS rasterisation: frames are compared against the reference painter of
+    validate_menu_canvas.py (pixel-centre sampling of the queue entries).  The colour ramp
+    of the 17e0b0 strip is painted on both sides as left + floor((2 i + 1)(right - left) /
+    2 w) at column i; GS Gouraud interpolation on hardware is NOT verified.
+  * The GS frame-buffer copy of section 4 and the battle scene behind the windows.
+  * Icons 33..47 (slot 5 sheet): none is reachable from these windows (the key glyphs of
+    212780 are 19..22, the skill list uses 0..32).
+  * The practice-menu owner of the key widget (PauseArt::drawKeyWidget is the same 212478).
+  * The scheduler order between the battle thread, the pause task and the child tasks.
+
+7. Validation (work/ss6/validate_pause_art.py)
+----------------------------------------------
+2026-11-21: 27 original/native traces (8 pause row sweeps, 4 random pause sessions, 7 key
+configuration, 8 skill list): 28,851 identical primitive lists (24,062 non-empty), 18,234
+identical 640x480 frames, 3,969,316 original queue entries, 12,300 109de8 requests,
+5,744,556,884 original instructions.  Report:
+outputs/ss6-feasibility/pause_art_validation.json (its "scope" string lists what was
+executed and every boundary that was not).

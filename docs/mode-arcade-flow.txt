@@ -1,0 +1,780 @@
+ARCADE MODE scene flow outside the fight (SLPS-25559, static analysis)
+=====================================================================
+
+Scope: everything between "ARCADE confirmed in the mode menu" and "hand-off to
+the ending scenes", excluding in-battle round logic. Source: static reading of
+work/ss6/extracted/SLPS_255.59 with analyze_elf.py. No Probe run was used; every
+statement below is static. Labels:
+  OBSERVED = read from instructions/data at the cited address.
+  INFERRED = interpretation of observed code.
+  UNKNOWN  = not read / not resolved.
+All addresses hexadecimal. "P[s]" = player setup record 0x456890 + 0x30*s.
+"G" = g_GameData 0x4c3808. "S" = arcade schedule record 0x12d3668.
+"O" = option block 0x43d058. random(n) = 0x112300(n) (GameRandom bounded).
+Scene switch = 0x1252f0(kind, speed, destructor, nextEntry).
+
+Glossary: CPU (computer-controlled seat), RNG (random number generator),
+BGM (background music), HUD (heads-up display).
+
+
+0. Overview state machine
+-------------------------
+
+ mode menu item 0 (1ccfd0)                    seat s presses confirm
+        | G.mode = s+1, O-derived rounds (111508), battleKind=0 (139280),
+        | G.submode(+a0)=1
+        v
+ [CS] character select 128008  (human seat only) --> [GS] spirit select 12eee8
+        |  GS main task 12f100 exit:
+        |    P[h].+14 == 7                 -> 1c2420 ; BATTLE
+        |    P[h].+18 == 0  (new run)      -> [OP] 1c60c8
+        |    else (continue / after VS)    -> [MAP] 1c1b20  (schedule rebuilt
+        v                                     only if character changed)
+ [OP] opening 1c60c8: 17a2c8(char,1) builds schedule, 1c2420 picks opponent 0
+        v  (1c1ac0 hand-off, P[h].+18 = 1)
+ [MAP] travel map 1c1b20 (P[h].+18 = 2; non-interactive, timed)
+        v  (1c1ac0 hand-off)
+ [WALK] walk-in 1c4428 (coroutine 1c4568)
+        |  dialogue stage (idx 3,5,6,7) and not intruder -> [TALK pre] 1c5290
+        |  otherwise: pair message (1a3168) ------------------------+
+        v                                                           |
+ [TALK pre] 1c5290 (flag 582528 == 0) ------------------------------+-> BATTLE
+                                                                        139760
+ BATTLE end -> 145628(bonus):
+   human won, intruder (33) fight   : S.+34 = 1 (index NOT advanced)
+   human won, ordinary              : S.acc[idx] += bonus ; P[h].+14 += 1
+   then 17a630 (Kuroko substitution test for slot 4)
+   P[h].+14 >= 8                    -> ENDING hand-off 182968
+   1c6008() && !intruderFlag(5823ac)-> [TALK post] 1c5290 (flag 582528 = 1)
+   else                             -> [WINQ] win quote 135e30
+   human lost / draw                -> O[0] != 0 ? [GAMEOVER] 138340
+                                                 : [CONTINUE] 1376d0
+ [WINQ] exit 1362d8:
+   G.+1c == 0 : P[h].+18 == 0 -> [OP]; else intruder? kind-4 -> [MAP] : [MAP]
+   G.+1c != 0 : intruder? -> [MAP] (kind 4) ; else [VSRES] 136a60
+ [TALK post] exit: idx == 7 -> camera pan -> [PREFINAL] 1c6cc0 -> BATTLE
+                   else     -> [MAP] (kind 4 if intruder pending)
+ [CONTINUE] START -> [CS] (same seat, +14/+18/+1c kept) ; timeout -> [GAMEOVER]
+ [GAMEOVER] -> ranking qualification (1e6180) -> name entry 1e5d88 or
+               attract/title loop 1e8850.
+
+ Challenger ("here comes a new challenger"), any frame, from 118148:
+   mode 1/2, submode 1, G.+2c == 0, G.+30 == 0, other seat presses START
+     -> kind-4 transition -> [CS] in mode 3 (two seats) -> [GS] -> VS faceoff
+        125e10 (Task_VS_Prev, already ported) -> BATTLE (mode 3)
+     -> 145628: 124da0 sets G.mode = winner+1, resets loser record
+        draw or VS win limit -> [GAMEOVER]; else [WINQ] -> [VSRES] 136a60
+        -> 136fc8: winner continues/starts the arcade run.
+
+
+1. Global state
+---------------
+
+1.1 g_GameData G = 0x4c3808 (cleared by 124d50: memset 0xa8, then +8,+c,+10,
+    +14,+9c = -1)                                               [OBSERVED]
+  +00 w mode: 1/2 arcade (human seat 0/1), 3 local VS (incl. challenger),
+        0 attract demo, 0xb/0xc survival, others per shared brief.
+  +04 w stage id for the next battle (written by 1c2420 from S).
+  +08 w nWinPlayer: match winner seat, -1 draw.
+  +0c w previous VS winner seat (-1 none) used for the VS streak (124da0).
+  +10 w "selecting seat": challenger seat on a challenge (118148); loser seat
+        after a submode-2 VS match (124da0).
+  +14 w copied to +10 on a VS draw (124e10).
+  +18 w challenger freeze flag: 1 from the challenge frame until 1253e0 clears
+        it; every arcade scene stops its counters while it is nonzero.
+  +1c w "a VS match interrupted the arcade run": set 1 by 118148; cleared by
+        the win-quote destructor 136288 when mode != 3, and by 145628 on a VS
+        draw (1456fc). Selects the win-quote exit branch (1362d8) and is read
+        by 1453a8.
+  +2c w scene-transition lock (set by 1252f0 kinds 1,2,3, by several scenes,
+        cleared when the transition task reaches state 0 at 1252ec and by
+        scene destructors 1c1de8/1c61b8). Blocks the challenger check.
+  +30 w challenger inhibit: 1 in Continue (137854) and Game Over (1384e8),
+        0 in Continue destructor 137cac. Blocks the challenger check.
+  +34 w nLevelEnding (Game Over variant selector; written 145cf8 survival and
+        182e50 ending). 0 on the arcade loss path.
+  +38 w nNumVsWin (current VS win streak length).
+  +3c w[20] anNoVsWin: characters beaten in the streak, ring index
+        nNumVsWin % 20 (124f00).
+  +8c w ending choice word from 1453a8 (1451b0), passed to 1a3070 by the win
+        quote (135f94).
+  +90 w arcade score (0x4c3898). Zeroed with 0x582238 by 1bc1a8.
+  +94 w challenger-banner flag 0x4c389c: set by 1252f0 kind 4 with speed==0,
+        cleared at 1252e4.
+  +98 w "schedule S is valid for the current run" (0x4c38a0): set 1 by 1c6328
+        and 12f288; cleared by 127dd8, 129168 (random reselect), Continue
+        entry 1377e8.
+  +9c w 0x4c38a4: 128008 sets 0 if P[0].+10==1, else 1 if P[1].+10==1, else -1.
+  +a0 w submode: 1 arcade, 2 VS menu, 3 practice, 4 survival, 5/6 network.
+  +a4 w 0x4c38ac cleared by 145628 (145764).
+
+1.2 Player setup record P[s] = 0x456890 + 0x30*s                 [OBSERVED]
+  +00 character id        +04 colour          +08 spirit (battle parameter
+  source in arcade, 139970)                   +0c second spirit word (reset
+  to 5 together with +08; console VS validator reads +0c as the spirit)
+  +10 select-screen flag (zeroed on continue 137a54/137a5c and by 11d1c8)
+  +14 arcade stage index 0..8 (number of schedule fights won)
+  +18 run progress: 0 run not started, 1 opening scene done (map resources
+      already loaded), 2 map entered at least once
+  +1c pre-final demo seen (written by 1c7a30 at 1c7ccc / 1c7cd8)
+  +20 round wins required for this seat (see 2.2)
+  +24 character was chosen by RANDOM select (INFERRED from 129168: when 1 the
+      character is re-drawn; cleared by Continue 1377dc/1377f4, 11d1c8)
+  +28 character used in the previous run segment (written by 137cb8)
+  +2c written 0 by 11d1c8 / 1300b4; meaning UNKNOWN
+  11d1c8(s): +0c=5,+2c=0,+00=0,+04=0,+08=5,+10..+1c=0,+24=0,+28=0, then 111508().
+
+1.3 Option block O = 0x43d058 (defaults from 111410)             [OBSERVED]
+  O+0 b default 0: nonzero -> arcade loss goes to Game Over, no Continue
+        (145c68).
+  O+1 b default 0: VS win limit index; limit = table 0x5dfb30[O+1 - 1] =
+        {5,10,15,20}; 124f98 returns nNumVsWin >= limit.
+  O+2 b default 0: nonzero -> every non-submode-2 match end goes straight to
+        Game Over (1456ac). Menu meaning UNKNOWN.
+  O+3 b default 0: walk-in wait for stage index 5/6: 0x96 if nonzero else 0x78.
+  O+4 b default 4: CPU difficulty (see src/cpu_match_control.cpp).
+  O+7 b default 0: arcade round setting, 0..14 (2.2).
+  O+8 b default 2: VS round wins (1116d8 writes it to both P[].+20).
+
+1.4 Arcade schedule record S = 0x12d3668                         [OBSERVED]
+  +00  h[7]  stage id per slot            +0e  h[7] opponent id per slot
+  +1c  b[7]  roll per slot, 1..100        +23  b[7] bonus accumulator per slot
+  +2a  b[7]  qualifying round wins per slot (17a718, called from 143dd4)
+  +34  w     intruder disabled flag (0x12d369c; 17a5f0 sets 1)
+  +38  w     slot-4 substitution disabled flag (0x12d36a0; 17a708 sets 1)
+  +3c.. survival data (17aca8; out of scope)
+  +11c,+11e h = -1; +120 h[49] random(12); +182 h[49] permutation (17bb38).
+
+1.5 Scene-local words
+  0x5823ac intruder flag for the prepared fight (1c2420)
+  0x582398 stage index shown by the map (1c2420)
+  0x582528 TALK scene variant: 0 pre-fight, 1 post-fight (1c5ff8 sets,
+           destructor 1c53e0 clears)
+  0x582440/2444/2448/244c walk-in scene exit latch / START-hold counter /
+           START-hold flag / wait counter (1c4530 initialises; 1c4e08 clears
+           2448 and 2444; 1c4df8 returns 2448, callers 1bbca0/1bbd60 UNKNOWN)
+  0x582380,2388,2390,2394,23a8 map scene frame, path-done, arrival, post-
+           arrival counter, exit state
+  Countdown service (task 127f00, tag 0xbb9, created by 127eb0):
+    0x4c8280 count, 0x4c8284 paused, 0x4c8288 limit, 0x4c828c start delay.
+    127f50 start(count=0,paused=0); 127f68 remaining = limit-count;
+    127f88 set limit; 127f98 pause; 127fa8 resume; 127fb8 set delay;
+    127fc8(n) count=min(count+n,limit); 127ff0(n) count-=n.
+    Per frame: delay>0 ? delay-- : (paused ? - : count++), clamp to limit.
+
+
+2. Menu confirm path (item 0)
+-----------------------------
+
+2.1 Order at 1ccfd0 item 0 (shared brief): 1252f0(1,0,127d70,128008);
+    1ccfb8 writes G.mode = seat+1; 139280(0); G.submode = 1; 111508().
+    139280(a0): sb a0 -> 0x123a0c0 (battle kind byte; 139388 tests ==1,
+    1393a0 tests ==2). Nothing else.                             [OBSERVED]
+
+2.2 111508: seat = 0 if mode is 4 or 1; seat = 1 if mode is 5 or 2; otherwise
+    return. Then 111558(seat) with v = O+7 (jump tables 0x5dd058 and 0x5dd094,
+    15 entries each; v >= 15 writes nothing):                    [OBSERVED]
+       v        : 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+       P[seat].+20   : 2 2 2 2 3 3 3 4 4 5  1  1  1  1  1
+       P[seat^1].+20 : 2 3 4 5 3 4 5 4 5 5  1  2  3  4  5
+    Factory default v=0 -> 2 and 2. 1398c0 copies P[i].+20 into battle
+    parameter word 0x28+4*i (console VS: BATTLE+0x280+i*0x108).
+    INFERRED: per-seat round-win target; which of "wins this seat needs" /
+    "wins needed against this seat" applies is decided by the battle slice.
+    Time limit and difficulty are not written by the flow; battle reads O.
+
+
+3. Character and spirit select in mode 1/2
+------------------------------------------
+
+Only differences from the ported two-seat select (src/character_select.cpp).
+
+3.1 Entry 128008 (task 128470 prio 0x11 tag 0xbba; destructor 129110)
+  - mode 1 or 0xb: 128c78(0) only; mode 2 or 0xc: 128c78(1) only;
+    mode 3/6/9/0xa: 0x1239e18 = 0; 128c78(0); 128c78(1).   (128294..128354)
+    INFERRED: 128c78(seat) builds that seat's grid/random pool and its seat
+    task; the CPU seat has no cursor, no task and no selection.
+  - Countdown: 127f50; 127f88(0x708); 127f98 (paused). BGM 1e7c00(2,1).
+  - Grid size block 0x4c8838 = {columns, 6, 9, cells} outside submodes 5/6
+    (128408..128454): {7,6,9,0x2a} only when O+3e, +3f, +42, +43, +44 and
+    +45 are all nonzero (the 111458 factory state, every byte = 1);
+    {8,6,9,0x30} as soon as any of them is zero. Same rule as VS select.
+  - No stage or item selection exists in mode 1/2; stage comes from S.
+
+3.2 Main task 128470, mode 1 (mode 2 uses seat 1 words):
+  completes (calls 129110, which frees tag 0xbba and, outside modes
+  3/6/9/0xa, also 11e3a0(0xbba)) when seat phase word 0x4c8848 (seat 1:
+  0x4c884c) is 0 and G.+18 == 0. Mode 3 requires both seat words zero and
+  then applies the same-character colour rule (1287bc..1288cc).
+  While G.+18 != 0 the task calls 1e7a78 and pauses the countdown (1285a4).
+
+3.3 Spirit select 12eee8 (task 12f100 prio 0xe tag 0xbbb; destructor 12f800)
+  - mode 1/0xb: 12f4c0(0) and one seat task 1129c8(0x12f8e8, 1);
+    mode 2/0xc: 12f4c0(1), 1129c8(0x12f8e8, 2); modes 3/6/9/0xa: both.
+  - Countdown 127f88(0x4b0), paused; G.+20 (0x4c3828) = 0; 0x4c8d80 = 0xa.
+  - Texture slot 0xc loaded from 0x5e0858 only outside modes 3/6/9/0xa.
+  - Destructor 12f800: mode 6 becomes 3.
+
+3.4 Exit dispatcher (12f100, runs while exit latch 0x4c8d10 == 0)   [OBSERVED]
+  mode 1 (h=0, done word 0x4c8d88) / mode 2 (h=1, done word 0x4c8d8c):
+    if submode==5 and 11c2e0()==1 -> network scene 1d8290 (out of scope)
+    wait until done word == 0
+    if P[h].+14 == 7:            1c2420(); 1252f0(1,1,12f800,139760)
+    elif P[h].+18 == 0:
+        submode != 5:            1252f0(1,1,12f800,1c60c8)          [opening]
+        submode == 5:            17a2c8(P[h].char,1); 1c2420(); -> 139760
+    else:
+        if P[h].+28 != P[h].char: 17a2c8(P[h].char,1); 1c2420(); G.+98 = 1
+        1252f0(1,1,12f800,1c1b20); 1bc1a8()      [map; score reset to 0]
+    latch = 1
+  mode 0xb/0xc: -> 139760, 1bc1a8().
+  modes 3/6/9/0xa (both done words zero): 1252f0(1,1,12f800,125e10)
+    = VS faceoff Task_VS_Prev (ported: src/versus_faceoff.cpp).
+  Consequence: arcade never uses Task_VS_Prev; its pre-fight presentation is
+  MAP -> WALK -> (TALK).
+
+3.5 127da8 (called on leaving to the menu; caller not traced): 1bc1a8();
+    1c4e08(); G.mode = 4; G.+98 = 0; 0x4c8270 = 1; 11d1a8() (reset both P).
+
+
+4. Arcade schedule
+------------------
+
+4.1 Builder 17a2c8(character, rerollFlags)                        [OBSERVED]
+  do { n = 17a748(S, character) } while (n < 2);
+  17abd8(S, character); 17a8f0(S, character); 17aa00(S);
+  if (rerollFlags) 17ab78(S);
+  17bb38();
+  Callers: 125054 boot (0,1); 148420 attract demo (0,1); 1c6350 opening
+  (char,1); 12f1c8/12f270 select exit (char,1); 137074 VS result (char,1);
+  1363d8 win quote (char,0).
+
+4.2 17a748 opponents. Table T = 0x4edf70 (file offset 0x3eef70), 0x33 rows
+  of 14 signed halfwords (0x1c bytes): [0] character key, [1..10] candidate
+  pool, [11] fixed slot 3, [12] fixed slot 5, [13] fixed slot 6.
+  Row = first row whose [0] equals the character; if none, row 0.
+  used[10] = 0. For slot i in 0,1,2,4 (slots 3,5,6 skipped):
+      r = random(10)
+      while (used[r] != 0 || row[1+r] == -1) r = (r+1) % 10
+      used[r] = 1; S.opp[i] = row[1+r]
+  S.opp[3] = row[11]; S.opp[5] = row[12]; S.opp[6] = row[13].
+  Return count of i in 0..4 with S.opp[i] in {30,31,32}. A rejected attempt
+  consumes its four draws (matches src/console_attract_ranking.cpp).
+  Decoded rows (key: pool | slot3 slot5 slot6):
+     0: 5 6 39 1 35 3 36 30 31 32 | 12 7 51     1: 7 29 38 22 9 5 10 30 31 32 | 2 4 51
+     2: 7 29 16 6 8 23 37 30 31 32 | 25 19 51   3: 17 4 28 19 34 15 39 30 25 32 | 31 12 51
+     4: 15 2 16 0 14 24 38 30 31 32 | 36 3 51   5: 6 15 24 9 10 1 2 30 31 36 | 0 32 51
+     6: 12 22 7 17 9 34 38 30 31 32 | 0 28 51   7: 18 29 22 34 4 20 10 30 31 32 | 39 0 51
+     8: 6 12 2 35 21 23 25 30 31 32 | 24 10 51  9: 14 29 6 19 16 5 37 30 31 32 | 25 0 51
+    10: 37 36 35 18 8 24 25 30 31 32 | 38 39 51 28: 29 12 22 3 15 39 36 30 31 32 | 18 6 51
+    12: 0 14 6 16 29 23 37 30 31 32 | 3 22 51  29: 7 24 14 20 17 36 38 30 31 32 | 34 28 51
+    14: 29 25 22 28 1 4 23 30 31 32 | 37 0 51  15: 4 0 14 2 17 5 39 30 31 25 | 32 34 51
+    16: 4 3 7 22 9 24 37 30 31 32 | 21 20 51   17: 3 28 4 18 14 8 38 30 31 32 | 20 21 51
+    18: 24 7 19 35 3 36 10 30 31 32 | 28 0 51  19: 29 39 4 0 6 15 10 30 31 32 | 2 24 51
+    20: 23 24 7 28 34 5 38 30 31 32 | 17 16 51 21: 23 24 14 12 3 8 36 30 31 32 | 16 17 51
+    22: 14 12 3 6 2 20 29 37 31 32 | 0 30 51   23: 38 39 18 22 17 15 25 30 31 32 | 20 21 51
+    24: 35 39 18 8 15 21 36 30 34 32 | 31 25 51 25: 24 36 0 28 21 38 10 30 31 32 | 9 2 51
+    35: 10 18 14 34 4 20 37 30 31 32 | 24 0 51 38: 10 37 7 22 9 21 39 25 31 32 | 30 23 51
+    36: 10 4 12 1 16 5 24 37 31 32 | 25 30 51  37: 10 38 18 6 35 3 20 29 31 32 | 14 30 51
+    39: 7 18 8 34 16 21 38 30 31 32 | 10 0 51  34: 29 25 28 0 4 8 36 30 31 10 | 32 15 51
+    30: 38 37 14 7 28 17 9 25 31 32 | 4 22 51  31: 29 12 25 18 14 4 23 30 38 32 | 9 24 51
+    32: 5 39 1 35 34 15 23 30 31 10 | 20 21 51 33: 38 34 0 2 5 25 36 30 31 32 | 29 22 51
+    26: 29 3 0 17 15 23 37 30 31 32 | 28 22 51 11: 24 3 16 1 6 21 38 30 31 32 | 35 0 51
+    13: 12 6 29 1 22 23 38 30 31 32 | 3 9 51   27: 39 35 12 0 37 7 36 30 31 32 | 5 1 51
+    48: 5 9 16 22 23 35 25 30 31 32 | 0 39 51  45: 0 4 7 22 29 37 38 30 28 32 | 2 31 51
+    44: 1 5 12 14 17 35 39 30 31 32 | 28 22 51 47: 3 7 10 38 16 28 36 30 31 32 | 29 5 51
+    41: 36 18 7 14 17 8 23 37 31 32 | 12 30 51 42: 29 12 22 35 3 20 36 30 31 32 | 38 14 51
+    40: 39 37 36 38 35 18 6 30 31 32 | 8 10 51 46: 2 3 15 28 29 36 38 30 31 32 | 34 25 51
+  Rows 48..50 are all zero. Table order in the file is rows 0..47 with keys
+  0..10,28,12,29,14..25,35,38,36,37,39,34,30,31,32,33,26,11,13,27,48,45,44,
+  47,41,42,40,46 (extract verbatim; do not reorder).
+  NOTE (OBSERVED): the count covers slots 0..4, so a member of {30,31,32}
+  in row[11] (slot 3; keys 3, 15, 24, 34, 38) counts, while one in row[12]
+  (slot 5; keys 5, 22, 36, 37, 41, 45) does not. Pools hold two or three
+  members, so the retry loop in 4.1 is required and its iteration count is
+  RNG-dependent; never replace it by a constructive draw.
+
+4.3 17abd8 boss request. pad = 118128(178f90()) where 178f90 returns the
+  human seat (0 in mode 1, 1 in mode 2; other modes per 178f90). held = word
+  +0 of the pad record (current buttons). req = 11 if held&0x10, else 13 if
+  held&0x20, else 27 if held&0x80, else 26 if held&0x40, else none.
+  If req exists, req != own character, and req is not already in S.opp[0..6]:
+  every S.opp[i] == 51 becomes req.                              [OBSERVED]
+  INFERRED: bits 0x10/0x20/0x40/0x80 are the four directions.
+
+4.4 17a8f0 boss fallback. cand = table 0x4ee520 {27,11,13,26}; entry equal to
+  own character -> -1; entry present in S.opp[0..6] -> -1. For each slot with
+  S.opp == 51: r = random(4); while cand[r] == -1: r = (r+1) & 3;
+  S.opp = cand[r]. (No draw when 17abd8 already replaced the 51.)
+
+4.5 17aa00 stages. S.stage[*] = -1; S.stage[5] = 9; S.stage[6] = 10.
+  Slots with opponent 30/31/32 get stage 0/1/2. used[5] = 0; for slot i in
+  0..6 ascending with stage still -1: r = random(5); while used[r]:
+  r = (r+1) % 5; used[r] = 1; S.stage[i] = table 0x4ee508[r] = {4,5,6,7,8}.
+
+4.6 17ab78 (only when rerollFlags != 0): for i in 0..6: S.roll[i] =
+  random(100)+1; S.acc[i] = 0; S.wins[i] = 0. Then S.+38 = 0; S.+34 = 0.
+
+4.7 17bb38: S.+11c = S.+11e = -1; for i in 0..48: S.h120[i] = random(12),
+  S.h182[i] = i (the draw precedes the store); then for i in 0..48:
+  j = random(49); swap(S.h182[i], S.h182[j]). Consumers UNKNOWN (survival?).
+
+4.8 Accessors
+  17a350(i): submode 5 -> 17bbe0(); i == -1 -> 33; i == -2 -> 43;
+             0 <= i < 7 -> S.opp[i]; else assertion 316140.
+  17a410(i): submode 5 -> 17bcc0(); otherwise ALWAYS r = random(5) first
+             (value unused on these paths); i == -1 -> 3; i == -2 -> 11;
+             0 <= i < 7 -> S.stage[i].
+  17a548() intruder test: 0 if S.+34 != 0 or submode == 5. idx = P[0].+14 in
+             mode 1, P[1].+14 in mode 2, else 0. thr = signed half
+             0x4ee530[idx] = {0,0,0,10,0,30,0}. Return 1 iff thr > 0 and
+             0 < idx < 7 and S.roll[idx] < thr + S.acc[idx-1]. No RNG use.
+  17a630() slot-4 substitution: 0 if S.+38 != 0 or submode == 5. Using the
+             human seat's P.+14 and P.+20 (modes other than 1/2: +14 = 0,
+             +20 = 2): if +14 == 4 and S.wins[0]+S.wins[1]+S.wins[2]+
+             S.wins[3] >= 3 * P.+20: S.opp[4] = 48 (0x30); return 1.
+  17a600(i,n): i < 7 -> S.acc[i] += n (byte). 17a718(i,n): S.wins[i] += n.
+  17a5f0: S.+34 = 1. 17a708: S.+38 = 1.
+
+4.9 1c2420 "prepare next fight" (h = human seat, c = other seat)  [OBSERVED]
+  0x5823ac = 0; f = 17a548(); 0x5823ac = f;
+  if f == 0:  idx = P[h].+14
+      idx == 7: P[c].char = 17a350(-2) (=43); G.stage = 17a410(-2) (=11)
+      else    : P[c].char = 17a350(idx);      G.stage = 17a410(idx)
+  else:       P[c].char = 17a350(-1) (=33);   G.stage = 17a410(-1) (=3)
+  0x582398 = P[h].+14.   (Modes other than 1/2: only the flag is written.)
+  Every call consumes one random(5) outside submode 5. Callers: 12f1d0,
+  12f278, 13707c, 1370ac, 1458d4, 145ae8, 1c1ba4, 1c1dc0, 1c6130, 1c6d50 —
+  a fight can therefore be prepared more than once (e.g. opening then map
+  when +18 != 1); each preparation re-evaluates 17a548 and draws again.
+
+4.10 Resulting run for a real arcade game (INFERRED from 4.1-4.9, 6.1)
+  slot 0,1,2,4: pool draws, at least two of Andrew(30)/Iroha(31)/
+                Ochamaru(32) among slots 0..4, each on home stage 0/1/2;
+                other opponents on a permutation draw of stages 4..8
+  slot 3:       fixed per character (row[11])
+  slot 4:       replaced by Kuroko (48) when, at index 4, the human's
+                qualifying round wins over slots 0..3 reach 3 * (human +20)
+                and no round was ever lost to the CPU (5.x: 145118 sets both
+                disable flags once the CPU holds a round win at match end)
+  slot 5:       fixed per character (row[12]), stage 9
+  slot 6:       boss from {Mizuki 27, Amakusa 11, Zankuro 13, Gaoh 26}
+                (direction held at build time, else random), stage 10
+  index 7:      character 43 on stage 11 (INFERRED "Demon Gaoh" from texture
+                demo_mga.pvr), always fought after slot 6
+  intruder:     Sugoroku (33) on stage 3 before the fight at index 3
+                (roll < 10 + acc[2]) or index 5 (roll < 30 + acc[4]); at most
+                once per schedule; winning does not advance the index.
+  Names are from src/fighter_roster.hpp; 43 is not in that roster.
+
+4.11 Fields the flow hands to battle setup (1398c0, modes 1/2)   [OBSERVED]
+  param+00 = P[h].+14 (arcade stage index); param+04 = G.stage;
+  param+08+4h = 0 (human control); param+08+4c = 1 (CPU control);
+  param+20+4h = P[h].+08;
+  submode 5 only: P[c].+04 = random(5);
+  x = random(6) (139c38); P[c].+08 = x; P[c].+08 = 139c50(P[c].char, x):
+     43 -> 7; 44,45,46,47 -> 8; otherwise x.   param+20+4c = that value.
+  if P[h].char == P[c].char: if colours equal, P[c].+04 = (P[c].+04 == 0);
+  else (different characters) if submode != 5: P[c].+04 = 0.
+  for i in 0,1: param+10+4i = P[i].char; param+18+4i = P[i].+04;
+                param+28+4i = P[i].+20.
+  CPU AI level per stage: UNKNOWN in this slice. The only stage-dependent
+  input the flow provides is param+00; O+4 is the difficulty. The battle
+  slice must resolve how actor+0x100 (level) is derived.
+
+
+5. Between-fight scenes
+-----------------------
+
+Common conventions: every per-frame counter below advances only while
+G.+18 == 0. "anim(obj)" = if obj.+c0 == 1: 120390(obj, action); 120ce0(obj).
+Pad = 118128(human seat): +0 held, +4 pressed edges. Mask 0x607 / 0x60f =
+attack/confirm buttons (0x60f adds START 0x8).
+Draw geometry, sprite tables and float constants are NOT decoded here unless
+stated (section 8).
+
+5.1 Opening 1c60c8 [OP]
+  Tasks: coroutine 1c6400 (1126f0 prio 0x14, stack 0x1337780 size 0x1000,
+  0x20, tag 0x1777); hand-off task 1c1ae8 (112670 prio 0x1e, 0x11, tag
+  0x1777, handle at 0x58243c); destructor 1c61b8 (calls 1c1de8, 1c6ae0,
+  frees tag 0x1777, 117180(0x200,0x200,0), G.+2c = 0).
+  Setup order: 1040a0; 1c6328 (17a2c8(P[h].char,1); G.+98 = 1); 1c2420;
+  1c1ec8 (map icon for G.stage); 1c6388 (114cb8; 10add8 slots 0x10000..2;
+  11d488(0,P[0].char); 11d488(1,P[1].char); 0x58252c = 0; 10b640(3));
+  1c6a68 (task 1c6b10 + camera); camera 122e98/122eb8 from 0x655398..;
+  104510; BGM 1e7c00(0x16,0).
+  Coroutine: character object + text from 1a3070 / 1a26b0, pad skip, then
+  1c1ac0(1c61b8, 1c1b20) and P[h].+18 = 1 (1c6a4c / 1c6a58).
+  Body timing and text selection: UNKNOWN (not read beyond call list).
+  1c1ac0(d,n): hand-off task word +4 = 0x10; 0x132f754 = d; 0x132f758 = n;
+  task 1c1ae8 then calls d() and n() (no fade).
+
+5.2 Map 1c1b20 [MAP]
+  Tasks: 1c25e0 (prio 0x14, 0x10, tag 0x1770); hand-off 1c1ae8 (prio 0x1e,
+  0x11, tag 0x1770); destructor 1c1de8 (1c43d0; frees 0x1772 and 0x1770
+  objects/tasks; G.+2c = 0).
+  Entry: if P[h].+18 != 1: 1c1e30 (textures moji4.pvr, moji5.pvr,
+  hukidasi.pvr, hukidasi2.pvr; 1c1f88; 1c2010; clears 582394.. ), 1c2420,
+  1c1ec8 ("map_icon_%02d.pvr"/".pvp" with G.stage), BGM 1e7c00(0x16,0).
+  Then P[h].+18 = 2; 1c25a0 (11d488 both characters; 10b640(3)).
+  If P[h].+14 == 0: character object 11e2e8(0x1770), 11fed0(obj, seat,
+  0x703, x = 0xf0 seat 0 / 0x190 seat 1, 0, flags 0 / 0x80000), colour
+  obj.+20 = P[h].+04.
+  Per frame (1c25e0), F = 0x582380:
+    if P[h].+14 == 0: anim(obj) with action 0x703
+    if F >= 0x5b: 582388 = 1c3608(); 1c3b78()
+    if F >= 0x97 and 582388: 582390 = 1c3888(); 1c3ec8()
+    1c2860(); 1c2920()
+    if 582390: G.+2c = 1
+        if 582394 >= 0xb: if 5823a8 == 0: 5823a8 = 1; 1c31f0(); 1c3260()
+        if G.+18 == 0: 582394++
+    1c2a38()
+    if F >= 0x1e:
+        if F == 0x1e: i = (G.stage == 3) ? 7 : 0x582398;
+                      1e7d60(0x31, table 0x654ea8[i])
+                      table = {0x2c,0x2d,0x2e,0x2f,0x32,0x33,0x36,0x34}
+        1c2fe8()
+    if 5823a8 != 0 and G.+18 == 0: 1c1ac0(1c1de8, 1c4428); 5823a8 = 2
+    if G.+18 == 0: F++
+  No pad input is read by the map task. Path/arrival predicates 1c3608,
+  1c3888 and all drawing: UNKNOWN.
+
+5.3 Walk-in 1c4428 [WALK]
+  Tasks: coroutine 1c4568 (1126f0 prio 0x14, stack 0x132f780, 0x1000, 0x20,
+  tag 0x1772); 1c4358 creates task 1c43f0 (prio 0xa, 0x10, tag 0x1771: map
+  redraw 1c2860/1c2920/1c31f0/1c3260/1c2a38) and a camera; destructor 1c44f0
+  (frees 0x1771, 0x1772, 0x1b5e; 1e7ad0; 1e7b40). 1c4530: 582440 = 0; if
+  582448 == 0: 582444 = 0 else 582444 = 0xf; 58244c = 0.
+  Coroutine (h human, c CPU; idx = P[h].+14):
+    colour rule: if chars differ: P[c].+04 = 0; if same and colours equal:
+                 P[c].+04 = (P[h].+04 != 0) ? 0 : 1          (1c4634..1c4678)
+    limit = 0x3c; if idx is 5 or 6: limit = O+3 ? 0x96 : 0x78
+    objects: human action 0x703 if idx == 0 else 0x704, x 0xf0 (seat 0 side);
+             CPU action 0x703 if (mode 2 and P[1].+14 == 0) else 0x704,
+             x 0x190, flag 0x80000; colours from P[].+04. (For mode 2 the
+             roles of the two x positions follow the seat, 1c46fc..1c4d98.)
+    10add8(0x17,0); 10add8(0x18,0); 112f08(8); 112f30(0,0xffffff);
+    1e7d60(0x31, table 0x6551b8[G.stage]) with table (11 words) =
+       {0x4e,0x4f,0x50,0x57,0x51,0x52,0x53,0x54,0x55,0x56,0x56}
+    phase A: up to 0x3c frames, anim(first-stage object); ends early when
+             pad.pressed & 0x60f.
+    phase B loop (yield 112a28(0) each frame):
+       anim both objects (with 0x1e-frame start delays s6/s7 depending on
+       which seat is on its first stage)
+       if G.+18 == 0:
+          if pad.pressed & 0x60f: 58244c = limit
+          if both objects reported completion once:
+             if 1c6068() == 1 and 0x5823ac != 1:      [dialogue stage]
+                58244c++; when 58244c >= limit, every frame:
+                   if pad.held & 8:                         (1c4964..1c49f8)
+                      if 582448 == 0: 582444++; if 582444 >= 0xf: 582448 = 1
+                      else: 582444--; if 582444 <= 0: 582448 = 0
+                   if 582440 == 0: 1252f0(2,0,1c44f0,1c5290); 582440 = 1
+             else:                                    [pair message]
+                mode 1: m = 1a3168(P[0].char, P[1].char), 6 words copied;
+                otherwise (1c4c7c): m = 1a3168(P[1].char, P[0].char) and
+                copied word 0 += 5
+                loop n = 0xb4: 0x3e-4700 = -1; 0x3d3aa0 = frame/4;
+                   done = 1a26b0(m); if done and G.+18 == 0: n--;
+                   if G.+18 == 0 and pad.pressed & 0x60f:
+                       done ? n = 0 : frame = 0x2710 (text fast-forward)
+                   anim both; yield; until n <= 0
+                final loop: same START-hold toggle; 1a26b0(m); when
+                   G.+18 == 0 and 582440 == 0:
+                   1252f0(2,0,1c44f0,139760); 582440 = 1
+  1c6068(): idx == 3 or idx in 5..7 -> 1, else 0 (human seat's +14).
+
+5.4 Stage dialogue 1c5290 [TALK]
+  Coroutine 1c55d8 (1126f0 prio 0x14, stack 0x1333780, 0x1000, 0x20, tag
+  0x1776); destructor 1c53e0 (1e7ad0, clears 0x582528, ...). 1a4a98(G.stage)
+  loads the stage. BGM by idx-3 (jump table 0x655364): idx 3,4 ->
+  1e7c00(0x11,1); idx 5 -> (0x12,1); idx 6 -> 0x582528 == 1 ? 0x12 : 0x13;
+  idx 7 -> 0x13; other idx: none.
+  Objects: human at x 0xf0, CPU at x 0x190 (flag 0x80000), tag 0x1776,
+  actions from stack words (0x401 for the CPU in the post variant at
+  1c5674/1c5db0; others from 1c5490 tables) — action selection UNKNOWN.
+  Script: 1c5490(buf, idx) selects the line list; 1c5e58 displays line k;
+  1a22a8/1a2380 text services; text speed word 0x3d3aa0 = frame/4.
+  Controls: pad.pressed & 0x607 -> fast-forward/advance the current line;
+  pad.pressed & 8 (START) with G.+18 == 0 -> skip the whole scene.
+  Exit (skip or script end), once:
+    0x582528 == 0 (pre-fight):  1252f0(2,0,1c53e0,139760)
+    0x582528 != 0 (post-fight):
+        idx == 7: (script end only) camera pan loop 122ed8 until the float
+                  accumulator reaches the constant at 0x65538c, then
+                  1252f0(1,1,1c53e0,1c6cc0); a START skip with idx == 7 is
+                  ignored (1c5d18 returns to the script loop)
+        else:     17a548() ? 1252f0(4,1,1c53e0,1c1b20)
+                           : 1252f0(2,0,1c53e0,1c1b20)
+                  (same pair on the START-skip path 1c5d20 and on the
+                  script-end path 1c5c18)
+  A stage-3 special (s7 == 3 at 1c57f0) performs a white-flash sequence and
+  reloads stage 0xa (1a4a98(10)) mid-script when 0x582528 is set and idx is 7
+  context — exact trigger at 1c57d0..1c59d4 is only partly read: UNKNOWN.
+
+5.5 Pre-final demo 1c6cc0 [PREFINAL]
+  Coroutine 1c6e58 (1126f0), destructor 1c6d70, loader 1c6da8 (demo_mga.pvr,
+  moji4.pvr, moji5.pvr, demo_mga.pvp), 1c2420 at entry (1c6d50). 1c7a30 sets
+  P[0].+1c and P[1].+1c (1c7ccc/1c7cd8). All exits: 1252f0(...,1c6d70,
+  139760). Body: UNKNOWN.
+
+5.6 Win quote 135e30 [WINQ] (Task_VS_Next; VS path ported in
+    src/versus_result.cpp)
+  Task 136000 (prio 0x14, 0x10, tag 0xbbf), destructor 136288 (G.+1c = 0
+  unless mode == 3; frees 0xbbf; 1e7ad0; 116268(8,0x20); 112f08(8)).
+  Entry: textures "%s%02d.pvr"/".pvp" (prefix 0x5e1070, winner character),
+  0x4ca1c8 = 1a3070(winnerChar, 2, G.+8c); BGM 1e7c00(0x19,0).
+  Timing (0x4ca1b4 frame F, 0x4ca1c0 end counter E, 0x4ca1b0 message-end
+  flag M, 0x4ca1c4 exit latch):
+    F >= 0x10, latch 0, pad.pressed & 8, G.+18 == 0 -> 1362d8()
+    F >= 0x3c, E < 0x1c2, latch 0, pad.pressed & 0x607:
+        M == 0 -> text speed word 0x3d3aa0 = 0x100, 0x4ca1bc = 0x400
+        M == 1 -> E = 0x1c2
+    if G.+18 == 0: F++, 0x4ca1b8++; if F > 0x3c: 0x3d3aa0 = 0x4ca1bc/4,
+        0x4ca1bc++; if M == 1: E++
+    E == 0x1e0, latch 0, G.+18 == 0 -> 1362d8()
+  Exit 1362d8 (h = seat of mode 1/2):                              [OBSERVED]
+    if G.+1c == 0:
+        if P[h].+18 == 0:        1252f0(1,1,136288,1c60c8)
+        elif 17a548():           G.+2c = 1; 1252f0(4,1,136288,1c1b20)
+        else:                    1252f0(1,1,136288,1c1b20)
+    else:
+        if 17a548():             if P[h].+24 == 1: 17a2c8(P[h].char, 0)
+                                 G.+2c = 1; 1252f0(4,1,136288,1c1b20)
+        else:                    1252f0(1,1,136288,136a60)
+    latch = 1
+  The next opponent itself is loaded by the map entry (1c2420) or was
+  already prepared (5.8).
+
+5.7 VS result 136a60 [VSRES] (Task_VS_Result; shown after a challenger match)
+  Task 136c58 (112670 at 136a94, tag 0xbc2; priority argument not decoded),
+  destructor 136f88 (frees 0xbc2, 0xfa1; 1e7ad0;
+  116268(8,0x10)). Textures char_face_1024.pvr/.pvp, font_otherscene2_16.pvr.
+  Winner object (tag 0xbc2) from P[winner].char; at frame 0x64 it receives
+  11d908(obj, 0x1fb, 1, 0). Draw 1370c8 prints nNumVsWin and anNoVsWin faces.
+  Counters: 0x4ca1e4 frame F; 0x4ca1e8 end counter E (advances while the
+  object is in action 0x1fb with +c0 == 1); 0x4ca1f0 latch.
+    F >= 0x1f, latch 0, pad.pressed & 8, G.+18 == 0 -> 136fc8()
+    action 0x1fb done, E < 0xd2, pad.pressed & 0x607 -> E = 0xd2
+    E == 0xf0, latch 0, G.+18 == 0 -> 136fc8()
+  Exit 136fc8 (W = G.+08):                                        [OBSERVED]
+    if P[W].+18 == 0:                 1252f0(1,1,136f88,1c60c8)
+    elif P[W].+1c == 0 and P[W].+14 == 7:
+                                      1252f0(1,1,136f88,1c6cc0)
+    elif P[W].+1c != 0 and P[W].+14 == 7:
+                                      1c2420(); 1252f0(1,1,136f88,139760)
+    else: if G.+98 == 0: 17a2c8(P[W].char, 1); 1c2420()
+                                      1252f0(1,1,136f88,1c1b20)
+
+5.8 Match-end dispatch 145628(bonus) — arcade-relevant branches   [OBSERVED]
+  (Caller 143498. All scene switches here are 1252f0(2,0,139778,next);
+  G.+a4 = 0 afterwards.)
+  submode == 2: tail 124da0 only (console VS menu path, ported).
+  O+2 != 0: -> 138340.
+  mode 3:
+      124da0();
+      if 124f98(): -> 138340
+      elif G.+08 == -1: (submode 6: network) else G.+1c = 0; -> 138340
+      else: if G.+08 == G.+10: 1bc1a8(); 1c4e08()
+            submode != 6: -> 135e30
+  mode 1 with winner 0, or mode 2 with winner 1 (human won; c = other seat):
+      if P[c].char != 33 or submode == 5:
+            17a600(P[h].+14, bonus); P[h].+14 += 1
+      else: 17a5f0()
+      if 17a630(): 17a708()
+      submode == 5: if P[h].+14 >= 5: P[h].+14 = 1; 1c2420(); -> 139760
+      elif P[h].+14 >= 8: -> 182968   [ENDING hand-off; other slice]
+      elif 1c6008() == 0: -> 135e30
+      elif 0x5823ac != 0: -> 135e30
+      else: 0x582528 = 1 (1c5ff8); -> 1c5290
+      1c6008(): new +14 == 4 or in 6..8 -> 1.
+  mode 1/2 otherwise (loss or draw):
+      1c4e08(); if G.+08 == -1: G.+08 = (mode == 1) ? 1 : 0
+      submode == 5: reset P[h].+04/+10; -> 128008
+      elif O+0 != 0: -> 138340
+      else: -> 1376d0
+  modes 0xb/0xc: survival (other slice).
+  Related battle-side writers of S (listed for the battle slice):
+    143dd4 (round end): mode 1/2 and round winner == human seat and
+       1400d8(winner).+1c not in {-1, 5}: 17a718(P[h].+14, 1).
+    1451f0 (145118 final recording): mode 1/2: r = 1400d8(CPU seat); if r and
+       r.+28 > 0: 17a5f0(); 17a708().  INFERRED: r.+28 = CPU round wins, so
+       dropping any round cancels both the intruder and the substitution.
+    bonus argument of 145628: value UNKNOWN here (range matters: it is added
+       to a byte and compared against roll 1..100).
+
+5.9 Continue 1376d0 [CONTINUE] (Task_Continue)
+  Task 137978 (prio 0x1c, 0x10, tag 0xbbc); destructor 137c68 (frees 0xbbc
+  objects/tasks; if 0x4ca1f8: frees tag 0xfa1; 1b8f68(0x4ca200); G.+30 = 0;
+  1e7ad0).
+  Entry: 0x4ca1f4 = 0x4ca1f8 = 0x4ca1fc = 0; font_otherscene16.pvr slot 0xc;
+  1a4a98(G.stage); loser object (tag 0xbbc): mode 1 seat 0, mode 2 seat 1,
+  mode 3 seat G.+10 ^ 1: 11d488(seat, char); 11d528; 11d570(obj, seat, 0x140,
+  0, 0); 11d908(obj, 0x700, 1, 0); obj.+20 = colour. Then 1bc1a8() (score =
+  0); P[1].+24 = 0; G.+98 = 0; P[0].+24 = 0; camera from 0x5e1538..;
+  127f50(); 127f88(0x4eb); 0x4ca200 = mode; 1b8ee0(mode); G.+30 = 1;
+  BGM 1e7c00(0x1a,0).
+  Per frame: R = 127f68(); 110ac0(sp); seat = (mode==1) ? 0 : (mode==2);
+    if latch 0x4ca1fc == 0 and 0 < R < 0x4ce:
+      if pad.pressed & 8:                                   [accept]
+          1b9048(seat)
+          mode 1 -> 137cb8(0); mode 2 -> 137cb8(1); mode 3 -> 137cb8(G.+10^1)
+          G.mode = seat + 1; 111508(); P[0].+10 = P[1].+10 = 0;
+          1170d8(-1); 117170(1); 127f98(); latch = 1; 0x4ca1f8 = 1;
+          G.+0c = -1; memset(G.+3c, 0, 0x50); G.+38 = 0;
+          1252f0(3,0,137c68,128008)
+      elif pad.pressed & 0x607 and R < 0x3fc
+           (and the pad seat matches the mode, 137c08..137c38):
+          127fc8(R % 60 + 1)                                [next second]
+    137d20(frame) draw; object update (11d6c8, 11d868, 11d730); frame++
+    if latch == 0 and R == 0: latch = 1; 1252f0(1,1,137c68,138340)
+  137cb8(s): P[s].+08 = 5; P[s].+28 = P[s].char; P[s].+0c = 5; P[s].+04 = 0;
+    P[s^1].+28 = P[s].char; P[s^1].+14/+18/+1c = P[s]'s; P[s^1].+0c = +08 = 5;
+    P[s^1].+04 = 0. The stage index, run-progress and pre-final flags
+    therefore survive a continue; the schedule is rebuilt at select exit only
+    when the character changes (3.4), and G.+98 was cleared at entry.
+  Countdown draw 137db8: nothing when R == 0; seconds = R / 60 (two digits
+  when >= 10: tens R/600, ones (R/60)%10; one digit otherwise); R % 60 < 0x15
+  selects an animated variant; sound 1e7b70(-1, 0xf) when R % 60 == 0x3b
+  (mode-1 condition P[0].+10 != 0 at 137f84 — purpose UNKNOWN). Initial
+  R = 1259 -> first value 20. Sprite geometry UNKNOWN.
+
+5.10 Game Over 138340 [GAMEOVER] (Task_GameOver; VS variant ported)
+  Task 1387b8 (prio 0x1d, 0x10, tag 0xbbd), destructor 138a48. Arcade
+  (G.+34 == 0): object of the human seat (mode 3: seat G.+10 ^ 1) with
+  11d908(obj, 0x701, 1, 0); 1c4f80(seat) records the VS streak (argument:
+  G.+08 when 124f98() is true, otherwise G.+08 ^ 1 in mode 1/2 and
+  G.+10 ^ 1 in mode 3 — 1386d4..1387b4); BGM 1e7c00(0x1b,0); G.+30 = 1.
+  Frame counter 0x4ca204 increments every frame; at 0x12c:
+     1e6180() == 1 -> 138a48(); 1e5d88()   [ranking name entry]
+     else 10f158(); 1252f0(1,1,138a48,1e8850) [attract/title loop]
+  Button skip (frames 0x1e..0x117, pad.pressed & 4): fade 1170d8(-1),
+  117170(1) and frame = 0x118.
+  Destructor 138a48: call order from the call list only (arguments and the
+  values stored to G.+2c / G.+30 not decoded): 11e3a0, 112a70, 112a70,
+  11d1a8 (reset both P), 1e6180, memset at 0x3ebf30, 124d50 (clear G),
+  1e7ad0, 1e7b40, store G.+2c, 1ccf10, store G.+30, 112f30.
+
+
+6. Challenger (second seat joins during arcade)
+-----------------------------------------------
+
+6.1 Detection 118148 (called once per frame by the pad/system update; caller
+    not traced). After 1b9b80, 1ba1b0, 117fd8(0), 117fd8(1):       [OBSERVED]
+      if G.+2c != 0 or G.+30 != 0: no check
+      mode 1 and submode 1: if pad(1).pressed & 8:
+          G.+2c = 1; G.+10 = 1; memset(P[1], 0, 0x30); 1116d8();
+          G.+1c = 1; G.+18 = 1;
+          1252f0(4, 0, currentDestructor(0x43d20c), 128008)
+      mode 2 and submode 1: same with pad(0), G.+10 = 0, memset(P[0]).
+    1116d8: P[0].+20 = P[1].+20 = O+8. The check is scene-independent: it is
+    gated only by the two flags, so it is live in select, opening, map,
+    walk-in, dialogue, battle, win quote and VS result, and dead during any
+    1252f0 transition, Continue, Game Over and after map arrival (G.+2c = 1
+    at 1c2718).
+
+6.2 Transition kind 4 (1252f0 / task 1251d0 tag 0xbc1 / wait 125498)
+    speed == 0 sets G.+94 = 1. State 1 runs 125c68(speed, n): draws the
+    banner sprites 0x4c5188 and 0x4c51a0 (skipped when submode == 5 and
+    0x443140 != 0), at n == 0 plays 1e7d60(0x31, 0x4d), and from n >= 0x5b
+    runs the shutter 125778(speed, n-0x5a) until that returns 0 (n-0x5a >=
+    0xe). State 2: 125848 (2 frames; 1e7b70(-1,0xf) at its frame 0). Between
+    state 2 and 3: 1253e0(), destructor(), next(). State 3: 1258a8 (0xe
+    frames), then G.+94 = 0, G.+2c = 0.
+    The same kind 4 with speed == 1 announces the CPU intruder (5.6, 5.4);
+    the banner is drawn for both. Banner art and shutter geometry: see
+    125978; compare src/vs_curtain.cpp before re-deriving. UNKNOWN whether
+    the ported curtain already covers kind 4.
+    1253e0: G.+18 = 0; kind 4 with speed 0 only: G.mode = 3; submode 5 -> 6;
+    1e7ad0; 1e7b40; 1e7af8; 11d1c8(G.+10) (reset the challenger record and
+    111508 — a no-op in mode 3); 129168(G.+10 ^ 1).
+    129168(s): if P[s].+24 == 1: G.+98 = 0 and P[s].char = entry of the
+    seat's random pool chosen by (316b90() & 0x7fff) * count[s] >> 15
+    (pool at 0x4c8690 + 0x34*s, count at 0x4c8830 + 4*s; LIBRARY RNG 316b90).
+
+6.3 Select and fight in mode 3: two-seat select and spirit select as ported;
+    exit to Task_VS_Prev 125e10; battle with mode 3.
+
+6.4 After the VS match (145628 mode 3, 5.8) 124da0 runs:          [OBSERVED]
+    winner != previous winner (G.+0c): 1c4f80(winner ^ 1); G.+0c = winner;
+        nNumVsWin = 1; anNoVsWin[0] = P[loser].char
+    same winner: anNoVsWin[nNumVsWin % 20] = P[loser].char; nNumVsWin++
+    draw: 1c4f80(G.+10 ^ 1); G.+0c = -1; nNumVsWin = 0; tail 1c4e08
+    then, because submode != 2: G.mode = winner + 1; 11d1c8(loser).
+    Flow: win quote (mode already 1/2, G.+1c still 1) -> 1362d8 second
+    branch -> VS result 136a60 -> 136fc8:
+      - challenger won: P[W].+18 == 0 -> opening 1c60c8, new schedule for the
+        challenger's character, stage index 0.
+      - original player won: +18 == 2 -> map with the old stage index; the
+        schedule is kept when G.+98 == 1, rebuilt (17a2c8(char,1), all rolls
+        and disable flags reset) when G.+98 == 0 (random-select reselect).
+      - winner at index 7: pre-final demo (first time) or directly battle.
+    Draw, or VS win limit reached: Game Over for both seats.
+    The loser gets no Continue screen in mode-3 dispatch (there is no path
+    to 1376d0 from the mode-3 branch); Continue's mode-3 code (5.9) is
+    reachable only from other callers — UNKNOWN which.
+
+
+7. Score / ranking bookkeeping between fights
+---------------------------------------------
+  - Arcade score = G.+90 with shadow 0x582238. 1bc1a8 zeroes both. Callers:
+    127db0 (leave select), 12f2a8 (select exit to map: continue or post-VS),
+    12f394 (survival), 1377c8 (Continue entry), 1457a4 (challenger seat won
+    the VS match), 182a84 (ending). Score is NOT reset at a fresh run's
+    opening path (12f254) — it is already 0 from 127da8/Continue.
+    In-battle writers 1c86c8 / 1c95a0 and HUD 1ba9c8..1bc198 belong to the
+    battle slice. 1bc160: in HUD mode 3 (VS) with nNumVsWin == 1 the shadow
+    increments and is copied to G.+90.
+  - VS seat counters 0x4c37f8 + 8*seat (+0 wins, +4 losses), clamped to 999,
+    are updated by 124da0 only when submode == 2.
+  - VS streak ranking: 1c4f80(seat): if 1c4e28(nNumVsWin) (nNumVsWin greater
+    than word 0x43d110): 1c4e50({nNumVsWin, P[seat].char byte, P[seat].+08
+    byte}) inserts into the saved table at 0x43d0f0..0x43d110; then 1c4e20.
+  - Game Over: 1e6180() scans the saved ranking via function table 0x584f78
+    and returns 1 when the result qualifies -> name entry 1e5d88 (out of
+    scope). Inputs of 1e6180 beyond O+0x3f.. bytes: UNKNOWN.
+  - 1b8ee0(mode) / 1b9048(seat) / 1b8f68(handle) bracket the Continue screen
+    (5.9); purpose UNKNOWN (INFERRED: continue-count or credit display).
+
+
+8. UNKNOWN / not read, with suggested Probe experiments
+-------------------------------------------------------
+  U1  Draw geometry, sprite records, float constants of 1c1b20 (1c2860,
+      1c2920, 1c2a38, 1c2fe8, 1c31f0, 1c3260, 1c3608, 1c3888, 1c3b78,
+      1c3ec8), 1c4428, 1c5290 (1c5490, 1c5e58), 1c60c8 (1c6400 body),
+      1c6cc0 (1c6e58 body), 136a60 draw (1370c8, 137150), Continue draw
+      (137d40, 137db8 beyond the digit rule), Game Over draw (138af0).
+      Probe: run each task handler frame by frame with render callees
+      (117de8, 1145c0, 1148f0, 113f98, 114118) recorded as in
+      validate_versus_result_art.py.
+  U2  Message selection: 1a3070, 1a3168, 1a26b0, 1a22a8, 1a2380, 1a2870,
+      1a2948 and the text resources they load (shared with the ported win
+      quote; check src/versus_result_text.cpp first).
+  U3  1c6400 timing, skip rules and the exact point where P[h].+18 = 1.
+  U4  1c55d8: line-list tables used by 1c5490, action ids, the flash/stage
+      reload branch (1c57d0..1c59d4), float pan constants 0x655380..0x655390.
+  U5  1c6e58 (pre-final demo) entirely, including where 1c7a30 is called.
+  U6  CPU level progression: how battle derives actor+0x100 from param+00
+      and O+4. Probe: run 139660 -> 13fd80 for stage indices 0..7 and
+      difficulties 0..7 and read CPU+0x100.
+  U7  The bonus argument of 145628 and 1400d8 record fields +1c / +28.
+  U8  Meaning of O+0, O+2, O+3 in the option menu; P.+2c; P.+10.
+  U9  Kind-4 banner art (0x4c5188, 0x4c51a0), shutter sprite records
+      0x4c38b0..0x4c3928, and whether src/vs_curtain.cpp covers them.
+  U10 Callers of 127da8, 118148 and 1c4df8 (0x1bbca0, 0x1bbd60); semantics
+      of the START-hold latch 0x582444/0x582448.
+  U11 138a48 exact order; 1e6180 qualification rule; 1b8ee0/1b9048/1b8f68.
+  U12 17bbe0 / 17bcc0 (submode 5 opponent/stage), 17bb38 consumers.
+  U13 Ending hand-off 0x182968: only its entry condition (P[h].+14 >= 8 at
+      145b18) is established here.
+  Suggested end-to-end validation: a Probe harness that seeds GameRandom,
+  runs 17a2c8(char,1) for all 48 keys x several seeds and held-direction
+  words and compares S.+00..+38 and S.+11c..+1e4; then drives 1c2420 /
+  145628 transitions over synthetic win/loss sequences (stubbing 1252f0 to
+  record kind, speed, destructor, next) to validate sections 4.9, 5.6-5.8
+  and 6.4 including RNG consumption (one random(5) per 1c2420).
+
+Implementation estimate: schedule + flow controller + flags (sections 2-4,
+5.6-5.9 control, 6) are small and fully specified; the five presentation
+scenes (opening, map, walk-in, dialogue, pre-final) need the U1-U5 reads
+before they can be ported and dominate the effort.

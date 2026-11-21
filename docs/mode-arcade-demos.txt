@@ -1,0 +1,643 @@
+ARCADE / ATTRACT NON-INTERACTIVE DEMO SCENES (SLPS-25559) -- static RE specification
+====================================================================================
+Date 2026-11-21. Source: work/ss6/extracted/SLPS_255.59 (ELF hash pinned in
+outputs/ss6-feasibility/iso_manifest.json). Method: static disassembly only (analyze_elf.py);
+no Probe run was used. Tags: [OBS] read from instructions/data at the cited address,
+[INF] interpretation, [UNK] not resolved. Hex unless stated. "g" = g_GameData 0x4c3808.
+"seat[i]" = 0x456890 + 0x30*i (per-seat block; +0 character, +4 color, +8, +c, +14 arcade
+stage counter, +18, +1c, +20, +24, +2c).
+
+Shared helper names used below (all [OBS] as callees, semantics [INF] unless a section proves it):
+  112670(prio,handler,arg,tag) task; 1126f0(prio,handler,stackBase,stackSize,t0,tag) coroutine
+  task (handler owns a private stack and suspends in 112a28(0) = "yield one frame");
+  118320(fn) registers the scene destructor; 1252f0(a0,a1,dtor,next) scene switch;
+  112a70(tag) kill tasks; 11e3a0(tag) free objects; 11e2e8(tag) allocate object;
+  118128(seat) pad block (+0 held, +4 pressed edges, +8 repeat);
+  1e7c00(id,flag) BGM request (id indexes the 0x40-byte name table at 65cbf8: 0 bgm01_theme,
+  1 bgm01_theme2, 2 bgm02_char_s, 3 bgm03_ending, 4 bgm04_staff, 5.. stage tracks, 0x11
+  bgm17_stage04, 0x12 bgm18_stage08, 0x13 bgm19_stage09, 0x14 bgm20_stage10, 0x15 bgm21_e_demo,
+  0x16 bgm22_map, 0x17 bgm23_iza, 0x18 bgm24_syobuari, 0x19 bgm25_windemo, 0x1a bgm26_continue,
+  0x1b bgm27_gameover); 1e7ad0() / 1e7b40() stop requests; 1e7b70(a0,id) SE; 1e7d60(a0,id) voice;
+  1142d8(slot,name) texture load; 1163c0(name,buf)+116478(first,count,ptr) palette load/set;
+  10add8(slot,flag) texture bind; 113028(str,x,y,color) string draw (already ported for the VS
+  result quote, see validate_versus_result_text.py); 1135e8(str,x,y,color) small ASCII string;
+  113f98(slot; f12 x,f13 y,f14 z,f15 w,f16 h,f17 u,f18 v,f19 uw,[sp] vh) textured quad;
+  117de8(rect*,a1,color,a3; f12 x,f13 y,f14 z,f15 w,f16 h) quad from a 0x18-byte rect record
+  {u,v,w,h,?,texSlot}; 1148f0(color; f12 x,f13 y,f14 z,f15 w,f16 h) flat quad;
+  1145c0(x,y,w,h,color; f12 z) flat full-screen quad;
+  122e98(f12,f13,f14) / 122eb8(f12,f13,f14) camera position / offset.
+  Palette-fade registers [OBS]: 1170c8(m) 3ebf18=m; 1170d8(c) 3ec730=c; 1170e8(l) 3ec734=clamp(l,0,
+  100); 117108(c,l) = 1170d8,1170e8, 3ec738=0; 117158(c,s) 3ec730=c,3ec738=s; 117170(n) 3ebf24=n;
+  117180(first,count,k) palette range select. The resident task that applies them is the one
+  already used by the ported menus (not re-read here).
+  Text reveal counter: 3d3aa0 = number of glyphs 113028 may draw this frame (-1/large = all),
+  3d3ab0 = glyphs submitted so far this frame (113028 increments it) [INF from every caller].
+  112f30(fg,shadow) stores text colours 3d3ae0/3d3ae4; 112f08(x) re-applies them [OBS].
+
+0. SCENE GRAPH
+--------------
+  boot ... -> 1ccbd0 (sammy_logo scene) --+
+                                          v                (0x43d052!=0 forces DemoSG)
+  title 127940 --frame 2d0, no input--> 1e8850 RANKING + CPU-vs-CPU fight
+       ^   ^                               | phase 11: 1ccea0 toggles 582af4
+       |   |                               +--> 1ca408 "DemoNG" --> title
+       |   +-------------------------------+--> 1ea7f0 "DemoSG" --> title
+       |
+  ARCADE battle 139760 --match end 145628 (mode 1/2, human won)--------------------------+
+       ^   stage counter seat+14 >= 8 ............................ 182968 ENDING DEMO      |
+       |   1c6008()!=0 && 1c4348()==0 ............................ 1c5290 TALK DEMO (F=1)  |
+       |   otherwise ............................................. 135e30 (arcade-flow)    |
+       |                                                                                  |
+       +-- 1c5290 TALK DEMO (F=0, entered from the arcade interlude scenes) --------------+
+       +-- 1c6cc0 demo_mga pre-final-boss demo (from 1c5290 stage 7 F=1, or 136ffc) -------+
+  182968 ENDING -> (staff roll 19c1c8 inside the same task) -> 138340 Task_GameOver
+        -> frame 12c -> 1e8850 ranking (or 1e5d88 when 1e6180()==1) -> title
+  Battle states 1 ("----START_DEMO----", 143708, printf 5e9c60) and 8 ("----END DEMO----",
+  1443f0, printf 5e9d48) are the ordinary in-battle character introduction and victory
+  states; they are part of the round dispatcher that is already ported (docs/round-flow.txt)
+  and are NOT separate scenes. "----SCORE----" (5e9d60) is printed at 1447d0 in the same
+  dispatcher (arcade-flow slice).
+  The names "DemoNG"/"DemoSG" come from the texture prefixes NG*/SG*; they are attract art
+  scenes, not story demos [INF].
+
+1. PER-CHARACTER ENDING DEMO  (scene entry 182968)
+---------------------------------------------------
+1.1 Entry / exit [OBS]
+  Reached from 145b28 (match end): mode g+0 is 1 or 2, the human seat won, opponent character
+  != 21 or sub-mode g+a0 != 5 path, and seat[g+8].+14 (after its increment at 145bac) >= 8.
+  Also reached from GALLERY (1d25a0) with mode 0d/0e.
+  182968:
+    1828c0()            ; 4eeef0=4eeef4=-1 (portrait ids), 114cb8(), binds 10000/10001/10002,
+                        ; slots 22/23, loads hukidasi.pvr -> slot 1f, hukidasi2.pvr -> slot 20,
+                        ; then 182858()
+    g+30 = 1
+    120110()            ; loads resource "99a": aid_99a/idx_99a/act_99a/pil_99a/jdg_99a/
+                        ; chr_99a/map_99a .bin into the resource-99 slots (46a9a0=46a9a4=63),
+                        ; calls 1e79c8(0,31)
+    if (mode-0d) < 2 (unsigned):   ; gallery viewer
+        1126f0(14, 182ce0, 12d4f80, 1000, 20, 1b5d)
+        4eefd0=4eefd4=4eefe0=0; 1ce478(); 1ceb90(1a3060()); 1cebb0(v0); 3d3aa0=-1
+    else                            ; arcade
+        1126f0(14, 182d30, 12d4f80, 1000, 20, 1b5d)
+    118320(182a48)
+  Destructor 182a48: 11e3a0(1b5d); 112a70(1b5d); 112a70(fa1); 116268(c,10); 116268(1c,20);
+    4c3838 = 0; 1bc1a8(); tail 1c4e08() (582448=582444=0).
+  Arcade coroutine 182d30:
+    4ef0c4 = (mode==1) ? 0 : 1                      ; seat index used for pad + palette
+    s = seat[4ef0c4]; char = s.+0
+    byte[43d058 + 81 + s.+8] = 1 ; byte[43d058 + 47 + char] = 1     ; clear records (save data)
+    4ef0c8 = s.+4 (color)
+    1c9830()                                         ; start NAME ENTRY overlay, section 5
+    182a98(char)                                     ; play the character script (1.3)
+    112a70(fa1); 1e7ad0()
+    if setjmp(4efb40)==0 (317598) and byte 43d052==0: 19c1c8()   ; STAFF ROLL (1.6)
+    112a70(fa1); 1e7ad0()
+    g+34 (4c383c, "g_GameData.nLevelEnding") = 1
+    1252f0(1, 1, 182a48, 138340)                     ; -> Task_GameOver scene (section 6)
+    forever { 1a2118(); 1a2158(); }                  ; keeps drawing until the switch lands
+  Gallery coroutine 182ce0: 4ef0c4 = 178f90(); loop { 182858(); c = 13f4a8(c,1); 4ef0c8 = 0;
+    182a98(c); }. In gallery mode 182a98 ends with 1ce478(); 4eefd4 = (c==30) ? 2b : c.
+    The character selector 1a0ad8.. belongs to the gallery slice [UNK here].
+  182a98(char):
+    memset(3ebf30,0,800); 3ebf1c=100; 4eeef4=-1; 3ec730=3ec734=3ec738=0; 3ebf20=3ebf24=0;
+    3ec73c=0; 4eeef0=-1; 182858()
+    if setjmp(4efb40)==0:
+        if byte 43d052==0: call table 4eefe8[char]()        ; 50 function pointers
+        1a1830(0,4); 1a1740(40)                             ; fade to black, 64 frames
+    (longjmp target) same register reset as above; 3d3aa0=-1; 112a70(fa1); 1e7ad0()
+  => with 43d052 != 0 (alternate text version) no script and no staff roll are executed [OBS].
+  182858(): word[4ef0d0]=0; for 8 objects obj[k].+38 = 400000; 1159d0(); 112f08(8);
+    112f30(ffffff,404040).
+
+1.2 State [OBS]
+  4ef0c4 seat index; 4ef0c8 color; 4ef0d0 + 138*k (k=0..7) sprite objects (standard battle
+  object layout: +c/+10/+14 resource/bank, +1c palette index, +20, +24 action, +38 flags,
+  +40/+44 float x/y, +4c..+60 motion words, +8c.. colour fade, +c0 action-finished flag);
+  4eeef0 / 4eeef4 current portrait texture index for slot 22 / 23 (-1 none);
+  4efa90 / 4efa94 per-frame camera delta x / y (ints); 4a2a58 / 4a2a5c camera floats;
+  4efa98 message list: +0 balloon id, +4 count, +8 four string pointers (0x18 bytes);
+  4efab0 roll list (up to 32 string pointers), 4efb30 roll count; 4efb40 jmp_buf;
+  582a68 "skip locked" flag (set while name entry is active).
+
+1.3 Script primitives (the "VM"); every script is straight-line compiled code [OBS: no branch
+    instruction exists inside any of the 50 script functions]
+  A = 1a2118(): if 4eeef0>=0 -> 1a22a8() (left portrait); if 4eeef4>=0 -> 1a2380() (right).
+  B = 1a2218(): pad=118128(4ef0c4); 1a2158(); then if 582a68==0:
+        gallery modes: if pad.pressed & 404 -> 1e7b70(-1,25); longjmp(4efb40,1)
+        otherwise    : if pad.pressed & 8   -> longjmp(4efb40,1)        ; START skips the script
+  1a2158(): 10add8(word 3d3aa4, word 3d3ab4); 10add8(27, word 3d3ab4);
+        4a2a58 += (float)4efa90; 4a2a5c += (float)4efa94;
+        for k in 0..7: if !(obj[k].+38 & 400000) 120ce0(obj[k]);     ; ported animation/draw step
+        112a28(0)                                                     ; end of frame
+  1a22a8(): 3db8fc=1; 1148f0(c0404040; x 0, y,z,w,h = floats 60a054,60a058,60a05c,60a050);
+        if 4eeef0 < 31: 113f98(22; consts 60a050..60a060)            ; 256x256 portrait, left
+  1a2380(): same with consts 60a064..60a07c and slot 23 if 4eeef4 < 31 (right portrait).
+        (float values: read the 12 words at 60a050; not decoded here.)
+
+  op                         address  behaviour
+  wait(n)                    1a1740   n times { A; B }
+  waitB(n)                   1a1780   byte-identical copy of wait
+  camDelta(dx,dy)            1a1728   4efa90=dx; 4efa94=dy
+  flash(color,n)             1a17c0   1170d8(color); 117170(n)
+  fadeIn(color,step)         1a17e8   1170c8(2); 1170e8(100); 117158(color,-step)
+  fadeOut(color,step)        1a1830   1170c8(2); 1170e8(0);   117158(color,step)
+  loadBg(n)                  1a1878   112a70(fa1); 1a4a98(n)
+  loadBg0(n)                 1a4a98   direct call (first op of every script), see 1.5
+  slotPalette(k)             1a18a8   obj[k].+1c = obj[k].+14*5 + 4ef0c8   ; player's colour
+  portrait(side,idx)         1a18e0   side 1 -> 1a1928, side 2 -> 1a19e8: store idx in
+                                      4eeef0/4eeef4; if idx < 31 (unsigned) and changed:
+                                      1142d8(22|23, "demo_%02d.pvr"), 1163c0("demo_%02d.pvp"),
+                                      116200(c,10)|(1c,20), 116478(c0|1c0, 40, buf+180).
+                                      idx -1 hides; idx 34 = "no portrait, wide text" marker
+  msgClear()                 1a1aa8   4efa9c=0; memset(4efaa0,0,10)
+  msgAdd(str)                1a1ad8   list[count++] = str
+  balloon(id)                1a26a8   4efa98 = id
+  msgShow(type)              1a1b00   s2=b4; s3=0; loop { A; 3d3aa0 = s3/4 (signed, round to 0);
+                                      s3++; done = draw_type(4efa98); if done: s2--;
+                                      if 582a68==0 and pad(4ef0c4).pressed & 707:
+                                          if done: s2=0 else s3=2710;
+                                      B; } while s2 > 0
+                                      => 1 glyph per 4 frames; 180 frames hold after the page
+                                      is complete; a button completes the page, a second ends it
+     draw_type 1 = 1a2468: n = leading non-null strings (max 4); 3d3ab0=0;
+                           x = (4eeef0 < 34) ? d5 : 2b; y = (4-n)*e + 36; step 1c;
+                           113028(str,x,y,-1) per line; returns 3d3ab0 < 3d3aa0
+               2 = 1a2540: x = 2b; y = (4-n)*e + 126; step 1c
+               5 = 1a25f0: x = 2b; y = (4-n)*e + c8;  step 1c
+               3 = 1a26b0: speech balloon. id = list.+0; flip = id >= 6 (then id -= 5);
+                           R = 4eeef8 + 24*id = {slot,x,y,?,v,w,h,tx,ty}; n max 3;
+                           113f98(slot; x,y, z=float 60a080, w,h, u = flip ? R.+c+w : R.+c,
+                           v = R.+10, uw = flip ? -w : w, vh = h); text at (R.+1c + x,
+                           R.+20 + y + (3-n)*e), step 18
+                           balloon table (decimal): 1 {1f,64,48,0,0,512,176,36,36}
+                           2 {1f,104,48,0,177,428,171,40,32} 3 {1f,136,48,0,348,359,161,48,24}
+                           4 {20,64,36,0,0,504,208,76,50}   5 {20,104,36,0,216,432,192,84,40}
+               4 = 1a2870: centred; n max 3; x = 140 - 6*strlen(str); y = (3-n)*c + 16e;
+                           step 18
+     (the 50 ending scripts only use types 1 and 2)
+  rollClear()                1a1e98   4efb30 = 0
+  rollAdd(str)               1a1ea8   4efab0[count++] = str
+  rollShow(n)                1a1fe8   y0 = f2 - e*count; k=0; loop { A; prev = 3d3ab0;
+                                      3d3ab0 = 0; r = k/4; n -= (prev < r); k++; 3d3aa0 = r;
+                                      each line: 113028(str, 140 - 6*strlen, y0 + 1c*i, -1);
+                                      B } while n > 0        ; centred block, typed, held n
+  rollScroll(n)              1a1ed0   total = count*1c + 10 + n; 3d3aa0 = -1; for f in
+                                      0..total-1 { A; off = min(f, count*1c+10); each line i:
+                                      y = 1e0 - off + 1c*i; drawn only if -1f7 <= -off+1c*i < 0
+                                      ... i.e. test (unsigned)(-off + 1c*i + 1f7) < 1f7;
+                                      x = 140 - 6*strlen; B }        ; 1 px/frame upward scroll
+  objSetAct(obj,bank,sub,x,y,flags) 120378  obj.+c0=0; 1202e8: +38 = flags|10000000; +34=0;
+                                      +40=(float)x; +44=(float)y; +1c = bank*5; +24 = bank*20 +
+                                      (sub & 1f); +70 = float 5df3ac; +30 = 100; +c=+10=0;
+                                      +14 = bank; +20,+28,+2c,+4c..+60 = 0; then 120d10(obj)
+  objAct(obj,sub)            120390   (resource-99 mode) +24 = obj.+14*20 + sub; restart, 120d10
+  objVel(obj,vx,vy)          120428   +50 = vx; +5c = vy
+  objColour(obj,argb,step,a3,t0,t1) 120438  +38 |= 1800000; +8c=argb; +90=step; +98=a3;
+                                      +a0=t0; +a8=t1
+  obj[k].+38 = v             inline   values used: 400000 (hidden, not stepped), 0, 80000
+                                      (X mirror), 2000000, 2080000
+  bgm(id,flag) 1e7c00; se(0,id) 1e7b70 (ids 1c,1d,1e,1f,20,21 occur); textColours 112f30;
+  117108, 1170c8(0), 117180(200,400,2), 1174b8(200,200|400), 117438 (staff roll only);
+  camera 122e98 / 122eb8 with float constants from .rodata next to each script.
+
+1.4 Script table and extraction recipe
+  4eefe8: 50 function pointers (file-backed .data). [OBS]
+   0 182e90  1 183630  2 184360  3 184c58  4 1854a0  5 185fa0  6 1868a0  7 187040  8 187700
+   9 188330 10 188c30 11 189578 12 189d78 13 18a630 14 18b0a0 15 18b7b0 16 18c100 17 18c9a8
+  18 18d268 19 18d928 20 18e2d8 21 18ec40 22 18f6c8 23 190240 24 1909d0 25 191310 26 191f10
+  27 192768 28 1937e8 29 193e08 30 194940 31 195460 32 195dd8 33 1968f0 34 196f80 35 1977d0
+  36 198050 37 198dc8 38 1994c8 39 199e68 40 19a8c0 41 19b108 42 19b890 43 19c1c8(staff roll)
+  44 19d160 45 19de20 46 19e788 47 19f5b0 48 1a0148 49 1a0a18 ; each ends where the next begins
+  (49 ends at 1a0ad8).
+  Extraction (verified on all 50: zero unresolved arguments): walk each function linearly,
+  track constants for lui/addiu/ori/move and lwc1 from absolute .rodata addresses, apply the
+  delay-slot instruction before each jal/j, and emit one record per call
+  {callee, a0,a1,a2,a3,t0,t1, f12,f13,f14}; also emit "sw reg, off(base)" stores whose base is
+  a constant in [4ef0d0, 4efa90) as obj[(base+off-4ef0d0)/138].+field = value. Saved registers
+  s0..s7/fp hold object addresses (4ef0d0 + 138*k) and flag constants across calls; a0..t7/v0
+  are invalid after each call. A tail "j" to a primitive is the final op. String arguments are
+  NUL-terminated Shift-JIS in .rodata (5f3fd0 .. 609exx); line breaks are embedded "\n".
+  Totals over the 50 scripts: msgAdd 2387, rollAdd 1073, msgShow 877, wait 843, portrait 661,
+  objAct 505, objVel 409, objSetAct 370, waitB 295, rollShow 141, loadBg 136, slotPalette 133,
+  fadeIn 147, fadeOut 126, camDelta 101, flash 62, objColour 56, bgm 50, se 25, rollScroll 14.
+  Common shape of a character script (character 0, 182e90, fully read):
+    loadBg0(9); camera(320,320,-400)/(−160,−120,0); objSetAct(obj0,0,a,104,0,0);
+    slotPalette(0); bgm(3,1); camDelta(0,-1); waitB(c8); camDelta(0,0); camera(320,120,-400);
+    waitB(40); textColours(ffffff,404040); portrait(1,0); {msgClear; msgAdd x1..4; msgShow(1|2)}
+    ...; portrait(1,-1); waitB(40); fadeOut(0,4); wait(40); obj0.+38=400000; loadBg(11);
+    objSetAct(...) x3; fadeIn(0,4); wait(40); ... ; final: loadBg(25); fadeIn(0,4); wait(40);
+    rollClear; rollAdd(title); rollShow(64); wait(30); rollClear; rollAdd x8; rollShow(258).
+  Per-script constants (hex): bgm / backgrounds in order / portrait ids used / msgShow pages:
+   0 3 | 9,11,17,25 | 0,5,27,34 | 17        25 3 | 9,e,c,e,17,e,14,e,11,e,25 | 19,2 | 4
+   1 3 | 9,f,c,25 | 1,2,4 | 21              26 3 | 9,6d,25 | 16,1a | 17
+   2 3 | 9,d,25 | 1,2,13,16 | 21            27 3 | a,1f,25 | 1,1b | 22
+   3 3 | 9,e,c,25 | 3,c,34 | 18             28 3 | 9,25 | 6,1c | 17
+   4 3 | 9,c,f,25 | 1,4 | 19                29 3 | 9,67,f,c,25 | 1d,21,34 | 21
+   5 3 | 9,1c,25 | 5,20,34 | 13             30 3 | 9,13,25 | 4,e,f,16,1e,25 | 21
+   6 3 | 9,11,25 | 6,1c,34 | 20             31 3 | 9,65,e,65,25 | 16,1f | 17
+   7 3 | 9,14,25 | 0,7 | 17                 32 3 | 9,e,14,25 | c,16,20,27,34 | 20
+   8 3 | 9,14,14,14,25 | 8,d,34 | 20        33 3 | 9,25 | 16,21 | 19
+   9 3 | 9,e,6d,25 | 0,9,16,34 | 19         34 3 | 9,6d,25 | f,16,22,34 | 19
+  10 3 | 9,6d,e,1a,25 | a,23..27,34 | 17    35 3 | 9,1d,25 | 0,23,34 | 22
+  11 3 | a,6e,e,1e,25 | b | 13              36 3 | a,6f,6d,25 | 24,30,34 | 15
+  12 3 | 9,e,19,25 | 3,c | 19               37 3 | 9,22,25 | 1e,25,34 | 16
+  13 3 | 9,6d,6d,25 | 0,9,d,34 | 21         38 3 | 9,e,23,25 | 17,26 | 16
+  14 3 | 9,12,25 | 0,e | 17                 39 3 | 9,e,1a,1a,25 | 0,7,a,27,30,34 | 22
+  15 3 | 9,24,24,1b,25 | f,22,34 | 20       40 3 | 9,6d,12,25 | 23..28 | 17
+  16 3 | 9,c,25 | 10,11,34 | 20             41 3 | 9,c,25 | 1,1e,29 | 20
+  17 3 | 9,c,20,25 | 10,11,34 | 19          42 3 | 9,e,d,25 | e,26,2a | 18
+  18 3 | a,25 | 0,12 | 17                   44 3 | c,d,25 | 1,2,4 | 18
+  19 3 | 9,11,c,f,25 | 2,13,18 | 18         45 3 | c,f,d,25 | 1,2 | 17
+  20 3 | a,14,15,25 | 14,15 | 17            46 3 | 6d,25 | 18,2e,34 | 24
+  21 3 | a,15,16,14,25 | 14,15 | 17         47 3 | 9,1b,1c,25 | 5,f,22,2f,34 | 19
+  22 3 | 9,13,25 | 0,3,c,16,1a,1e | 21      48 3 | 9,1c,17,25 | 0,6,27,30 | 18
+  23 3 | 9,6f,25 | 17,34 | 18               49 6 | 1 | none | 0  (stub: bgm(6,0), camDelta(0,-1),
+  24 3 | 9,c,e,25 | 16,18,2e,34 | 19              wait(c8), camDelta(0,0), wait(3840))
+  All real endings request bgm 3 (bgm03_ending) with flag 1. "bgm21_e_demo" (15) and
+  "bgm25_windemo" (19) are never requested by these scenes; no lui/addiu reference to their
+  name strings exists, the names are only rows of the track-name table [OBS]; 19 is presumably
+  the in-battle victory jingle requested by id elsewhere [UNK].
+
+1.5 Background loader 1a4a98(n) [OBS]
+  n < c      : call table 50e080[n]() (the twelve battle-stage background loaders 1a7690,
+               1a7f28, 1a8b90, 1aa250, 1ab368, 1ac1f8, 1ae020, 1af840, 1b05b8, 1b15b0, 1b2350,
+               1b3aa8); then 50e04c = 0.
+  c <= n < 64: task 112670(a, 1a4c20, 10, fa1); task.+1c = (n-c) & 1; file index (n-c)/2 + 1:
+               1142d8(4,"ed_bg%02d.pvr"); "ed_bg%02d.pvp" -> 116478(200, count, buf);
+               10add8(4,20).  (n=25 -> ed_bg13 half 1; n=32 -> ed_bg20 half 0)
+  n >= 64    : entry 50e0b0 + 8*(n-64) = {name*, half}: 64 ed_bg15/1, 65 ed_bg14/0, 66 ed_bg16/0,
+               67 ed_bg18/1, 68 ed_bg19/1, 69 ed_bg19/0, 6a ed_bg16/1, 6b ed_bg18/0, 6c ed_bg15/0,
+               6d ed_bg14/1, 6e ed_bg17/0, 6f ed_bg17/1; names formatted with "%s.pvr"/"%s.pvp".
+  Draw task 1a4c20: 3db900 = -1; one 113f98 of slot 4; the half flag selects float 652aec
+  instead of 652ae8 for the V origin (652ae8.. = 1.0, 482.0, 480.0, 640.0, 30000.0, 400.0):
+  a 640x480 window at v=1 or v=482 of a 1024x1024 texture, z=30000 [INF from the constants].
+
+1.6 Staff roll 19c1c8 (table index 2b) [OBS]
+  loadBg0(32) (ed_bg20); 117180(200,400,2); 1170c8(0); 117108(0,80); bgm(4,1) (bgm04_staff);
+  camera(320,120,-400); then groups {rollClear; rollAdd x N; rollScroll(0)} (14 scroll groups,
+  the last ones rollScroll(c8)), using 1174b8/117438 palette calls between groups. Credits text
+  is Shift-JIS at 607708.. . It runs inside the arcade ending coroutine, is skipped by START
+  through the same longjmp, and is not run in gallery mode or when 43d052 != 0.
+
+1.7 Input summary: START (pressed & 8) aborts the whole script (arcade) unless 582a68 != 0;
+  mask 707 advances/completes a text page; gallery uses mask 404 to leave. Bit names other than
+  START=8 and directions 10/20/40/80 are [UNK] here (see docs/input-processing.txt).
+
+2. MID-RUN TALK DEMO  (scene entry 1c5290; "rival"/boss conversation)
+-----------------------------------------------------------------------
+2.1 Selection [OBS]
+  F = word 582528 (0 = before the fight, 1 = after the fight). 1c5ff8() sets F=1.
+  After an arcade win (145b38): if 1c6008()!=0 and 1c4348()==0 (582 3ac == 0) -> 1c5ff8();
+  1252f0(2,0,139778,1c5290). 1c6008: stage counter of the human seat (mode 1 -> 4568a4, mode 2
+  -> 4568d4) is 4 or in 6..8. 1c6068 (used by 1c4568 in the map scene): counter is 3 or in
+  5..7 -> pre-fight variant (F must be 0; who clears F is in the arcade-flow slice [UNK]).
+  1c5490(stage,F) -> {group, pages}:  (3,F0)->{3,4}  (4,F1)->{4,3}  (5,F0)->{5,4}
+     (6,F1)->{6,4}  (6,F0)->{7,4}  (7,F1)->{8,1}  otherwise {0,0}.
+  Boss kind 1c5590(opponentCharacter): 0d -> 2, 1a -> 3, 1b -> 1, else 0; evaluated only for
+  (6,F0) and (7,F1).
+2.2 Entry 1c5290 [OBS]
+  1126f0(14, 1c55d8, 1333780, 1000, 20, 1776); 1a4a98(g+4) (background = current stage id);
+  stage = human seat +14; 118320(1c53e0); camera 122e98(320,120,-400), 122eb8(-160,-120,0);
+  1c5438(): 1828c0(); 11d488(0, seat[0].+0); 11d488(1, seat[1].+0);
+  music by stage (jump table 655364, index stage-3): 3,4 -> bgm(11,1); 5 -> bgm(12,1);
+  6 -> F==1 ? bgm(12,1) : bgm(13,1); 7 -> bgm(13,1); other stages: no request.
+  Destructor 1c53e0: 1e7ad0(); 11e3a0(fa1); 112a70(fa1); 11e3a0(1776); 112a70(1776);
+  116268(c,10); 116268(1c,20).
+2.3 Coroutine 1c55d8 [OBS]
+  actL = word 655378 (=400), actR = word 65537c (=400); if F==1: mode 1 -> actR = 401,
+  mode 2 -> actL = 401                     ; loser-side standing action for the post-fight talk
+  o0 = alloc(1776); 11fed0(o0, 0, actL, f0, 0, 0);     o0.+20 = seat[0].+4
+  o1 = alloc(1776); 11fed0(o1, 1, actR, 190, 0, 80000); o1.+20 = seat[1].+4
+  112f08(8)
+  mode 1: player = seat[0].+0, opponent = seat[1].+0, stage = seat[0].+14
+  mode 2: player = seat[1].+0, opponent = seat[0].+0, stage = seat[1].+14
+  {group,pages} = 1c5490(stage,F); kind = 0; if (stage==6,F==0) or (stage==7,F==1):
+  kind = 1c5590(stage, opponent)
+  for page in 0..pages-1:
+     s6 = 0 (reveal counter); s5 = 10e (270-frame hold)
+     portrait(1, player); portrait(2, opponent)
+     list = 1c5dc0(stage, player, group, kind, page):
+        stage==6 && F==0: page 3 -> 1a3070(player, group, kind); pages 0..2 -> 1a31e0(kind,page)
+        stage==7 && F==1: 1a3070(player, group, kind)
+        otherwise        : 1a3070(player, group, page)
+     per frame:
+        3db900 = -1
+        [only stage 6, F==1, page 3, first time]: g+2c = 1; three frames of 1145c0(0,0,280,1e0,
+          -1; z -110) (white flash), repeated twice (counters sp+30 < 3, sp+34 < 2); then a
+          white fade-out: each frame draw both portraits + objects, 1170c8(2), 117108(-1,fp),
+          fp += 8 until fp > 100 (1145c0 white from fp >= f0); then 11e3a0(fa1), 112a70(fa1),
+          1e7ad0(), 1a4a98(a) (stage background 10), 2d frames of 117108(-1,100), then fade
+          back fp -= 8 down to < 0; g+2c = 0
+        1a22a8(); if not (stage==7 && F!=0) 1a2380()          ; portraits
+        3d3aa0 = s6/4; s6++
+        done = 1c5e58(list, stage, page)                      ; text renderer selection:
+            (3,F0): pages 1,3 -> type 1 (1a2468); pages 0,2 -> type 2 (1a2540)
+            (4,F1): pages 0,2 -> type 1; page 1 -> type 2
+            (5,F0): pages 1,3 -> type 1; pages 0,2 -> type 2
+            (6,F1): pages 0,2,3 -> type 1; page 1 -> type 2
+            (6,F0): page 3 -> type 1; pages 0..2 -> type 2
+            (7,F1): page 0 -> type 1
+        if done: s5--
+        p = pad(mode==1 ? 0 : 1).pressed
+        if p & 607: if done: s5 = 0 else s6 = 2710
+        if (p & 8) && g+18==0 && !leaving:                    ; START skips the demo
+            F==0 -> 1252f0(2,0,1c53e0,139760)                 ; straight to the fight
+            F!=0 && stage!=7 -> 17a548() ? 1252f0(4,1,1c53e0,1c1b20) : 1252f0(2,0,1c53e0,1c1b20)
+            (F!=0 && stage==7: START is ignored here, falls into the page loop exit)
+            leaving = 1
+        each object: if obj.+c0 == 1 -> 120390(obj, actL|actR) (loop the action); 120ce0(obj)
+        112a28(0)
+     until s5 <= 0
+  after the last page (frames repeat with 3d3aa0 = 2710 and the last page still drawn):
+     if g+18==0 && !leaving:
+        F==0 -> 1252f0(2,0,1c53e0,139760)
+        F!=0 && stage!=7 -> same 17a548() choice of 1c1b20 as above
+        F!=0 && stage==7 -> camera pan: every frame 122ed8(f12 = float 655390 (320.0),
+            f13 = y, f14 = 0) with y starting at float 655380 (120.0) and y += float 655388
+            (1.0) per frame; when y >= float 65538c (280.0): 1252f0(1,1,1c53e0,1c6cc0)
+  Text source 1a3070(char, group, n) [OBS]: char >= 31 or == 2b -> 0. T = *(50d550 + 4*char)
+  (or table 50d618 when byte 43d052 != 0). group 0 -> *T; 1 -> T[1+n]; 2 -> T[36+n] (the
+  ending-choice presence words already extracted as ending_choices.bin); groups 3..8 ->
+  *(T + 118 + 4*(group-3)) + 18*n, a 0x18-byte message list {balloon, count(unused 0),
+  str*[4]}. Per-character block size 0x580 (4efeb0, 4f0430, ...).
+  1a31e0(kind,page) = *(50d828 + 4*kind) + 18*page (50d840 when 43d052 != 0); kinds 0..4 at
+  4efc28, 4efcb8, 4efd48, 4efdd8, 4efe68 (4 pages each; kind 4 has 3 valid pages).
+  Extraction: for each character 0..48 except 2b, for group 3..8, for n 0..3 read six words
+  and decode the non-null string pointers as Shift-JIS.
+
+3. PRE-FINAL-BOSS DEMO  (scene entry 1c6cc0, textures demo_mga)
+----------------------------------------------------------------
+3.1 Entry / exit [OBS]
+  Entered from 1c5290 (stage 7, F=1, after the pan) and from the arcade interlude at 136ffc:
+  s = seat[g+8]; if s.+18 == 0 -> 1c60c8 (map); else if s.+14 == 7: s.+1c == 0 -> 1c6cc0,
+  s.+1c != 0 -> 1c2420(); battle 139760; else -> 1c1b20 (details: arcade-flow slice).
+  1c6cc0: 1126f0(14, 1c6e58, 133b7c0, 1000, 20, 1779); 118320(1c6d70); 122e98(float 6553c8,
+  6553cc, 6553d0); 122eb8(6553d4, 6553d8, 0); 1c6da8(); 1c7cb0(0); 1c2420(); bgm(14,1)
+  (bgm20_stage10).
+  1c6da8 resources: demo_mga.pvr -> slot word[4c6804] (=5); moji4.pvr -> slot 0c; moji5.pvr ->
+  slot 0d; demo_mga.pvp -> 116478(200,100,..); 10add8(5,20).
+  Destructor 1c6d70: 11e3a0(1779); 112a70(1779); 1e7ad0(); 117180(200,200,0).
+  Exits: every exit is 1252f0(1,2,1c6d70,139760) followed by 117180(200,200,0) and 1c7cb0(1);
+  it is issued once (guards sp+68 / sp+6c) either automatically at the end or when START
+  (pad(mode==1?0:1).pressed & 8) is seen with g+18 == 0 from the text phase onward.
+3.2 Coroutine 1c6e58, phases in order [OBS for constants cited; the helper bodies 1c7848
+    (background draw from two 4-float parameter blocks + scroll f12), 1c7a30 (parameter
+    interpolation, returns non-zero while running) and 1c7cb0 were NOT read]
+  setup: 112f08(8); 112f30(ffffff,404040); voice 1e7d60(31,35); float parameters from 655420..:
+         -544, -605, -1970, 1245, 950, 640, z -20, (152,100), (272,224), -544.5, 480, limit 641,
+         step 0.5, box y 360, box h 120, -649, 1289, -158, 2888, -156, -347, 640, 96.
+  A (3c frames): 1170c8(0); 117108(-1,100); 117180(200,200,2); 1c7848(scroll 0);
+         117de8(rect 4c66a0 {0,288,336,104,slot c}, colour -1; x 152, y 100, z -20);
+         117de8(rect 4c67d8 {256,104,88,48,slot d}, colour -1; x 272, y 224, z -20)
+  B (3c frames): background; for the first 1e frames the two rects are drawn with colour
+         ((ff - ff*k/1e) << 18) | ffffff, k = 0..1d (alpha fade-out), then not drawn
+  C: run 1c7a30(params, &counter) each frame (background drawn, yield) until it returns
+         non-zero; then a frames of background only
+  D (1e frames): scroll f20 += 0.5 while f20 < 641; text box 1148f0(((k*c0/1e) << 18) | 404040;
+         x 0, y 360, z -20, w 640, h 120), k = 0..1e
+  E: for page 0..2: list = 1a31e0(4,page); hold = b4; loop { box (alpha from D's last value);
+         3d3aa0 = s/4; s++; if 1a2870(list) (type-4 centred text) hold--; START check;
+         background with scroll; f20 += 0.5 while f20 < 641; yield } while hold > 0
+  F: continue scrolling until f20 >= 641 (START check each frame)
+  G: 1e frames (START check)
+  H: second 1c7a30-driven camera move with new parameter blocks (sp+10.., sp+40..), then the
+         automatic exit to the fight.
+  "demo_mag" (a second 1024x1024 texture on disc) has no code reference by name string in the
+  ELF other than the file-name table 5d8198; its user is [UNK].
+
+4. ATTRACT LOOP
+---------------
+4.1 Title -> ranking: Task_Title counter 4c826c ("s_nTitle_FrameDemo") == 2d0 with no input
+  -> 1252f0(2,0,127d70,1e8850) at 127b08 (already ported, src/console_title.*).
+4.2 Ranking scene 1e8850 and the CPU-vs-CPU fight [OBS]
+  1e8850: 1483f8(); 112670(14, 1e8b38, 10, 1f42); 118320(1e89f0); memset(13735b0,0,264);
+  1e8a18() ("%s.pvr" with name 5852b4 -> slot 8); 1e8a60() (name 5852b8 -> slot a);
+  585290 = (byte 43d052 != 0); copies the save tables (section 5.1) into the display rows;
+  1e9758(13735b0, 0); 1b9e00(2); 4c81b4 = 1e; 4c81cc = 2b; 585294 = 585298 = 0.
+  Destructor 1e89f0: 148528() (= 139778() battle destructor + 112a70(15e5)); 1c5270();
+  112a70(1f42).
+  1483f8 (fight setup, RNG order already ported in src/console_attract_ranking.cpp):
+    17a2c8(0,1); g+0 = 0 (GAME MODE WORD 0 = attract demo, written at 148428);
+    stage = table 5ea180[rand(6)] -> g+4; for each seat: seat.+20 = 2 (CPU control [INF]);
+    seat.+4 = rand(5); seat.+c = rand(9); seat.+0 = table 5ea0e0[rand(28)] (rand = 112300); if both seats share character and colour: seat[0].+4 =
+    (colour+1) % 5; 139280(0); 139760() (battle scene entry called directly, nested inside the
+    ranking scene); 112670(f0, 148548, 10, 15e5) (monitor task, body 148550.. not read).
+  Duration and exit: governed by the ranking phase machine (ConsoleAttractRanking::tick:
+  phases 1..5 = 540/60/360/60/360 ticks, fight visible while phase <= 6, START -> title).
+  There is no separate battle time limit in this path [INF]; mode 0 differences inside the
+  battle code are in the battle slices.
+4.3 Successor selection 1ccea0 (ranking phase 11, via 1e9710 when 1b9dd0()==0) [OBS]
+  if byte 43d052 == 0: 582af4 ^= 1 else 582af4 = 0;
+  582af4 != 0 -> 1252f0(1,0,1e89f0,1ca408) else 1252f0(1,0,1e89f0,1ea7f0).
+  The same toggle exists in the sammy_logo scene 1ccbd0 (task 1cccf0 tag 1780: when its frame
+  counter 582af0 == 78 it switches with 1252f0(1,0,1ccc20,..); the counter increments every
+  frame) and in 1cce38 (direct calls 1ea7f0()/1ca408(), then 4c3834 = 0).
+4.4 "DemoNG" 1ca408 [OBS structure; drawing only partly read]
+  112670(14, 1ca738, 10, 177b); 118320(1ca5b0); 1ca5e0() loads NG1024_A01.pvr (slot
+  word[4c6834]), NG1024_A02.pvr (word[4c68ac]), NG512_A02.pvr (word[4c6aa4]), NG512_A03.pvr
+  (word[4c6b34]), NG512_A04.pvr (word[4c6bc4]) and palettes NG1024_A01.pvp -> 116478(300,100),
+  NG1024_A02.pvp -> (100,100), NG512_A02.pvp -> (200,100); 112f08(8); 112f30(ffffff,404040);
+  state 582a70 = 0; 582a74 (exit issued) = 0; 582a78 (frame) = 0; 582a7c = 582a80 = 0;
+  memset(133f7d8,0,3c); memset(133f818,0,3c); 582a84 = 582a88 = 0; 582a8c = 1; 582aa8 = 1;
+  582aac = 87; 582ab0 = 1; 582ab4 = 0; 582ab8 = (rand316b90() & 7fff) * d >> f; 582ac4 = ff;
+  582ad0 = 87; 582abc = 0; 133f9f0 = 1e; 582ac8 = 0; 582ac0 = 87; 133f9e4 = 0; 582acc = 0;
+  133f9e8 = 0; bgm(0,0) (bgm01_theme); 1b9e00(1); 582ad8 = 0; 3d3aa0 = -1.
+  Destructor 1ca5b0: 112a70(177b); 117180(300,100,0); 1e7ad0().
+  Handler 1ca738: switch 582a70 (table 656520):
+    0: 1ca850(); if ++582a78 >= 3d: state = 1
+    1: 1ca850(); 1ca8f8(); 1cbcd0()
+    2: nothing
+    3: 1ca850(); 1ca8f8(); 1caf78(); 1cb2c0()
+    4: 1ca850(); 1ca8f8(); 1cb1a8(); 1cb2c0(); 1cb608(); 1cb8c8()
+    5: 1ca850(); 1ca8f8(); 1cba18()
+    6,7: 1ca850(); 1ca8f8()
+  1ca850: background quad of rect 4c6820 {0,0,640,480,slot 4} (consts 656540..).
+  1ca8f8: strip animation over up to 15 strips: 582a8c = active strip count (starts 1, max f);
+    per strip i: duration 582a90 = 24 (i<5), 1e (i=5,6), 18 (i=7,8), 12 (i=9), e (i>=a);
+    progress 133f818[i] counts up to the duration; 133f7d8[i] = progress*334/duration;
+    per-strip tables 655780, 6557c0, 655800, 655840, 655880, 6558c0 (x, y, z, cursor offsets,
+    draw mode) and rect 4c6880; brush-head sprite cycles 3 frames (582a84, 4 ticks each,
+    rects 4c6838 + 18*n). In state 1, when the last active strip completes: state = 2 via
+    117108(0,c0); 117180(300,100,2). New strips are appended when the newest strip's progress
+    passes c (strips 7,8), a (strip 9), 8 (strips >= a) or its full duration (others).
+    Exit: when 582a8c >= a, 1b9dd0() == 0 and 582a74 == 0: 1252f0(1,2,1ca5b0,127940);
+    582a74 = 1.
+  [UNK]: who moves state 2 -> 3..7 (not in the handler; likely 1cbcd0/1cb2c0 or the fade
+  completion), all coordinates in 1caf78..1cc678.
+4.5 "DemoSG" 1ea7f0 [OBS structure]
+  112670(14, 1ea890, 10, 1f43); 118320(1ea870); S = 5853d8 {state, tick, pending}; memset(S,0,
+  c); 1eab88(S,0) (state=0, pending=7, tick=0); 1ead00() preloads GN1024_B01, SG1024_B02,
+  SG512_B01, SG512_B02, SG512_B03 (".pvr"/".pvp" via 1eabd8); 1b9e00(1); tail 1e79c8(0,33).
+  Destructor 1ea870: 112a70(1f43); 1e7ad0().
+  Handler 1ea890: saves 3db900, sets 3db900 = -1 and 3db8fc = 1, calls table 5853b8[state](S),
+  restores 3db900, then 1eaba0(S): if pending != 7 { state = pending; pending = 7; tick = 0 }
+  else tick++.
+  state 0 (1ea908): bgm(0,0); pending = 1
+  state 1 (1ea940): tick==0 -> 1ead78() (palettes GN1024_B01 -> 200, SG1024_B02 -> 300);
+                    if 1eaec8(tick) == 0: pending = 2
+  state 2 (1eaa60): tick==0 -> 1eae50() (SG512_B03 -> 200); if 1eb9d0(tick)==0: pending = 3
+  state 3 (1ea9a0): tick==0 -> 1eadc0() (GN1024_B01 -> 200, SG512_B01 -> 300);
+                    if 1eb228(tick)==0: pending = 4
+  state 4 (1eaa00): tick==0 -> 1eae08() (SG512_B02 -> 200, SG1024_B02 -> 300);
+                    if 1eb6c0(tick)==0: pending = 5
+  state 5 (1eaac0): tick==0 -> 1eae80() (GN1024_B01 -> 200, SG1024_B02 -> 300);
+                    if 1ebb30(tick)==0: pending = 6
+  state 6 (1eab20): tick==0 and 1b9dd0()==0 -> 1e7ad0(); 1252f0(2,1,1ea870,127940);
+                    every tick: 1144a8(0,0,280,1e0,-1) (white screen)
+  [UNK]: the five animation bodies 1eaec8, 1eb9d0, 1eb228, 1eb6c0, 1ebb30 (durations and
+  draw lists) were not read. START handling for both scenes is through 1b9dd0 (582214/582218,
+  the shared "title requested" latch of the transition task) [INF].
+
+5. RANKING DATA: WRITER SIDE AND NAME ENTRY
+-------------------------------------------
+5.1 Save tables (inside the system data block, base 43d0f0) [OBS]
+  W = 43d0f0: 5 records x 8 bytes {u32 value; u8 character; u8 seat+8 byte; 2 pad}
+  R = 43d118: 20 records x 0xc bytes {u32 score; u8 character; char name[4] (3 letters + NUL);
+      u8 seat+8 byte; 2 pad}
+  Defaults 1c51b0(base) (called from 10f03c at boot): W[i] = {5-i, i, 5}; R[i] = {30d40 -
+  2710*i (200000 - 10000*i), i, strncpy(name, table 582458[i], 4), 5}. Default-name table
+  582458 (52 pointers, also the fallback name per character): HAO NAK RIM HAN GAL KYO UKY GEN
+  BAS SHI GAI AMA JUB ZAN CHA TAM KAZ SOG RAS RER ENJ SUI YOS YUN MIN GED GAO MIZ YUM SAN AND
+  IRO KAR SUG CHA GEN EAR SIE WAN NIC UNC GAL NAK GAO PAP SKM CHM PAK KUR YOB YOB KYO.
+  Display copy (1e88d8..): rows 13735b0 + 18*i = {i, value, byte5, byte4} for 20 x 8-byte
+  steps from W, then rows from +78 are overwritten with the 20 R records {i, score, byte9,
+  char, name via 1ea578 at +10}; i.e. 5 W rows followed by 20 R rows.
+5.2 Insertion [OBS]
+  1c4e28(v): W[4].value (43d110) < v (unsigned).  1c4e38(v): (R[19].score (43d1fc) < v) << 1.
+  1c4f80(seat): if 1c4e28(g+38): 1c4e50({g+38, seat.+0 byte, seat.+8 byte}); 1c4e20().
+     Callers: 124e34 / 124e60 (versus-menu/continue bookkeeping, then g+38 = 0, 1c4e08()) and
+     138474 (Task_GameOver entry, argument g+8 or its complement). g+38 is the value ranked in
+     W (consecutive wins [INF]).
+  1c4e50(entry): copy W to the stack; for i = 4 down to 0: if copy[i].value < entry.value
+     { copy[i+1] = copy[i]; copy[i] = entry; inserted = 1 } (strict <, so ties stay above the
+     new entry; i+1 == 5 falls outside the table and is discarded); if inserted copy back.
+  1c5150(seat, name): entry = {g+90 (4c3898, arcade score), seat.+0 byte, strcpy(name),
+     seat.+8 byte}; 1c4ff8(entry); 1c4e20().
+  1c4ff8(entry): same algorithm over R (20 records, strict <); when inserted 582450 = index of
+     the new record. 1c5270() sets 582450 = -1; 1c5280() returns it (ranking highlight).
+5.3 Name entry overlay (during the ending) [OBS]
+  1c9830(): if 1c4e38(g+90) != 0 { 112670(14, 1c9928, 10, 1775); 1c98a0(); 582a68 = 1 }.
+  1c9888(): 112a70(1775).
+  1c98a0 init: name 133f7d0[4] = 0; 582a54 (blink on) = 1; 582a58 (blink counter) = 1e;
+     133f7c8 (seconds) = 1e; 133f7cc (frame in second) = 0; 133f7c0 (glyph index) = 0;
+     133f7c4 (cursor 0..2) = 0; 582a4c = 582a50 = 0; 582a5c (finished) = 0; 582a60 = 0;
+     582a64 = 0.
+  Glyph table 582998 (45 string pointers): 0..19 'A'..'Z', 1a..23 '0'..'9', 24 '!', 25 '?',
+     26 '.', 27 '/', 28 '-', 29 '_', 2a ' ', 2b "<-", 2c "END".
+  Handler 1c9928(task):
+     if !finished { 1ca248(); 1c99c8(); }
+     if finished == 1 { if ++582a60 >= b4 { 1c5150(mode==1 ? 0 : 1, 133f7d0); task.+4 = 12;
+                                            582a68 = 0 } }
+     1c9ec8()
+  1ca248 (countdown): draws the two decimal digits of 133f7c8 with digit rects 4c40d8 + 18*d
+     through 117de8 at x = (mode==1) ? c6 : 246, +e per digit (y/z = floats 655778/65577c);
+     if seconds >= 0 and ++133f7cc == 3c { 133f7cc = 0; if --seconds == -1 finished = 1 }.
+  1c99c8 (input), p = pad(mode==1 ? 0 : 1).pressed:
+     p & 40 -> 1c9c38 (previous glyph): if cursor==2 && name[2] != 0: index = (index==2c) ? 2b
+               : 2c; else if --index < 0 index = 2c;  then blink on, counter 1e
+     p & 80 -> 1c9ca8 (next glyph): if cursor==2 && name[2] != 0: index = (index==2b) ? 2c : 2b;
+               else if ++index >= 2d index = 0; blink reset
+     582a50 = 0
+     p & 6  -> glyph = table[index]:
+               "END" -> 1c9e90 (finish)
+               "<-"  -> 582a50 = 1
+               other -> if cursor < 2 { name[cursor] = glyph[0]; name[cursor+1] = 0; cursor++ }
+                        else if cursor == 2 { name[2] = glyph[0]; name[3] = 0; index = 2c }
+     (p & 600) or 582a50 == 1 -> delete: cursor 0: nothing; cursor 2 with name[2] != 0:
+               name[2] = 0; otherwise cursor--, name[cursor] = 0
+     p & 8  -> 1c9e90 (finish)
+     if finished == 1 and 582a64 == 0: 1c9de0(); 1c9d78(); 582a64 = 1
+  1c9e90: cursor = 2; index = 2c; blink on = 0; counter = 0; finished = 1.
+  1c9de0: r = 110bf8(name) (name filter, body not read); r == 0 keep; r > 0 only r == 1, and
+     r == -1: replace the name by 582458[own character].  1c9d78: empty name -> 582458[own
+     character].
+  1c9d20 (blink): off: if ++582a58 >= 1e -> on; on: if --582a58 == 0 -> off; returns on/off.
+  1c9ec8 (draw): 582a4c = blink(); 1135e8("NAME>", (mode==1) ? 20 : 1a0, 18, -1); name x X =
+     (mode==1) ? 66 : 1e6; while entering: placeholder string 655748 at X + e*k, y 1d, for the
+     unfilled positions k (the position under the cursor only while blink is on); 1ca018:
+     1135e8(name, X, 18, -1) (after finishing only while blink is on); 1ca078: while entering
+     and blink on, the current glyph at X + e*n (n = cursor, or 3 when cursor==2 and name[2]
+     set): "END" -> 117de8(rect 4c5368), "<-" -> 117de8(rect 4c5350), y/z floats 655770/655774;
+     otherwise 1135e8(glyph, X + e*n, 18, -1).
+  Timing consequence: the score is committed b4 frames after finishing (START, END, or the
+  30 s countdown); the ending cannot be skipped until then (582a68).
+
+6. Task_GameOver SCENE 138340 (destination of the ending) [OBS]
+----------------------------------------------------------------
+  138340: 112670(1d, 1387b8, 10, bbd); 118320(138a48); 4ca204 (s_nGameOver_Frame) = 0;
+  4ca208 = 0; 1159d0(); font_otherscene16.pvr -> slot c; if g+34 == 0 and ((word 43d058 &
+  ff00ff) != 0 or mode == 3): 1a4a98(g+4) (stage background); if g+34 == 0: builds the losing
+  character object (11d488/11d528/11d570(obj, seat, 140, 0, 0)/11d908(obj, 701, 1, 0)) for
+  mode 1, 2 or 3; if g+34 != 0 and g+a0 == 4: object with action 1fb for seat g+8;
+  1c4f80(seat) (W-table insertion, 5.2); camera 122e98/122eb8 (floats 5e181c..5e182c);
+  bgm(1b,0) (bgm27_gameover); 110bc8(); g+30 = 1; sub-mode 4 additionally updates the survival
+  records (table 5735c8 + 8*char + 63f0.., arcade-flow/survival slice).
+  Handler 1387b8 per frame: p = pad(mode==3 ? (g+10)^1 : g+8); if (frame-1e) < fa (unsigned)
+  and p.pressed & 4 (and, for g+34 != 0 with g+a0 == 4, object.+c0 == 1): 1e7b40(); if frame
+  < c8 { 1170d8(-1); 117170(1) }; frame = 118. Fills 300 halfwords at 3ebf30+200 with 1;
+  138af0(frame) (draw: 138b50 black quad when g+34 != 0, 138ba8 "GAME OVER" rect 4c3be0 at
+  (204,260,-10) from frame 88 with alpha ramp, 138c70, 138e18; voice 1e7d60(31,4b) at frame
+  1e); frame++ (for g+34 != 0 && g+a0 == 4 only while object.+c0 == 1);
+  at frame == 12c: if 1e6180() == 1 { 138a48(); 1e5d88() } else { 10f158();
+  1252f0(1,1,138a48,1e8850) }                       ; -> ranking scene, then title
+  Destructor 138a48: frees bbd/fa1 tasks, 11d1a8(); if 1e6180()==0 { memset(3ebf30,0,800);
+  124d50() }; 1e7ad0(); 1e7b40(); g+2c = 1; g+30 = 0; 1ccf10(); 112f30(ffffff,404040); ...
+  1e5d88 (task 1e5e90 tag 1797, destructor 1e6130, "TOTAL POINT" strings at 65cb08) is the
+  alternative successor chosen by 1e6180(); both were not read [UNK] (network score
+  registration [INF from neighbouring GSS strings]).
+
+7. INTERACTION WITH BATTLE CODE (addresses) [OBS]
+--------------------------------------------------
+  1456c0..145b70 match-end dispatch: mode 3 path, modes 1/2 path at 145a00; ending at 145b28
+  (stage counter >= 8), talk demo at 145b38..145b70, default 135e30.
+  145a6c: opponent character == 21 with g+a0 != 5 calls 17a5f0/17a630/17a708 instead of
+  incrementing the counter (arcade-flow slice).
+  143708 / 1443f0: START_DEMO / END DEMO state entries (existing dispatcher).
+  148428: g+0 = 0 for the attract fight; 139280(0); 139760().
+  182968 writes g+30 = 1; 182d30 writes g+34 = 1; 138a48 writes g+2c = 1, g+30 = 0.
+  1c5290 writes g+2c = 1/0 around the stage-6 white flash.
+
+8. DISC FILES / RESOURCES
+-------------------------
+  All art is inside DATA.BIN / SAM_DATA.BIN (iso_manifest.json lists only the containers); the
+  ELF file-name table at 5d7b98.. names the members. Already unpacked under
+  work/ss6/extracted/resources (".tex" = raw indices, ".pal" = palette):
+    demo_00..demo_42, demo_44..demo_48 (.tex 65536 bytes = 256x256 8-bit, .pal 512 bytes):
+      conversation/ending portraits, slots 22/23; demo_43 does not exist.
+    demo_mga, demo_mag (.tex 1048576 = 1024x1024 8-bit): pre-final-boss image.
+    ed_bg01..ed_bg18, ed_bg20 (.tex 1048576): ending backgrounds (two 640x480 halves each);
+      ed_bg19 is referenced by ids 68/69 but absent from the unpacked set [check extraction].
+    hukidasi, hukidasi2 (balloons, slots 1f/20); moji4, moji5 (demo_mga captions, slots c/d);
+    NG1024_A01/A02, NG512_A02/A03/A04; GN1024_B01, SG1024_B02, SG512_B01/B02/B03; sammy_logo;
+    rank_obj; font_otherscene16 (GameOver); aid/idx/act/pil/jdg/chr/map_99a.bin (ending
+    sprites: ACT actions bank*32+sub, drawn by the existing character-draw pipeline).
+  Text: every string is in the ELF (.rodata / .data), Shift-JIS, drawn by 113028 (the 24-pixel
+  kanji font path already used by the VS result quote; line pitch 1c or 18, glyph advance c per
+  full-width character as implied by "140 - 6*strlen") or 1135e8 (ASCII).
+  Music: BGMnn_L/R.VB under /BGM1../BGM4 on the disc, index = request id.
+
+9. UNKNOWN / NOT READ, AND SUGGESTED PROBE EXPERIMENTS
+------------------------------------------------------
+  U1 Portrait quad constants 60a050..60a07c and the meaning of 3d3aa4/3d3ab4 binds: read the
+     words; Probe 1a22a8/1a2380 with 113f98/1148f0 stubbed and log arguments.
+  U2 Sprite draws: run one whole script under Probe (stub 112a28 as a frame boundary, 1142d8/
+     1163c0/116478/10add8/1e7c00/1e7b70 as loggers, real 120378/120390/120ce0) and compare the
+     per-frame object words (+24,+38,+40,+44,+8c) and the op trace against a native VM fed by
+     the extracted op list. Scripts are branch-free, so one run covers a script completely.
+  U3 Pad bit names for masks 707, 607, 404, 600, 6, 4 (buttons) - take from the input docs.
+  U4 demo_mga helpers 1c7848, 1c7a30, 1c7cb0 and phase H parameter blocks: Probe 1c6e58 as a
+     coroutine with 1148f0/117de8/113f98 loggers; expected phase lengths 3c, 3c, variable, a,
+     1e, 3 text pages (b4 hold each), scroll to 641 at 0.5/frame.
+  U5 DemoNG states 2..7 and DemoSG animation bodies (4.4/4.5): Probe the handlers 1ca738 and
+     1ea890 frame by frame until 1252f0 is called, logging quads; record the frame at which
+     each state changes.
+  U6 seat+8 / seat+c meaning (the byte stored in ranking records and used for 43d058+81+x);
+     110bf8 name filter; 1e6180 / 1e5d88 successor; 148550 monitor task of the attract fight.
+  U7 Who resets F (582528) to 0 and the callers of the pre-fight variant (1c4568, 1c6068) -
+     arcade-flow slice. No dedicated "opening before the first fight" scene was found in the
+     demo code: the first story demo is the stage-3 pre-fight talk [OBS for the selectors read;
+     an earlier demo inside 1c1b20/1c60c8 cannot be excluded].
+  U8 sammy_logo scene 1ccbd0: only the 0x78-frame exit was read; its two 117a00 logo quads
+     (rects 4c7168 at (194,161,-50) and 4c7180 at (262,132,-50)) and fade are not specified.
+  U9 1252f0 first two arguments (values seen: (1,0) (1,1) (1,2) (2,0) (2,1) (4,1)) - fade
+     style/duration selector [INF]; take the definition from the menu slices.

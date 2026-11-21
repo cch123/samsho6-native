@@ -1,0 +1,874 @@
+Mode-dependent branches of the in-battle code (SLPS-25559)
+==========================================================
+
+Scope: every place the battle scene (battle thread 138f48, round dispatcher 143430/1435d8/143320,
+actor/round initialisation, gauges, HUD, pause) reads the game-mode word or a derived predicate.
+Purpose: allow the native battle (hard-limited to mode 3 by the `gameMode!=3` throws in
+src/battle_round.cpp, src/round_control.cpp, src/match_ending.cpp) to admit ARCADE (1/2),
+PRACTICE (9/10), SURVIVAL (0xb/0xc) and the attract demo (mode 0).
+Method: static only. A linear constant-propagation scan of .text (0x100000..0x32cd70; the ELF
+.text ends there, not at 0x440000) located every load/store whose effective address lies in
+0x4c3808..0x4c38c0 and in 0x123a0b0..0x123a180, grouped by enclosing function; the battle-side
+functions were then read. No Probe run was made.
+Labels: OBSERVED = read from instructions/data at the cited address. INFERRED = interpretation.
+UNKNOWN = not resolved. Delay slots are already folded into the pseudocode.
+
+Contents
+  1  Globals and structures
+  2  Mode numbering and derived predicates
+  3  Battle scene entry / thread / exit (139660, 138f48, 139778)
+  4  Setup builder 1398c0 (who is CPU, AI level, spirit, colour, stage)
+  5  Match/round initialisation 13f9f0, 13fd80, clock 1406e0
+  6  Dispatcher branches: states 3, 4, 5, 8, 9, 10
+  7  Match end 145118 / 145628 per mode
+  8  Arcade: schedule object, score, state-9 tally, challenger intrusion
+  9  Survival: controller 180630, carry-over, bonuses, missions
+ 10  Practice: predicates, refill rules, menu controller 17f790
+ 11  Attract demo (mode 0)
+ 12  Pause (START in battle) per mode
+ 13  HUD per mode
+ 14  Other gameplay sites (handicap, gauges, items, AI)
+ 15  Site table
+ 16  UNKNOWN list and suggested Probe experiments
+ 17  Porting notes against the current native sources
+
+
+1  Globals and structures
+-------------------------
+
+g_GameData, 0x4c3808 (OBSERVED fields; names in quotes come from debug strings)
+  +0x00 4c3808  game mode ("g_GameData.GameMode", cockpit "g_GameMode")
+  +0x04 4c380c  stage id for the next battle (copied to setup[1]; 145118 copies setup[1] to +0x28)
+  +0x08 4c3810  final match winner seat, -1 = draw (written by 145118)
+  +0x0c 4c3814  previous winner seat for streak bookkeeping (124da0)
+  +0x10 4c3818  seat word A. Menu: seat^1. Intrusion (118148): the challenger seat. 124da0 (VS
+                sub-mode): the loser seat. 145628 mode 3: "winner == +0x10" selects 1bc1a8/1c4e08.
+  +0x14 4c381c  seat word B (menu VS: seat^1; intrusion writes 1; 145628 mode-3 draw clears it)
+  +0x18 4c3820  "scene switch already requested" flag. Non-zero makes state 10 skip 145628
+                (143490). Writers: intrusion 118200/118290, pause menu 1da5c8/1da6f4/1da7b0,
+                practice menu 180154/1801ac, 11d24c, cleared by 125400 (1253e0).
+  +0x1c 4c3824  written 1 by intrusion and 11d23c; cleared by 145628 mode-3 draw (1456fc). Meaning UNKNOWN.
+  +0x20 4c3828  stage item option (already ported as stageItemsOption4c3828)
+  +0x28 4c3830  stage of the finished match (145118)
+  +0x2c 4c3834  "battle result latched / input closed" flag: 143f38 (final match, 145118()==0),
+                1436b4 (state 6 completion), intrusion, survival state 1 entry (1808dc);
+                cleared by 1bc2ac (1bc1c0, every restart).
+  +0x30 4c3838  pause-menu-open flag (1d9d74 sets, 1da14c/1da19c/1da1ec clear)
+  +0x34 4c383c  "cleared" flag: survival 49 wins (145cf8), arcade ending (182e50)
+  +0x38 4c3840  "g_NumVsWin": consecutive wins of +0x0c (124da0); +0x3c.. u32[20] defeated characters
+  +0x8c 4c3894  ending choice (1453a8 result)
+  +0x90 4c3898  score. Arcade: 1c97c0 adds table values; state-9 tally 1c86c8 adds bonus.
+                Mode 3: 1bc160 stores the displayed win counter here. Cleared by 1bc1a8.
+  +0x94 4c389c  written by 1252f0/1251d0 (scene switch bookkeeping; not battle)
+  +0x98 4c38a0  cleared by title 127dd8; other writers 12916c/12f100/1376d0/1c6328 (menu side)
+  +0x9c 4c38a4  = -1 in 124d50; character-select side
+  +0xa0 4c38a8  sub-mode ("g_GameMode2")
+  +0xa4 4c38ac  "post-match menu may open" flag: 143e70 (=1 at final match unless sub-mode 4/5),
+                145764 (=0), 1c7de8 (=0, state 9 entry), 1daf40, 1db360
+  124d50 clears the whole 0xa8-byte block and sets +0x08,+0x0c,+0x10,+0x14,+0x9c to -1.
+
+Seat/profile block, 0x456890 + 0x30*seat (OBSERVED uses)
+  +0x00 character   +0x04 colour   +0x08 selected spirit (arcade human, copied to setup[8+seat])
+  +0x0c spirit used by VS/practice/survival/demo (setup[8+seat])   +0x10 cleared on exits (UNKNOWN)
+  +0x14 arcade progress = number of opponents defeated (0..7); also the CPU AI level in arcade
+  +0x20 required round wins (copied to setup[0xa+seat]; demo writes 2)
+  +0x2c alternate move-set word (149094: non-zero sets actor.flags23c |= 0x100000)
+
+Battle-kind block, 0x123a0c0.. (all runtime .bss, OBSERVED)
+  123a0c0 u8  battle kind: 0 normal, 1 practice, 2 survival (139280; menu and 1483f8 write it)
+  123a0c4 pause request, one frame (1392e8 sets; 13913c clears every frame)
+  123a0c8 hard pause (1392f8, from VS result menu 1daf24)
+  123a0cc restart-round request (1392a8 / 1392d0);  123a0d4 its argument (1 = full, 0 = soft)
+  123a0d0 stage reload request (1392c0, survival 13a7f0)
+  123a0d8 practice replay flag (139368)        123a0dc practice recording flag (139378)
+  123a0e0 "skip stage load" (139348, no caller) 123a0e4 "no HUD" (139358, no caller) -> both 0
+  123a0e8 KO-pause delay, 123a0ec KO-pause frames (139290(frames, delay))
+  123a0f0..123a0fc practice damage counters (reset request, MAX, TOTAL, last DAMAGE)
+  123a100/123a104 + u16[24] 123a108 + u16[24] 123a138: practice input history ring
+  123a168 network flag = (sub-mode == 6) (139ef8). This is the "profileActive 123a168" that
+          docs/match-ending.txt rejects: it is the network-versus result reporter, not a profile.
+  123a16c combat frame counter (+1 per frame while requested state == 4)
+  123a170 network "opponent left" latch (13a8b8)   123a174/123a178 BGM play/preload latches
+  123a17c first-frame flag consumed by 139588
+
+Battle pointers: 4d3d00 battle (round owner), 4d3d04 setup, 4d3d08 actors (0xf2c each),
+4d3d0c, 4d3d10, 4d3d14 CPU control blocks (0x4c4c each). Accessors 140030..140108.
+
+Setup block (4d3d04, built by 1398c0; indices are u32 words) (OBSERVED)
+  [0] CPU AI level (148df0 stores it in actor+0xa0c and passes it to 158830)
+  [1] stage id           [2+seat] control kind: 0 human, 1 CPU (actor+0xa20)
+  [4+seat] character     [6+seat] colour      [8+seat] spirit/system
+  [0xa+seat] required round wins (read by 13f9f0 only in the "ordinary" case)
+
+Battle fields touched by mode code: battle+0x00 requested state, +0x04 current state,
++0x08, +0x10 (item context), +0x14 (1418f8), +0x18 round index, +0x20 draw flag, +0x24 round
+winner, +0x28 round result kind (0 KO, 1 double KO, 2 time-up win, 3 time-up draw), +0x2c ending
+parameter, +0x30 caption owner, +0x114+4*i timers (timer 0 = round clock), +0x130, +0x138 flag
+bits, +0x13c clock option, +0x24c/+0x250 actor pointers, +0x254+0x108*seat player record
+(record+0x0c combo count, +0x1c finishing kind, +0x20, +0x28 wins, +0x2c required wins).
+
+
+2  Mode numbering and derived predicates
+----------------------------------------
+
+Mode word (OBSERVED from comparisons; names INFERRED from the menu table in the shared brief):
+  0  attract demo battle (1483f8)        4  title scene (127dd0)
+  1/2 arcade, human = P1/P2              3  two-human fight (VS, or arcade challenger fight)
+  5  UNKNOWN (178ff4 treats it like "seat 1")   6 VS menu/select (becomes 3 at 12f86c)
+  7/8 network P1/P2      9/10 practice P1/P2      0xb/0xc survival P1/P2
+  0xd/0xe gallery        0xf/0x10 edit            0x11/0x12 option
+Sub-mode (+0xa0): 0 none, 1 arcade, 2 VS, 3 practice, 4 survival, 5 network-waiting arcade
+  ("continue as CPU fight"), 6 network versus.
+
+Predicates (all OBSERVED):
+  139388 isPractice()          = (u8 123a0c0 == 1)
+  1393a0 isSurvival()          = (u8 123a0c0 == 2)
+  1393b8 practiceReplay()      = practice && 123a0d8 != 0
+  1393e0 practiceRecording()   = practice && 123a0dc != 0
+  139408 isNetworkSub()        = sub-mode == 5 || sub-mode == 6
+  139430 fixedRules()          = isSurvival() || isPractice() || isNetworkSub()
+  139488 practiceHumanSeat()   : mode 9 -> (123a0dc != 0); mode 10 -> (123a0dc == 0); else 178f90()
+  1394e0 practiceDummySeat()   : mode 9 -> (123a0dc == 0); mode 10 -> (123a0dc != 0);
+                                 else (178f90()+1) % 2
+  178f90 humanSeat()           : mode 3 -> 1da838() (= pause owner 582f3c == 1);
+                                 mode 0xd/0xe -> word 12d35c4; modes 2, 0xa, 0xc, 5 -> 1;
+                                 mode 8 -> (178ffc, remaining lines not read); else 0 (INFERRED tail)
+  1407d0 displayedSeconds()    : clock option 3 -> -1; survival -> (timer0+0xb3ff)/0xb400;
+                                 else (timer0+0x59ff)/0x5a00
+  140788 clockExpired()        : option 3 -> 0; battle+8 == 1 -> 0; else timer0 == 0
+  141860 itemEventsAllowed()   : mode 0 -> 0; practice -> 1; survival -> 1;
+                                 mode 3 && +0x20 == 0 -> 0; else 1 (arcade: always 1)
+  1418f8                       : practice -> 0x31; else battle+0x14 (consumers 15d5d4, 15f418: CPU AI)
+  13a850 returns 0 (the 178f90/118128 calls at 143bdc are dead).  13a858 = (byte 43d05e == 1).
+  139d58 returns -1 unconditionally (stage override in 139660 is dead).
+Practice option accessors (0 for non-practice unless stated):
+  139c88 cpuType(): practice ? 211058() : 0x23; while recording, values 0x26..0x45 and 9/10 -> 0
+  139ce8 ukemiType(): practice ? 211150() : 3
+  139d20 itemSetting(): practice ? 211160() : -1        (211160: word 13738e4 ? +6 : -1)
+  139d78 gaugeSetting(seat): practice ? 211178(seat) : -1   (words 1373948/137394c)
+  139dc0(seat): practice ? 211198(seat) : -1                (words 1373950/1373954)
+  139e08(seat): practice ? 2111b8(seat) : -1                (words 1373958/137395c, +1)
+  2111d8 dataDisplay(): word 13738e8 != 0
+  211058 maps the CPU TYPE menu (category word 13738d8, jump table 664df0, 9 entries) to an AI
+  control mode: cat 0: word 1373930 (value 9 becomes 10 when 14fb08(actor+0x10c) != 0);
+  1: 0xb+[1373934]; 2: 0x14+[1373938]; 3: 0x19+[137393c]; 4: 0x1e+[1373940];
+  5: 0x26+u8[1373960+[1373944]]; 6: 0x23; 7: 0x24; 8: 0x25; other: -1.
+
+
+3  Battle scene entry / thread / exit
+-------------------------------------
+
+Entry 139760 -> 139660(0). Also re-entered directly as the "next fight" scene by 145628
+(1252f0(2,0,139778,139760)). OBSERVED order in 139660:
+  s0 = setup; 1040a0(); 1e7ad0(); 1e7b40(); 1e7af8();        // audio stop
+  13f930(); 13f8a8();                                          // battle allocation
+  17f5a0();   // practice controller init (runs in every mode)
+  180510();   // survival controller init (runs in every mode; calls 1392e8 once)
+  17ac98(); 1398c0(setup); 13f9f0(1);
+  139600();   // battle thread: 1126f0(0x32, 138f48, stack 0x1235a180, 0x4000, 0x20, tag 0x1389)
+  if (123a0e0 == 0) 1a4a98(setup[1]);                          // stage load (139d58 is always -1)
+  if (mode != 0 && 123a0e4 == 0) 1ba940();                     // HUD task: none in the demo
+  1b4138(); 1b5090(); 13a160(); 118320(139778); 104510();
+Destructor 139778: frees tag 0xfa1; if (mode != 0) { 1baa40(); 1c7d20(); }  // HUD + state-9 task
+  1b44a0(); 1b52c0(); 11e600(); frees tags 0x1388..0x144f, 0x14b6..0x1519, 0x151b..0x157e;
+  1da8b0() (pause task); 124cf8(); 13ac08(); 1e7df0(); 1e7a60(0,0); 11f5a0(0); 122b88(-2);
+  if (mode != 0) word[43d0e8] += 13a870();   // total play seconds: survival 181468(), else 123a16c/60
+
+Battle thread 138f48 (coroutine; one iteration per frame, 112a28(0) yields):
+  exitLatched=0; overLatched=0; fp=0; s6=0x78; 139e50();
+  loop:
+    17c210();
+    if (13a920()) exitLatched=1;                 // isNetworkSub() && 11c2e0() != 0
+    if (exitLatched) { 140120(); fp -= (fp>0);
+        if (fp == 0) { sub-mode=5; seat0+0x10=0; seat1+0x10=0;
+                       mode = word[443580]==0 ? 7 : word[443580]==1 ? 8 : mode;
+                       1252f0(2,0,139778,1d8290); fp=-1; }
+        yield; continue; }
+    if (123a170) overLatched=1;                  // network opponent left
+    if (overLatched && s6 >= 0) { 140120(); s6 -= (0 < s6) [OBSERVED slt s2,s6 with s2==0];
+        if (13a978(s6)) s6=-1; yield; continue; }      // notice overlay, see section 16
+    123a17c = 1; s1=0; s4=0;
+    if (123a0d0) { if (123a0e0 == 0) 1a4a98(setup[1]); 123a0d0=0; }
+    else if (123a0cc) { if (!isPractice()) { 13ac08(); 1e7df0(); }
+                        11e600(); 13f9f0(123a0d4); if (123a0e4 == 0) 1bc1c0(); 123a0cc=0; }
+    13abb0(); 140120();
+    if (123a0ec > 0) { if (123a0e8 > 0) 123a0e8--; else { 123a0ec--; s1=1; 123a0c4=1; } }
+    if (123a0c4 || 123a0c8) { if (s1 && 123a0c8 == 0) 11f588(1); else { 11f5a0(1); s4=1; } }
+    else { 11f5a0(0); 140270(); if (battle.requested == 4) 123a16c++; }
+    123a0c4 = 0;
+    if (isSurvival()) 180630(s4);
+    else if (isPractice()) { 13a030(139488()); if (2111d8()) 13a280(0,2); 17f790(); }
+    1d9b50();                                    // pause-menu open poll, section 12
+    yield; word[4ca224]++;
+The KO pause (139290(40|60, 2)) is therefore implemented by this loop, and the pause menu,
+the survival intermission and the practice menu all pause by calling 1392e8 once per frame.
+
+
+4  Setup builder 1398c0(setup)
+------------------------------
+
+OBSERVED. `seat[i]` = 0x456890 + 0x30*i. rand(n) = 112300(n) (game RNG, consumed in this order).
+  spiritFor(char, r) = 139c50: char 0x2b -> 7; 0x2c..0x2f -> 8; else r.
+
+Arcade (mode 1: h=0,c=1; mode 2: h=1,c=0):
+  setup[0] = seat[h].+0x14;          // AI level = opponents defeated so far
+  setup[1] = gameData+4;             // stage, chosen by the arcade schedule scenes
+  setup[2+h] = 0; setup[2+c] = 1;
+  setup[8+h] = seat[h].+8;
+  if (sub-mode == 5) seat[c].+4 = rand(5);
+  seat[c].+8 = setup[8+c] = spiritFor(seat[c].+0, rand(6));      // 139c38 = rand(6)
+  if (seat[h].+0 == seat[c].+0) { if (seat[h].+4 == seat[c].+4) seat[c].+4 = (seat[h].+4 == 0); }
+  else if (sub-mode != 5) seat[c].+4 = 0;
+  for i in 0..1: setup[4+i]=seat[i].+0; setup[6+i]=seat[i].+4; setup[0xa+i]=seat[i].+0x20;
+  The CPU character seat[c].+0 is written before this scene (arcade schedule, section 8).
+Survival (mode 0xb: h=0,c=1; 0xc: h=1,c=0):
+  setup[0] = 17b890();  setup[1] = 17b988();  setup[2+h]=0; setup[2+c]=1;
+  seat[h].+0xc = setup[8+h] = 17b998();
+  seat[c].+0 = 17b9a8(); seat[c].+4 = 17b9b8();
+  seat[c].+0xc = setup[8+c] = spiritFor(seat[c].+0, rand(6));
+  same-character/same-colour fix as above (only the equal-colour case); then the copy loop.
+Demo (mode 0): setup[1]=gameData+4; setup[2]=setup[3]=1;
+  seat0.+0xc = setup[8] = spiritFor(seat0.+0, rand(6)); seat1 likewise -> setup[9];
+  then the copy loop. setup[0] is not written (level left from the previous use: UNKNOWN value).
+All other modes (3, 9, 10, 7, 8):
+  setup[1] = gameData+4 = 139be8();   // r=rand(10); if sub-mode is 2 or 3: s=12f878()
+                                      // (word 4c8d80, select-screen stage); if (s != 10) r=s
+  setup[2] = (mode == 10); setup[8] = seat0.+0xc; setup[3] = (mode == 9); setup[9] = seat1.+0xc;
+  then the copy loop. setup[0] is not written.
+Survival re-uses the same code in 13a6c0 for every new opponent (section 9), with required
+wins forced to 1 (13a7cc).
+
+
+5  Match / round initialisation
+-------------------------------
+
+13f9f0(firstCall) (OBSERVED), per seat i:
+  148d58(actor); 148de8(actor, 4d3d0c+0x138*i);
+  148df0(actor, control=setup[2+i], seat=i, char=setup[4+i], spirit=setup[8+i], level=setup[0]);
+  1493b0(actor, setup[6+i]); 148ea0(actor, setup[4+(i+1)%2]); 148ed8(actor, firstCall);
+  if (firstCall) 158380(cpu[i], actor+0xa10);
+  required wins record[i].+0x2c:
+      isPractice() || isSurvival()  -> 1
+      else fixedRules() (network)   -> 2
+      else                          -> setup[0xa+i]
+  if (practiceRecording()) { actor.flags240 |= 8; actor.+0xa20 = (actor.+0xa20+1)%2;
+                             if (actor.+0xa20 == 0) actor.flags240 |= 2; }
+  else if (practiceReplay() && actor.+0xa20 == 1) actor.flags240 |= 4;
+after the loop, clock option battle+0x13c:
+  byte 43d05d: 0 -> 0, 1 -> 1, other -> 3;
+  if (isSurvival()) 2; else if (mode == 0 || isPractice()) 3; else if (fixedRules()) 0;
+  battle+0x24c/+0x250 = actors; 1432e0(battle, setup[0], setup[1]); 13fd80(); 16fb50();
+148df0: actor+0xa0c=level, +0xa20=control, +0xa10=char (0x2a is stored as 1), +0xa14=raw char,
+  +0xa24=seat; then 158830(actor, seat, char, level).
+158830 (CPU level and control mode, OBSERVED):
+  +0xf4=seat; +0xf8=char; +0x100=level;
+  if (!isSurvival() && (char == 0x21 || char == 0x30)) +0x100 = 8;
+  if (isPractice()) 15aa18(actor); else +0xc0 = 0x23;
+15aa18: +0xc0 := 139c88() via 15a0e0; modes 1 and 0xc set actor.flags240 |= 1, others clear it.
+  (flags240 bit 0 is the "training controller" bit that src/cpu_match_control.cpp clears.)
+
+13fd80 (round reset), mode-dependent parts only (the rest is in docs/round-initialization.txt):
+  intro = (battle+0x18 == 0);
+  if (isSurvival()) { battle+0x18 = 0; for both seats { record.+0x28 = 0; 148ed8(actor,0); } }
+  skipIntro = (mode == 0) || isPractice() || isSurvival(); if (skipIntro) intro = 0;
+  ... 1406e0() clock ... 149008(actor, intro) per seat ...
+  if (skipIntro) { battle.requested = isSurvival() ? 3 : 4; timer2 = 1; }
+  else if (intro) { timer2 = 0x3c; battle.requested = 1; }
+  if (isSurvival()) { v = 180e98();           // saved life 12d4ccc if survival wins > 0, else -1
+                      if (v != -1) for each actor with +0xa20 == 0: actor+0xa30 = v; }
+1406e0 (round clock, timer 0, value in updates before the <<8 scaling of 143228):
+  seconds: option 0 -> 60, 1 -> 90, 2 -> 99, 3 -> 0;
+  if (isSurvival()) { v = 180ec8();           // saved clock 12d4cd0 if wins > 0, else -1
+        if (v != -1) updates = (v + 0xff) >> 8 (with the +0x1fe correction when negative);
+        else updates = seconds * 0xb4; }
+  else updates = seconds * 0x5a;
+  140930(0, updates).
+  Consequence (OBSERVED): one displayed survival second spans 180 updates (0xb400 units)
+  against 90 (0x5a00) elsewhere; the survival clock is 99 and is carried between opponents.
+
+
+6  Dispatcher branches
+----------------------
+
+State 3 entry 143930 (caption choice): n = isSurvival() ? 1 : min(roundIndex+1, 10);
+  if (both players have wins+1 >= required && n >= 2) n = 10; 1249c8(n).
+  Survival therefore always shows caption 1; practice and demo never enter state 3.
+State 4 update 143b88: if (clockExpired()) requested = 5; if any actor.flags23c & 0x80
+  requested = 5; 144e10(); 144f40().  No mode branch besides clockExpired/144f40.
+State 4 item producer 144f40 (after 141860(), timer3 <= 0 and 140fa0() == 0):
+  survival: r=rand(100): r<25 -> kind 8; r<50 -> 7; r<75 -> k=14ea68(battle+0x10), 0xff -> 8;
+            else kind = rand(100) < 30 ? 1 : 3;                 timer3 = 600
+  practice: v=139d20(): -1 -> return; 0x13 -> kind = rand(0x13); else kind = v;
+            timer3 = rand(8)*60 + 0x168
+  other:    kind = 14e938(battle+0x10, 140848()); 0xff -> return;
+            if (mode == 3 && kind in 4..6) kind = rand(2) ? 7 : 8;   timer3 = rand(8)*60 + 0x168
+  common:   side=rand(2); x=148368(rand(4)); 1b5800(kind, x, side).
+  (Order of RNG calls as written; the timer3 draw comes last.)
+State 5 entry 143c60, mode branches:
+  a) 143f9c survival time-up rule: when the round ends by time with unequal life (loser life
+     > 0) and isSurvival(), the round winner is forced to the CPU seat (mode 0xb -> seat 1,
+     else seat 0). The perfect flag is still computed from the original leader.
+  b) 143d6c arcade bookkeeping: if (mode==1 && winner==0) || (mode==2 && winner==1):
+        k = record[winner].+0x1c; if (k != -1 && k != 5) 17a718(seat[winner].+0x14, 1);
+     (adds 1 to schedule byte +0x2a+progress, section 8).
+  c) 143e54: at the final match, gameData+0xa4 = 1 unless sub-mode is 4 or 5
+     (survival and network-waiting never open the post-match menu).
+  d) 145118() != 0 -> requested = 6, else gameData+0x2c = 1 (section 7; always the latter offline).
+State 8 update 144570 (win pose -> next round), mode branches:
+  skip input: an actor with +0x2f0 != 0 counts only for seat 0 in modes 1 and 0xb, seat 1 in
+     modes 2 and 0xc, the round winner (battle+0x24) in mode 3; no skip in other modes.
+  after both actors report flags244 & 0x40000000 (or skip): timer2=0x1e; roundIndex++; requested=0;
+     sub-mode 6: if matchOver (145358) requested = 9;
+     sub-mode 5: nothing;
+     otherwise: if (mode==1 && winner==0) || (mode==2 && winner==1) requested = 9;
+     if (requested == 0) { if (matchOver) { if (draw) timer2=0x78; requested=10; }
+                           else if (draw) timer2=0x5a; }
+  So in arcade every round won by the human goes through state 9 before state 0 or 10.
+State 9 entry 1447c0: sub-mode 6 -> 1e6668(); else 1c7ce8() (arcade tally task, section 8).
+State 9 update 144848: done = sub-mode 6 ? 1e6b58() : 1c87f0();
+  if (done) { requested = matchOver ? 10 : 0; sub-mode 6 ? 1e6b68() : 1c7d20(); }
+State 10 entry (143484):
+  if (gameData+0x18 == 0) 145628(battle+0x2c);
+  if (!isSurvival()) 145d98();            // 1e7a78, 1e7b40, 1e7af8
+  requested = -1; if (sub-mode == 2) 1daec0();
+  In survival the scene is not left on a human win: requested stays -1 until the survival
+  controller restarts the battle (section 9).
+
+      state flow, non-VS modes
+      0 -> 1 -> 3 -> 4 -> 5 -> 7 -> 8 --+--> 0            next round
+       (practice/demo: 13fd80 -> 4)     +--> 9 --> 0|10   arcade human round win, network
+       (survival:      13fd80 -> 3)     +--> 10           match over
+      10: 145628 -> scene switch (arcade, VS) | stay with requested=-1 (survival win)
+
+
+7  Match end per mode
+---------------------
+
+145118 (called from 143c60 when 145358() says a player reached the required wins):
+  gameData+8 = both won ? -1 : (14ab80(actor0) ? 0 : 1);
+  gameData+0x28 = setup[1]; gameData+0x8c = 1453a8(battle);
+  arcade only: cpuRecord = record[mode==1 ? 1 : 0]; if (cpuRecord.+0x28 > 0) { 17a5f0(); 17a708(); }
+               // the CPU took at least one round: both schedule one-shot flags are consumed
+  return 139f20(gameData+8);
+139f20(winner): result = 0;
+  if (123a168) { network result report (1400d8, 11be18 ...);
+                 if (winner == word[443140]) result = 1; }      // 139fec, network path only
+  11c208(); return result.
+  OBSERVED consequence for every offline mode (123a168 == 0, branch 139f94 -> 13a020):
+  145118 returns 0, so 143c60 writes gameData+0x2c = 1 and never requests state 6.
+  State 6 (1435d8 at 14369c: wait word[4452ac] == 0, then +0x2c = 1, requested = current = 5)
+  is network-only. This matches the "false result" fixture of docs/match-ending.txt and holds
+  for arcade, survival and practice as well.
+
+145628(endingParameter) (state 10 entry), OBSERVED decision tree.
+Scene switch form: 1252f0(2, 0, 139778, next); then gameData+0xa4 = 0.
+  sub-mode 2 (VS)             -> 124da0() only (ported VS result path).
+  byte 43d05a != 0            -> next = 138340.            (43d05a meaning UNKNOWN; 0 in image)
+  mode 3 (two humans, sub-mode != 2: arcade challenger fight or network):
+      124da0();                                 // streak bookkeeping; mode = winner+1;
+                                                // 11d1c8(loser) resets the loser's seat block
+      if (124f98()) next = 138340;              // byte 43d059 = n != 0 and +0x38 >= {5,10,15,20}[n-1]
+      else if (winner == -1) { if (sub-mode == 6) network path (sub-mode=5, mode 7/8, next 1d8290)
+                               else { gameData+0x1c = 0; next = 138340; } }
+      else { if (winner == gameData+0x10) { 1bc1a8(); 1c4e08(); }   // challenger won: score reset
+             if (sub-mode == 6) network path (1457c4.., not specified here)
+             else next = 135e30; }              // arcade continues for the winner
+  mode 1/2, human won (mode==1 && winner==0, or mode==2 && winner==1):
+      opp = seat[(winner+1)%2].+0;
+      if (opp == 0x21 && sub-mode != 5) 17a5f0();          // special opponent: no progress step
+      else { 17a600(seat[winner].+0x14, endingParameter); seat[winner].+0x14 += 1; }
+      if (17a630()) 17a708();                               // hidden opponent swap, section 8
+      if (sub-mode == 5) { if (seat[winner].+0x14 >= 5) seat[winner].+0x14 = 1;
+                           1c2420(); next = 139760; }       // next fight immediately
+      else if (seat[winner].+0x14 >= 8) next = 182968;      // arcade ending scene
+      else if (1c6008() == 0 || 1c4348() != 0) next = 135e30;
+      else { 1c5ff8(); next = 1c5290; }
+  mode 1/2, human lost or draw:
+      1c4e08(); if (winner == -1) gameData+8 = (mode == 1) ? 1 : 0;     // draw = CPU win
+      if (sub-mode == 5) { clear seat[human].+4 and +0x10; next = 128008; }   // character select
+      else next = (byte 43d058 != 0) ? 138340 : 1376d0;    // 1376d0 = continue scene (INFERRED)
+  mode 0xb/0xc:
+      wins = 17b880();
+      if human won (mode 0xb && winner==0, or 0xc && winner==1):
+          n = wins+1; 1e3fd0(n); finished = (n >= 49); if (finished) gameData+0x34 = 1;
+          145d48(winner) -> 180e28(n, setup[1], setup[winner==0 ? 5 : 4]);   // defeated character
+      else finished = 1;
+      if (finished) { gameData+4 = setup[1]; seat0.+0x14 = 0; seat1.+0x14 = 0;
+                      mode = (mode == 0xb) ? 1 : 2; next = 138340; }
+      else return with no scene switch (gameData+0xa4 = 0).
+  other modes (0, 9, 10, 7, 8): no action (gameData+0xa4 = 0).
+Scene identities (INFERRED from callers; menu-side slices own them): 128008 character select,
+127940 title, 135e30 arcade next-stage scene, 1c5290 arcade intermission, 1376d0 continue,
+138340 post-game (game over / ranking entry; 182e5c also goes there after the ending 182968),
+139760 battle.
+
+
+8  Arcade specifics
+-------------------
+
+Wins required: seat[i].+0x20 (set by the menu side; the demo writes 2). Clock: option byte
+43d05d (0 -> 60, 1 -> 90, other -> infinite). Items: always enabled (141860).
+CPU seat: the other seat; level = human seat's +0x14 (0..7), forced to 8 for characters 0x21
+and 0x30 (158830). The factory difficulty byte 43d05c is read separately by the AI (15d5f4,
+already in src/cpu_tactics.cpp::chooseProfile).
+
+Schedule object 12d3668 (built by 17a2c8, partly ported as prepareDemoArcade) (OBSERVED layout):
+  +0x00 s16[7] stage per progress index (17a410)   +0x0e s16[7] opponent per index (17a350)
+  +0x1c u8[7]  (17a4d0 reader, valid while +0x34 == 0)
+  +0x23 u8[7]  accumulated ending parameter per index (17a600 adds battle+0x2c: 0 or 70)
+  +0x2a u8[7]  qualifying round wins per index (17a718 adds 1; "qualifying" = finishing kind
+               record+0x1c not -1 and not 5)
+  +0x34 flag set by 17a5f0   +0x38 flag set by 17a708   +0x3c s16 survival win count (17b880)
+17a350(idx): sub-mode 5 -> 17bbe0(); idx -1 -> 0x21; idx -2 -> 0x2b; 0..6 -> opponent[idx].
+17a410(idx): sub-mode 5 -> 17bcc0(); otherwise it first consumes rand(5) (table 4ee508 =
+  {4,5,6,7,8}; the value is discarded on the valid paths), then idx -1 -> 3; -2 -> 0xb;
+  0..6 -> stage[idx].
+17a548 (special opponent 0x21 gate; caller is menu side): false if +0x34 != 0 or sub-mode 5;
+  p = human seat's +0x14; t = s16 table 4ee530[p] = {0,0,0,10,0,30,0,0}; t <= 0 -> false;
+  for 0 < p < 7: true iff u8[+0x1c+p] < t + u8[+0x22+p].
+17a630 (hidden opponent swap, called by 145628 after the progress step): false if +0x38 != 0
+  or sub-mode 5; requires human progress == 4 and sum(u8[+0x2a..+0x2d]) >= 3 * required wins;
+  then opponent[4] (s16 at 12d367e) = 0x30 and returns 1 (145628 then sets +0x38).
+Both flags are also consumed by 145118 when the CPU won any round of a finished match.
+
+Score (arcade human seat only):
+  14e838(seat, kind): if kind is not 0xd/0xe/0xf and record[seat].+0xc > 0, kind = 0x11;
+     if (mode==1 && seat==0) || (mode==2 && seat==1): gameData+0x90 += table 655588[kind];
+     table (24 words): 0,100,200,300,100,100,200,-100,400,1000,100,200,400,200,500,1000,
+                       400,100,400,1000,1000,600,500,0.
+     Callers: 14d970, 14da24, 154f88, 155000, 1552fc, 157aa0, 157ac4, 157bb4, 157be0.
+  14e8d8(seat, v): same seat gate; word 582950 = table 6555e8[v] = {0,-1000,2000,2000,4000,6000}
+     (finish bonus for the state-9 tally). Caller 1578f0.
+State-9 tally (1c7ce8): task 112670(0x19, 1c7f08, 0x10, tag 0x177a); state words 582940..582994;
+  1c7d48 sets 58298c = (record[0].wins < record[0].required), gameData+0xa4 = 0;
+  1c7e00 latches 582954 = 1407d0() (seconds left), 582964 = 582950 (finish bonus),
+  582958 = 1c1140(..)+0x14 (life), 58295c = 60000;
+  1c86c8 pays 58297c into gameData+0x90 over 30 steps with sound (-1,0x42) every second step;
+  1c87f0 returns 582948 (done). The handler 1c7f08 itself (layout, text, input skip) is NOT read.
+
+Challenger intrusion (OBSERVED, 118148 = global per-frame pad function, runs in every scene):
+  1b9b80(); 1ba1b0(); 117fd8(0); 117fd8(1);
+  if (gameData+0x2c == 0 && gameData+0x30 == 0) {
+     if (mode == 1 && sub-mode == 1 && (pad(1).pressed & 8)) c = 1;
+     else if (mode == 2 && sub-mode == 1 && (pad(0).pressed & 8)) c = 0; else c = none;
+     if (c != none) { gameData+0x2c = 1; gameData+0x10 = c; memset(seat[c], 0, 0x30);
+                      1116d8(); gameData+0x1c = 1; gameData+0x18 = 1;
+                      1252f0(4, 0, word[43d20c], 128008); } }
+  118298();        // RNG tick when word[443150] < 2: 316b90(); word[34518c]++
+  pad(n) = 118128(n): +4 pressed edges. The intruder bit is 8; the pause menu uses 0x80000.
+  Which physical button each bit is: see the input documents (not re-derived here).
+  The intrusion is blocked while paused (+0x30) and after the result latch (+0x2c).
+  Scene-switch type 4 is completed by 1253e0: mode = 3; sub-mode 5 -> 6; 1e7ad0/1e7b40/1e7af8;
+  11d1c8(gameData+0x10) (seat defaults: +8 = +0xc = 5, rest 0); 129168(gameData+0x10 ^ 1).
+  Because gameData+0x18 = 1, the interrupted battle's state 10 does not call 145628.
+  The following fight runs with mode 3 / sub-mode 1 and ends through the mode-3 branch of
+  145628 (section 7). 11d220 (caller 11ab04 in the network input path 11a5c8) is the network
+  equivalent and is out of scope.
+HUD prompt for the free seat: 1ba1b0 -> 1ba448 (section 13).
+
+
+9  Survival specifics
+---------------------
+
+Rules (OBSERVED): required wins 1; clock option 2 (99) at 180 updates per second, carried
+over; no intro, caption 1 each fight; items always on with a fixed 600-update period;
+time-up with unequal life = CPU win; handicap/gauge option bytes ignored (fixedRules);
+post-match menu flag never set (sub-mode 4); 49 wins ends the run with gameData+0x34 = 1;
+any loss or draw ends the run; on exit mode becomes 1/2 and the scene is 138340.
+CPU level 17b890(wins): >=48 -> 7; 47 -> 8; 46 -> 3; 43..45 -> 4; 40..42 -> 2; 39 -> 6;
+  36..38 -> 4; 33..35 -> 2; 30..32 -> 1; 29 -> 6; 26..28 -> 2; 23..25 -> 1; 20..22 -> 0;
+  19 -> 6; 16..18 -> 2; 13..15 -> 1; 10..12 -> 0; 9 -> 6; 6..8 -> 2; 3..5 -> 1; 0..2 -> 0.
+  (158830 does not force level 8 for bosses in survival.)
+Next-opponent record (17b840 copies 6 words to 12d376c..12d3780): [0] stage (17b988),
+  [1] human spirit (17b998), [2] CPU character (17b9a8), [3] CPU colour (17b9b8),
+  [4] bonus kind (17b9c8), [5] mission kind (17b9d8). Candidates: 3 records of 0x18 bytes at
+  12d4f20 built by 17aca8(wins, stage, defeatedChar, 12d4f20, flag); selection index 12d4f14.
+  17aca8 (17aca8..17b838, mode test at 17ad34) is NOT read: candidate generation is UNKNOWN.
+
+Controller state (12d4cb8..): 4cb8 battle ptr, 4cbc state, 4cc0 previous state, 4cc4 wait
+timer, 4cc8 fade alpha, 4ccc saved life, 4cd0 saved clock, 4cd4 human seat (0 for modes 0xb
+and 1, else 1), 4cd8 pending bonus (-1 none), 4cdc life to add, 4ce0 seconds to add, 4ce4
+notice timer, 4ce8 wins, 4cec combat frame counter, 4cf0 s32[22] mission counters.
+180510 (init at scene entry): state=1, prev=-1, counters 0, 1392e8(), 139550(), windows.
+180630(paused) per frame (condensed; OBSERVED but long, re-verify with a Probe trace):
+  if (battle.requested == 4 && !paused) 4cec++;
+  if (4cc4 > 0) { 4cc4--; } else { if (state != prev) run entry[state], prev = state;
+                                   else run update[state]; alpha step; }
+  pause rule each frame: state 1 or 5 -> 1392e8(); otherwise if state is not 3/4 and
+  4cc4 > 0 -> 1392e8().  alpha > 0 draws a full-screen black quad (1145c0(0,0,0x280,0x1c0)).
+  alpha step: state 5: +8 up to 0xff; state 1: wins == 0 -> 0xff, else towards 0x80 by 8;
+  other states: -8 down to 0.
+  entry table 5f2130 / update table 5f2148:
+   0 fight.   entry 1807e8: 4cd8=-1; 4ce4=0; close windows.
+              update 180a6c: if (4cd8 != -1) { if (4cdc > 0) { human.a30 = min(a30+4cdc, 200);
+                 1b5b80(0, (int)body.x, 0x50); }
+                 if (4ce0 > 0) { timer0 = min(timer0 + 4ce0*0xb400, 0x459c00); sound(-1,0x41); }
+                 notice 1827c0(win, 0x36, 4cd8); 4cd8=-1; 4cdc=4ce0=0; 4ce4=0xb4; }
+              else if (4ce4 > 0) 4ce4--; else close the notice.
+   1 select.  entry 1808d0: gameData+0x2c = 1; message 0x31; list widget 12d4eb0.
+              update 180bc0: if (211d48 result == 4) { 17b840(wins, &cand[sel]); 181548();
+                 state = 5; }
+   2 result.  set by 180e28 after a win (wins < 49). entry 180958: message 0x32 if wins >= 49,
+              0x33 if 180ef8(), 0x34 if 180fd0(), else 0x35.
+              update 180c38: on pad.pressed & 0x60e: sound(-1,0);
+                 if (wins >= 49 || 180ef8()) { 4cc4 = 0x1e; state = 1; }
+                 else state = 180fd0() ? 3 : 4;
+   3 bonus.   entry 180a10: 181498(); message 0x36; 4cc4 = 0x1e.
+              update 180cb0: life part applied at once (as in state 0, then 4cc4 = 10);
+                 time part added 0xb400 per step with sound(-1,0x42), 4ce0--, step delay 3
+                 (0 while pad.held & 0x60e); when both are 0, a press -> sound(-1,0), state 1.
+   4 no bonus. update 180c98: 4cc4 = 0x1e; state = 1.
+   5 leave.   entry 1807fc: close windows. update 180db8: when alpha >= 0xff and the window is
+              idle: 4cc4 = 4; state = 0; 4ccc = human.a30; 4cd0 = timer0; 1e7df0(); 1815b0()
+              (1b4e88 placement + 1b4d90(2,1)); 13a6c0().
+13a6c0: rebuilds setup for the next opponent (section 4, required wins 1), frees tag 0xfa1,
+  1392c0() (stage reload), 141558(), 1392a8() (restart request with argument 1 -> 13f9f0(1)).
+Life carry-over: 13fd80 writes 12d4ccc into the human actor's +0xa30 when wins > 0
+  (otherwise 149008's 200). Clock carry-over: 1406e0 (section 5).
+Bonus kinds 181498 (jump table 5f2290; names 664f20..): 0..3 -> life +30, +60, +90, +150
+  (menu labels "+10/+20/+30/+50"; life scale is 200); 4..6 -> time +10, +20, +30 s;
+  7 -> life +200 and time +100 (both clamp).
+Mission bookkeeping 1815f0 (per frame, human actor, skipped when 14abb0(actor)): counters
+  4cf0[0..3] = flags248 bits 17,18,19,21; [4] = (record+0x20 == 0); [5] = (record+0x1c == 2);
+  [6] = flags248 bit 22; [7],[8] = (record+0x1c == 1); [9] = (record+0x1c == 0);
+  [10] = (record+0x1c == 3); [11] = flags248 bit 23; [12..20] = actor bytes +0xf22..+0xf2a
+  (bytes f26..f2a are cleared after the copy); [21] = 1.
+  1498d0 (survival only): actor.+0xf22 = max(actor.+0xf22, min(record+0xc, 99)) (max combo).
+  181548 clears bytes f22..f2a and the 22 counters when a new opponent is chosen.
+  180fd0 (mission met, jump table 5f2160): kinds 0..11 -> counter != 0; 12..15 -> counter >= 3;
+  16..20 -> true; 21 -> special (round winner == human seat ...). 180ef8: for kinds 16..20
+  with counter > 0 and the human alive, consumes the counter and arms the bonus (4cd8).
+  Mission names 59cf60 (22 strings 664fc8..665168), bonus names 59cf38.
+HUD text 1810f8 (elapsed time from 4cec, bonus, mission, progress lines): section 13.
+
+
+10  Practice specifics
+----------------------
+
+Rules (OBSERVED): required wins 1 but a round never ends: clock option 3 (infinite), and
+151968 clamps life to 1 instead of setting flags23c |= 0x80 when it would reach 0
+(1519d8). No intro (13fd80 requests state 4). Handicap bytes ignored. BGM is not
+stopped/restarted on restart (13922c). 13ab48: BGM play latch sets battle+0x18 = 1.
+CPU seat: mode 9 -> seat 1, mode 10 -> seat 0 (1398c0); control mode from 139c88 (section 2).
+Per-frame/life rules:
+  1494f0 (14959c): if actor+0x220 == 0 and not (actor+0xa10 == 0xc && body action == 0x279):
+       actor.a30 = actor.a34 (life refill to maximum while +0x220 is 0).
+  149008 (149048): gaugeSetting(seat) == 1 -> actor.flags248 &= ~2.
+  14f3b0/14f428: gauge type predicates use gaugeSetting(seat) == 1 / == 2 instead of the
+       option bytes 43d06b / 43d068.
+  11e760 (11ec8c): threshold = 139dc0-equivalent 211198(seat) << 9 instead of 14f310(seat) << 8.
+  156f08, 157668: the "lethal hit" branch (pending damage a38 >= life a30) is not taken.
+  14a8d0: after accumulating damage, if practiceDummySeat() == actor seat, 139588(amount)
+       updates DAMAGE / TOTAL DAMAGE (cap 999) / MAX DAMAGE; 149f10: when
+       practiceHumanSeat() == seat, 139578() requests a counter reset.
+  172158, 1f23f0, 1618d0, 162844: CPU dummy behaviour for +0xa20 == 1 (ukemi type 139ce8,
+       control modes); not expanded here.
+  1a3e60, 1a40ec: practice or survival multiplies a float by constants 6529e8 / 6529f4
+       (functions 1a3c18, 1a3f90; purpose UNKNOWN).
+Recording/replay: 13f9f0 (section 5). 141dd0 draws the remaining time (600 - actor+0x2c0)/60
+  with 3 decimals at (0x70,0x78), colour 0xffff8080: actor[1] while replaying, actor[0] while
+  recording (600-update buffer).
+Displays: 13a030 builds a 15-bit input mask from the human actor's feature words and pushes it
+  into the 24-entry history (13a1b0; history cleared after 0x78 idle frames); 13a280 draws the
+  history and, when u8 123a0c0 == 1, the three damage lines (strings 5e1a68/5e1a80/5e1a98) at
+  x 0x140, y 0x78/0x8c/0xa4. Only called when 2111d8() (DATA DISPLAY) is set.
+
+Menu controller 17f790 (per frame; state 12d385c, previous 12d3860, fade 12d3864,
+saved CPU type 12d3868, confirm kind 12d386c; entry table 5f20b4, update table 5f20d8;
+widgets 12d3870, 12d39d8, 12d3a70, 12d3af0, 12d4360, 12d4bd0, 12d4c48). OBSERVED outline:
+  state > 0 -> 1392e8() every frame (battle paused); 180260(actor) per actor each frame.
+  0 fight: when the window is idle and humanPad.pressed & 0x80000 -> state 1.
+  1 main menu (item strings 664900: PRACTICE START, CPU RECORDING, CPU TYPE, CPU UKEMI TYPE,
+    GAUGE SETTING, ITEM, DATA DISPLAY, SKILL LIST, KEY CONFIGURATION, WINDOW OFF,
+    CHARACTER SELECT, RETURN TO TITLE). Result code of 210630:
+      1 start: 142168(); 210550(); 12d3868 = 139c88(); 139368(type == 0x25); 139378(0);
+               1392d0() (soft restart: 13f9f0(0)); state 0.
+      2 record: 142168(); 139378(1); 139368(0); 1772d0(); 1392d0(); state 0.
+      3 or START: restart only if the CPU type crossed 0x24/0x25 or recording is active
+               (180060..1800e8), then state 0.
+      4 -> state 6; 5 -> state 1; 6 -> state 2; 7/8 -> 12d386c = code, state 3.
+  3 confirm: yes (code 4): kind 7 -> 1252f0(2,0,139778,128008), gameData+0x18 = 1,
+      seat0/seat1 +0x10 and +0x2c cleared, 139378(0), 1e7ad0(), state 4;
+      kind 8 -> 1252f0(2,0,139778,127940), gameData+0x18 = 1, 1e7ad0(), state 4.
+      no (code 5) -> state 1.
+  2, 5, 6, 7, 8: sub-windows (window off, skill list, key configuration, settings); menu-side.
+The practice settings module (0x20e000..0x212fff, words 13738d8..) belongs to the practice
+menu slice.
+
+
+11  Attract demo (mode 0)
+-------------------------
+
+1483f8 (caller 1e8874): 17a2c8(0,1); mode = 0; gameData+4 = {0,1,2,5,7,8}[rand(6)] (table
+  5fa180); for seat 0 then seat 1: +0x20 = 2; +4 = rand(5); +0xc = rand(9);
+  +0 = table 5fa0e0[rand(0x28)] (identity 0..39); if both seats have equal character and
+  colour: seat0.+4 = (seat0.+4 + 1) % 5 (wraps at 5); 139280(0); 139760();
+  112670(0xf0, 148548, 0x10, tag 0x15e5) (148548 is an empty function).
+Battle-side differences (OBSERVED): both seats CPU; no HUD task; no intro, starts in state 4;
+  clock infinite; 14a8d0 returns before accumulating damage (mode == 0), so no life is lost;
+  no item events; 175874, 1759f0, 176934 return 0; 15d5e8 skips the difficulty adjustment;
+  no score, no pause menu; play time is not accumulated.
+Exit: 1b9b80 (global, from 118148): when mode == 0 and word 582210 != 0, a pressed bit 8 on
+  either pad (with 582208 conditions) calls 1252f0(1,0,word[43d20c],127940) (title) and
+  1e7df0(). 1b9cc0 is an equivalent variant with no caller. The demo duration timer is on the
+  title/attract side (words 582204..582220) and is NOT read here.
+
+
+12  Pause (START in battle)
+---------------------------
+
+Open poll 1d9b50 (every frame from 138f48), OBSERVED:
+  allowed if (gameData+0x2c == 0 && gameData+0x30 == 0) || gameData+0xa4 == 1;
+  sub-mode 3 (practice: own menu, section 10) or 6 (network) -> never;
+  mode 1, or mode 0xb with 181778() == 0 (survival fade alpha 12d4cc8 == 0):
+        pad(0).pressed & 0x80000 and 181778() == 0 -> 1d9cd8();
+  mode 2, or mode 0xc with 181778() == 0: pad(1).pressed & 0x80000 -> 1d9cd8();
+  mode 3: for seat 0, 1: pad(seat).pressed & 0x80000 -> word 582f3c = seat; 1d9cd8();
+  other modes (0, 9, 10, 7, 8): nothing.
+Open 1d9cd8: if (582f38 == 0) { task 112670(0x46, 1d9e10, 0x10, tag 0x178b); window objects
+  13cd50 / 13d5c8 (582f54..582f5c); word[43d048] = 1da4d8; 1d9da0() (582f30 cursor = 0,
+  582f34 = 0, 582f38 = 1, 582f40 = 1, 582f44 = 0, 582f48 = 0, 582f4c = 1, 582f50 = 0);
+  if (sub-mode != 5) gameData+0x30 = 1; 112f30(0xffffff, 0x404040); 1da860(); }
+Task 1d9e10: 1392e8() each frame (this is what freezes 140270); owner seat = 0 for modes 1 and
+  0xb, 1 for modes 2 and 0xc, 582f3c for mode 3. Input word from 1dae40(owner):
+  0x40 = pressed & 0x80000; 0x20 = pressed & 0x404; 0x10 = pressed & 0x20a; 1 = repeat & 0x10;
+  2 = repeat & 0x20; 4 = pressed & 0x80; 8 = pressed & 0x40.
+  0x40 -> close (1da110, sound (-1,0x25)); 1|4 -> cursor up; 2|8 -> down; 0x20 -> cancel/back;
+  0x10 -> 1da508 confirm (sound (-1,0)); move sound (-1,0x20). 582f48 counts to 10 before input.
+Items: 6 rows (4 rows when sub-mode == 5). Strings 658b40: CANCEL, CHARACTER SELECT,
+  SKILL LIST, KEY CONFIGURATION, WINDOW OFF, RETURN TO TITLE; help lines 658a30..658ae0.
+  Handlers 1da508 (jump table 658a18 by cursor, sub-mode != 5):
+   0 CANCEL            582f34 = 1; close (1da110).
+   1 CHARACTER SELECT  yes/no state 582f34 = 2 (582f40: 0 = yes). Yes: 1252f0(2,0,1da210,128008);
+                       1da110(); 582f44 = 1; 213be8(3); gameData+0x18 = 1; if (sub-mode == 1)
+                       { seat0.+0x28 = seat0.+0; seat1.+0x28 = seat1.+0; }
+   2 SKILL LIST        window 582f5c.+4 = 0x20; 582f4c = 3; 582f50 = 1.
+   3 KEY CONFIGURATION window 582f58.+4 = 0x20; 582f4c = 2; 582f50 = 1.
+   4 WINDOW OFF        582f34 toggles 5 <-> 0.
+   5 RETURN TO TITLE   yes/no state 582f34 = 6. Yes: 1da430(); gameData+0x18 = 1; 582f44 = 1.
+                       1da430: 1252f0(2,0,1da210,127940) (sub-mode 5: 11bd58(), next 1d8290);
+                       213be8(3); 1da110().
+  With sub-mode 5 the 4 rows map to: 0 cancel, 1 -> window 582f5c (582f4c = 3), 2 -> window
+  582f58, 3 -> return confirm (1da598..).
+Exit executor 1da210 (scene destructor of both exits): 139778(); then
+  582f34 == 2 (character select), by OLD sub-mode (jump table 658998):
+     0: seats only.   1 (arcade): 124d50(); mode = (old mode 1 or 2) ? old : (old == 3 ?
+        582f3c + 1 : unchanged); gameData+0x2c = 1; sub-mode = 1.
+     2 (VS): mode = 6; sub-mode = 2.     3: mode 1 -> 9, 2 -> 10; sub-mode = 3.
+     4 (survival): 124d50(); mode kept if 0xb/0xc; +0x2c = 1; sub-mode = 4.
+     5: 124d50(); mode kept if 1/2; +0x2c = 1; sub-mode = 5.
+     then seat1.+4, seat0.+0x10, seat1.+0x10, seat0.+0x2c, seat1.+0x2c, seat0.+4 = 0.
+  582f34 == 6 (title): 124d50(); 11d1a8() (both seats to defaults);
+     old sub-mode 5: mode = old mode 1 -> 7, 2 -> 8; sub-mode = 5; then gameData+0x2c = 1.
+Close 1da110: frees tags 0x178b, 0x14b6, 0x151b; 582f38 = 0; gameData+0x30 = 0; 582f4c = 0; 1c9810().
+The VS result menu (1daec0, 1db2e0) is the already ported console_versus_menu.
+
+      1d9b50 --START--> 1d9cd8 --> task 1d9e10 (1392e8 per frame)
+                                     | START/CANCEL -> 1da110 (resume)
+                                     | CHARACTER SELECT yes -> 1252f0(.., 1da210, 128008)
+                                     | RETURN TO TITLE yes  -> 1252f0(.., 1da210, 127940)
+                                     | SKILL LIST / KEY CONFIG / WINDOW OFF sub-states
+
+
+13  HUD per mode
+----------------
+
+HUD task: 1ba940 creates 112670(0x14, 1bab38, 0x10, tag 0x1773) unless mode == 0.
+1bacd8 caches: 58223c = mode, 582244 = gameData+0x38, 582240 = sub-mode (debug strings
+  "InitCockpitData g_GameMode / g_NumVsWin / g_GameMode2").
+1baa68: if (mode != 3) 582238 = gameData+0x90; mode 1 -> 582248 = seat0.+0x14; mode 2 ->
+  seat1.+0x14; required wins copied to 132f398[2].
+1bab38 per frame, conditional parts (OBSERVED dispatch; drawing bodies not read):
+  if (*battle+0x130 flag (13acb8) == 1) { if (mode not 0xb/0xc) 1bacd8(); flag = 0; }
+  1bada0, 1be880, 1bfbd0, 1bfd40, 1bae60, 1baf18, 1baff0;
+  if (141cf8() == 0) 1bb050();  1bb0b0();                 // 1bb0b0 uses 1407d0 (clock digits)
+  if (sub-mode != 3 && sub-mode != 5) 1bb2c8();           // win marks / streak; sub-mode 6 and
+                                                          // byte 43d052 variants; reads +0x10
+  1bbec8();
+  if (sub-mode != 5 && (mode == 1 || mode == 2)) 1bc098();   // arcade score digits:
+                                                          // 1ba768(.., 0x10, -0x12d, gameData+0x90)
+  1c0718, 1bff20, 1c0d08, 1c0fd0, 1c02f8, 1c0920, 1bc580, 1bd2c0, 1bd5e8;
+  if (sub-mode == 6 && 141820() == 0) 1bc2d0();
+1bc0f0 / 1bc160 at teardown: arcade: 582238 = score when the progress word changed; mode 3:
+  if (gameData+0x38 == 1) 582238++; gameData+0x90 = 582238 (win counter kept in +0x90).
+1bc1c0 (every restart request): 58223c = mode; 582244 = 181488() (survival wins 12d4ce8);
+  both record+0x28 = 0; HUD objects re-created; gameData+0x2c = 0.
+Free-seat prompt: 1ba1b0 (global, from 118148): if (582208 != 0) { mode == 0 -> 1ba228;
+  else if (sub-mode != 5) 1ba448 }. 1ba448 draws for seat 1 in mode 1, seat 0 in mode 2, both
+  in mode 0, with a different variant (1b9880) when gameData+0x2c == 1 or +0x30 == 1.
+  INFERRED: this is the "press start" prompt of the free seat; texts/coordinates not read.
+Survival: 1810f8 (from 180630 when not paused) draws a panel at x = 0x12c (human seat 0) or
+  0xe: elapsed time "%02d時間 %02d分 %02d秒" from 4cec/60, bonus name, mission name, and for
+  mission kinds 12..15 a progress line (counters 12d4d20..12d4d2c); colour changes when
+  180ef8()/180fd0() hold. Hidden lines when wins >= 48 (s6). Not read in full.
+Practice: section 10 (input history, damage lines, record/replay timer).
+Clock digits: 1407d0 gives -1 (no digits, infinite) in practice/demo/option 3.
+
+
+14  Other gameplay sites
+------------------------
+
+Handicap/options ignored under fixedRules() (practice, survival, network):
+  14f2b8(amount): damage scaling (amount * byte 43d061 + 99) / 100 -> amount unchanged.
+  14f310(seat): byte 43d069 / 43d06c -> word 50d91c (0x20 in the image).
+  14f360(seat): byte 43d06a / 43d06d -> word 50d90c (0x14 in the image).
+  14f3b0/14f428(seat): byte 43d06b / 43d068 == 1 / == 2 -> false (practice: gaugeSetting).
+14a8d0 (damage request): mode 0 -> return; clockExpired() -> return; opponent flags23c & 0x80
+  -> return; a38 += 14f2b8(amount); practice counter hook.
+15d5b0 (CPU): if (1418f8() < 2 && mode != 0) difficulty byte 43d05c adjustment (6 -> (2-v)*10 ..).
+152758: sub-mode 6 selects dynamic descriptors (already documented).
+177654: input mask set for mode 6 (already documented in input-processing).
+1213a8 (121880): modes 0xf/0x10 only (edit scenes). 1a2218: modes 0xd/0xe (gallery).
+17ea48: returns 0 for modes 3, 6, 1, 2, 9, 10, 7, 8, 0xb, 0xc; else 1 (window helper).
+181c30: mode 0x11 test (option windows).
+
+
+15  Site table
+--------------
+
+site    | function | field / predicate      | modes distinguished          | effect
+--------+----------+------------------------+------------------------------+---------------------------
+118190  | 118148   | +0x2c, +0x30           | any                          | blocks intrusion poll
+1181a8  | 118148   | mode, +0xa0            | 1 / 2 with sub-mode 1        | free seat bit 8 -> intrusion
+1253fc  | 1253e0   | switch type 4          | -                            | mode=3, sub 5->6, seat reset
+13923c  | 138f48   | isPractice             | practice                     | no BGM stop on restart
+139140  | 138f48   | isSurvival/isPractice  | survival / practice          | 180630 / 13a030,13a280,17f790
+138fd4  | 138f48   | +0xa0 W, mode W        | network                      | leave to 1d8290
+13940c  | 139408   | +0xa0                  | 5, 6                         | network predicate
+139498  | 139488   | mode                   | 9 / 10 / other               | practice human seat
+1394f0  | 1394e0   | mode                   | 9 / 10 / other               | practice dummy seat
+13970c  | 139660   | mode                   | 0                            | no HUD task
+139798  | 139778   | mode                   | 0                            | no HUD/tally teardown
+139874  | 139778   | mode                   | 0                            | no play-time accumulation
+139904  | 1398c0   | mode                   | 1,2 / 0xb,0xc / 0 / other    | setup builder branch
+13997c  | 1398c0   | +0xa0                  | 5                            | random CPU colour
+1399cc  | 1398c0   | +0xa0                  | 5                            | keep CPU colour
+139b98  | 1398c0   | mode                   | 10 / 9                       | CPU seat in practice
+139c00  | 139be8   | +0xa0                  | 2, 3                         | selected stage instead of random
+139ee8  | 139e50   | +0xa0                  | 6                            | 123a168 network flag
+13a3c4  | 13a280   | 123a0c0                | practice                     | damage lines
+13a6ec  | 13a6c0   | mode                   | 0xb / 0xc                    | survival seats
+13a878  | 13a870   | isSurvival             | survival                     | play seconds source
+13ab48  | 13aaf8   | isPractice             | practice                     | battle+0x18 = 1 at BGM start
+13fb2c  | 13f9f0   | isPractice/isSurvival  | practice, survival, network  | required wins 1 / 1 / 2 / setup
+13fb64  | 13f9f0   | recording / replay     | practice                     | flags240 bits 8,2 / 4, seat swap
+13fbe4  | 13f9f0   | byte 43d05d            | -                            | clock option 0/1/3
+13fbfc  | 13f9f0   | isSurvival             | survival                     | clock option 2
+13fc90  | 13f9f0   | mode, isPractice       | 0, practice                  | clock option 3
+13fcb4  | 13f9f0   | fixedRules             | network                      | clock option 0
+13fddc  | 13fd80   | isSurvival             | survival                     | round index, wins reset
+13fe38  | 13fd80   | mode, predicates       | 0, practice, survival        | no intro
+13ff3c  | 13fd80   | isSurvival             | survival / practice,demo     | start state 3 / 4
+13ff90  | 13fd80   | isSurvival             | survival                     | life carry-over
+14071c  | 1406e0   | isSurvival             | survival                     | 180 updates/s, saved clock
+1407f0  | 1407d0   | isSurvival             | survival                     | seconds divisor 0xb400
+141878  | 141860   | mode, +0x20            | 0, practice, survival, 3     | item events allowed
+141900  | 1418f8   | isPractice             | practice                     | returns 0x31
+141de4  | 141dd0   | replay / recording     | practice                     | record timer display
+14348c  | 143430   | +0x18                  | any                          | state 10 skips 145628
+1434a0  | 143430   | isSurvival             | survival                     | no audio stop at state 10
+1434c0  | 143430   | +0xa0                  | 2                            | 1daec0 VS result menu
+14398c  | 143930   | isSurvival             | survival                     | caption 1
+143d64  | 143c60   | mode                   | 1 / 2                        | 17a718 qualifying round win
+143e54  | 143c60   | +0xa0                  | 4, 5                         | no +0xa4
+143f9c  | 143c60   | isSurvival, mode       | 0xb / 0xc                    | time-up = CPU win
+1445cc  | 144570   | mode                   | 1,2,0xb,0xc,3                | who may skip the win pose
+1446dc  | 144570   | +0xa0                  | 6 / 5 / other                | state 9 routing
+144768  | 144570   | mode                   | 1 / 2                        | state 9 after human round win
+144814  | 1447c0   | +0xa0                  | 6                            | 1e6668 vs 1c7ce8
+14485c  | 144848   | +0xa0                  | 6                            | 1e6b58 vs 1c87f0
+144f80  | 144f40   | isSurvival             | survival                     | item kind table, period 600
+145068  | 144f40   | isPractice             | practice                     | item setting
+1450ec  | 144f40   | mode                   | 3                            | kinds 4..6 -> 7/8
+1451b8  | 145118   | mode                   | 1 / 2                        | consume schedule flags
+145664  | 145628   | +0xa0                  | 2                            | VS path
+145674+ | 145628   | mode, +8, +0x10, +0xa0 | 3 / 1,2 / 0xb,0xc            | section 7
+149048  | 149008   | isPractice             | practice                     | flags248 &= ~2 by gauge setting
+14959c  | 1494f0   | isPractice             | practice                     | life refill
+1498d0  | 1494f0   | isSurvival             | survival                     | max combo byte f22
+149f10  | 149d08   | isPractice             | practice                     | damage counter reset
+14a8f8  | 14a8d0   | mode                   | 0                            | no damage in demo
+14a934  | 14a8d0   | 1394e0                 | practice                     | damage counters
+14e878  | 14e838   | mode                   | 1 / 2                        | score add (human seat)
+14e8ec  | 14e8d8   | mode                   | 1 / 2                        | finish bonus
+14f2c4  | 14f2b8   | fixedRules             | practice, survival, network  | no damage handicap
+14f31c  | 14f310   | fixedRules             | same                         | default 50d91c
+14f36c  | 14f360   | fixedRules             | same                         | default 50d90c
+14f3bc  | 14f3b0   | isPractice, fixedRules | same                         | gauge type
+14f434  | 14f428   | isPractice, fixedRules | same                         | gauge type
+1519d8  | 151968   | isPractice             | practice                     | life floor 1, never dead
+152794  | 152758   | +0xa0                  | 6                            | dynamic descriptors
+156f08  | 156d68   | isPractice             | practice                     | no lethal branch
+157668  | 1575d0   | isPractice             | practice                     | no lethal branch
+158848  | 158830   | isSurvival             | not survival                 | level 8 for chars 0x21, 0x30
+15887c  | 158830   | isPractice             | practice                     | control mode from menu
+15d5e8  | 15d5b0   | mode                   | 0                            | no difficulty adjustment
+1618d0  | 161848   | isPractice             | practice                     | CPU dummy branch
+162844  | 162828   | isPractice             | practice                     | CPU dummy branch
+169d5c  | 169d10   | isPractice             | practice                     | idle selection (ported note)
+172158  | 1720b0   | isPractice             | practice                     | ukemi type
+175874  | 175858   | mode                   | 0                            | returns 0
+1759f0  | 1759d8   | mode                   | 0                            | returns 0
+176934  | 176930   | mode                   | 0                            | returns 0
+178fa0  | 178f90   | mode                   | 3, 0xd/0xe, 2, 0xa, 0xc, 5   | human seat
+17a360+ | 17a350.. | +0xa0, mode            | 5; 1 / 2                     | arcade schedule accessors
+11ec8c  | 11e760   | isPractice             | practice                     | gauge threshold source
+1a3e60  | 1a3c18   | practice / survival    | both                         | float factor 6529e8
+1a40ec  | 1a3f90   | practice / survival    | both                         | float factor 6529f4
+1bacf4+ | HUD      | mode, +0xa0, +0x38     | section 13                   | HUD dispatch
+1d9ba0+ | 1d9b50   | +0xa0, mode            | section 12                   | pause open
+1da234+ | 1da210   | mode, +0xa0            | section 12                   | pause exits
+
+
+16  UNKNOWN / not read, and suggested Probe experiments
+-------------------------------------------------------
+
+UNKNOWN or partially read:
+  - 17aca8 (survival candidate generation, 17aca8..17b838) and 17b9e8/17ba88 (candidate rules).
+  - 1c7f08 (arcade state-9 tally handler): layout, text, skip input, timing.
+  - 1e3fd0 (survival record/unlock update called with wins+1).
+  - HUD drawing bodies (1bb2c8, 1bc098/1ba768, 1ba228/1ba448, 1810f8 coordinates) and 1b9880.
+  - 13a978 network notice overlay; all sub-mode 5/6 paths (11d220, 1457c4.., 1e66xx) by scope.
+  - 147db8 (round record update) arguments per result kind; record+0x1c values.
+  - Meaning of gameData+0x1c, seat+0x10, bytes 43d058 / 43d059 / 43d05a (all 0 in the image;
+    INFERRED event/kiosk options: 43d059 selects a streak limit of 5/10/15/20).
+  - Mode 5 in 178f90 and the tail of 178f90 for mode 8.
+  - setup[0] (AI level) for demo: not written by 1398c0; value inherited.
+  - Practice per-actor hook 180260 and the 0x20e000..0x212fff settings module.
+  - 1a3c18 / 1a3f90 float factors; 172158 / 1f23f0 / 1618d0 / 162844 dummy details.
+  - Demo duration and the 5822xx attract words.
+  - Which pad button the pressed bits 8 and 0x80000 are (118128 layout is in the input docs).
+Suggested Probe experiments (mips_probe.Probe, fixtures as in validate_console_versus_menu.py):
+  1. 1398c0 whole, for modes {0,1,2,3,9,10,0xb,0xc} x sub-mode {1,5} with seeded RNG: compare
+     setup words, seat words and RNG draw count.
+  2. 13f9f0 prefix up to 13fc54 with 123a0c0 in {0,1,2}: required wins, clock option, flags240.
+  3. 1406e0 and 1407d0 with survival saved clocks {-1, 0, 0x459c00, arbitrary}.
+  4. 143c60 with life pairs (equal, unequal, zero) x modes {1,2,3,0xb,0xc}: winner, result
+     kind, 17a718 calls, +0xa4, state request (123a168 = 0, so 139f20 returns 0).
+  5. 144570 whole for modes x winner x matchOver: requested state and timer2.
+  6. 145628 whole with 1252f0 and the menu-side callees stubbed to recorders: next-scene
+     address per (mode, sub-mode, winner, progress, opponent, wins).
+  7. 180630 driven for a full intermission (states 2 -> 3/4 -> 1 -> 5 -> 0) with widget callees
+     stubbed, to confirm the condensed description in section 9 and the pause rule.
+  8. 17b890 for wins 0..60 (table in section 9); 181498 for kinds 0..7; 144f40 RNG order.
+  9. 118148 with pad words to confirm the intrusion gate and its writes; 1d9b50 per mode.
+ 10. 151968 / 1494f0 practice branches with life at 0 and +0x220 in {0, 1}.
+
+
+17  Porting notes against the current native sources
+----------------------------------------------------
+
+  - Introduce the battle kind (123a0c0) and sub-mode beside BattleRoundState.gameMode; most
+    sites test the predicates of section 2, not the mode word.
+  - src/battle_round.cpp `gameMode!=3` (13fd80): the admitted variants are the skip-intro
+    rule, the survival resets and life/clock carry-over, required wins, clock option.
+  - src/round_control.cpp `gameMode!=3` (combat 143b88, ending entry 143c60): add the survival
+    time-up rule, the arcade 17a718 call, the +0xa4 gate, the 144f40 item variants, and the
+    144570 skip/state-9 routing. 145118 returns 0 offline in every mode (no state 6).
+  - src/match_ending.cpp `gameMode!=3 || profileActive123a168`: 123a168 is the network flag;
+    arcade adds the 17a5f0/17a708 calls; 145628 is the per-mode scene router of section 7.
+  - The KO pause, pause menu, survival intermission and practice menu share the 123a0c4
+    request serviced by the battle thread loop (section 3).
+  - CPU: level = setup[0] with the 158830 override; practice control mode from 139c88.
+  - Estimated order of work: demo (smallest: no damage, no HUD) -> practice battle rules ->
+    arcade battle rules + score + state 9 -> survival controller.

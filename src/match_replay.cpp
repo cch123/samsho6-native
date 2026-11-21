@@ -14,12 +14,14 @@ int main(int argc,char** argv) {
         std::string_view trace;
         std::array<bool,2> cpuSeats{};
         auto mode=ss6::VersusMode::FixedMatch;
-        bool unlockModes=false;
+        bool unlockModes=false,unlockAll=false;std::string saveFile;
         int roundTime=-1;bool timed=false;auto entry=ss6::VersusEntry::Fight;std::array<unsigned,2> spirits{};
         for(int i=2;i<argc;++i) {
             const std::string_view arg=argv[i];
             if(arg=="--round-time"&&i+1<argc){roundTime=std::stoi(argv[++i]);timed=true;}
             else if(arg=="--unlock-modes")unlockModes=true; // byte 43d0d6: SURVIVAL and SPIRITS EDIT rows
+            else if(arg=="--unlock-all")unlockModes=unlockAll=true; // and one seen ending: the GALLERY row
+            else if(arg=="--save"&&i+1<argc)saveFile=argv[++i];
             else if(arg=="--cpu"&&i+1<argc)cpuSeats=ss6::versusCpuSeats(argv[++i]);
             else if((arg=="--p1-spirit"||arg=="--p2-spirit")&&i+1<argc)spirits[arg=="--p2-spirit"]=ss6::versusSpirit(argv[++i]);
             else if(arg=="--mode"&&i+1<argc) {
@@ -48,11 +50,18 @@ int main(int argc,char** argv) {
         const bool projectileFields=trace=="--projectile-fields";
         const bool practiceFields=trace=="--practice-fields";
         const bool survivalFields=trace=="--survival-fields";
-        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields&&!survivalFields&&!practiceFields)
+        const bool sceneFields=trace=="--scene-fields";
+        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields&&!survivalFields&&!practiceFields&&!sceneFields)
             throw std::runtime_error("Unknown replay trace");
         if(menuFields)mode=ss6::VersusMode::Console;
         ss6::LocalVersus session(argv[1],roundTime,mode,spirits,entry,cpuSeats);
-        if(unlockModes){session.system().option(0x7e)=1;session.restart();}
+        if(unlockModes||!saveFile.empty()) {
+            auto& data=session.system();
+            data.file=saveFile;data.loadFile();
+            if(unlockModes)data.option(0x7e)=1;
+            if(unlockAll&&!(data.modeMenuUnlock()&2))data.markEndingSeen(0);
+            session.restart();
+        }
         std::vector<ss6::BattleSoundEvent> sounds;
         ss6::GameRandom soundRandom=session.match().battle().random;
         if(soundFields)session.onTick([&](const ss6::NativeMatch& match) {
@@ -162,6 +171,39 @@ int main(int argc,char** argv) {
                     std::cout<<' '<<g.mode<<' '<<g.submode<<' '<<g.winner<<' '<<arcade->gameOver.frame<<' '<<p.character
                              <<' '<<record.wins<<' '<<record.seconds<<' '<<session.arcadeNotice().empty();
                 }
+            }
+            if(sceneFields) {
+                // Columns from 23: scene, title, mode menu, row, mode word, sub-mode, fade level, library seed,
+                // CRCs of the edit block, the spirit records and the key masks, AUTO SAVE, submission count,
+                // four scene words, then the 16 fighter button masks.
+                const auto crc=[&](size_t at,size_t size) {
+                    uint32_t c=~0u;
+                    for(const uint8_t byte:session.system().image().subspan(at,size)) {
+                        c^=byte;for(int k=0;k<8;++k)c=(c>>1)^(0xedb88320u&(0u-(c&1)));
+                    }
+                    return ~c;
+                };
+                using Scene=ss6::NativeMatch::MenuScene;
+                const auto scene=match.menuScene();
+                const auto& title=match.title();
+                std::cout<<' '<<int(scene)<<' '<<bool(title)<<' '<<(title?title->draw.modeMenu:false)<<' '<<(title?int(title->draw.firstRow):-1)
+                         <<' '<<match.battle().gameMode<<' '<<match.battle().matchEnd.submodeA0<<' '<<match.sceneFade().level()
+                         <<' '<<match.battle().random.librarySeed
+                         <<' '<<crc(ss6::SystemData::editData,0x6180)<<' '<<crc(ss6::SystemData::records4d7068,0x80)
+                         <<' '<<crc(ss6::SystemData::keyMasks,0x40)<<' '<<session.system().autoSave()<<' '<<match.menuDrawList().records.size();
+                std::array<int,4> words{-1,-1,-1,-1};
+                if(scene==Scene::SpiritsEdit) {
+                    const auto& e=*match.spiritsEdit();
+                    words={e.state,e.slots.list.cursor,e.editor.categories.list.cursor,e.editor.options.list.cursor};
+                } else if(scene==Scene::ColorEdit) {
+                    const auto& e=*match.colorEdit();
+                    words={e.state(),e.character(),e.colour(),int(e.sliderWord()&0xffffff)};
+                } else if(scene==Scene::KeyConfig) {
+                    const auto& k=*match.optionKeyConfig();
+                    words={k.closing,k.finished,k.widget.selector[0].current,k.widget.selector[1].current};
+                } else if(scene!=Scene::None&&scene!=Scene::Option)words={match.galleryRow(),match.galleryCursor(),-1,-1};
+                for(int w:words)std::cout<<' '<<w;
+                for(unsigned i=0;i<2;++i)for(auto mask:match.inputMapping(i).normal)std::cout<<' '<<mask;
             }
             if(titleFields) {
                 const auto& title=match.title();

@@ -24,6 +24,9 @@
 #include "skill_list.hpp"
 #include "practice_battle.hpp"
 #include "survival_session.hpp"
+#include "console_gallery.hpp"
+#include "edited_palettes.hpp"
+#include "edit_art.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -104,6 +107,24 @@ public:
     const MenuDrawList& menuDrawList() const {return menuList_;}
     // SPIRITS EDIT MODE (13ad40); the page is driven by one seat.
     const std::optional<SpiritsEdit>& spiritsEdit() const {return spiritsEdit_;}
+    // The scenes that submit through the menu canvas. KeyConfig is the OPTION
+    // page 13cdb0; the four gallery values are scenes 1d22f8, 13ed98, 13e090 and 182968.
+    enum class MenuScene {None,Option,KeyConfig,SpiritsEdit,ColorEdit,GalleryTop,Illustrations,SoundTest,EndingSelect};
+    MenuScene menuScene() const;
+    // Resolves this tick's submissions over a 640x480 RGBA frame (448 lines
+    // are used) with the rasteriser of the art module that produced them.
+    void rasteriseMenu(std::span<uint8_t> rgba) const;
+    // COLOR EDIT (13b160) and its three preview object requests of this tick.
+    const ColorEdit* colorEdit() const;
+    std::span<const EditPreviewObject> colorEditPreview() const;
+    // GALLERY state for traces: top row 582d88 and the list cursor of the open sub-scene.
+    int galleryRow() const;
+    int galleryCursor() const;
+    const KeyConfigWindow* optionKeyConfig() const;
+    // The fighter button masks in force (key masks 4eaac0 in logical pad bits).
+    const InputMapping& inputMapping(unsigned seat) const {return mappings_.at(seat);}
+    // Runtime palette tables 3ec740 / 3f28c0 and the tables of 115d40; shared by every scene of a session.
+    const std::shared_ptr<EditedPalettes>& editedPalettes() const {return palettes_;}
     // Arcade: GameData+90 and the state-9 tally task (1c7f08).
     int32_t arcadeScore() const {return arcadeScore_;}
     const ArcadeTally& arcadeTally() const {return tally_;}
@@ -223,6 +244,24 @@ private:
     ArcadeTallyWorld tallyWorld_; // the words the task counts down between visits
     bool editLeaving_=false;
     void tickSpiritsEdit(const std::array<NormalizedPadSample,2>&);
+    // native_match_menus.cpp: the art and scene state of the edit, gallery and key configuration scenes.
+    struct MenuScenes;
+    std::shared_ptr<MenuScenes> menus_;
+    std::shared_ptr<EditedPalettes> palettes_;
+    MenuScenes& menus();
+    void menuFade();                       // 1252f0 colour interpolation of every bound art module
+    void enterSpiritsEdit(unsigned seat);
+    void enterColorEdit(unsigned seat);
+    void enterGallery(unsigned seat);
+    void enterGalleryScene(uint32_t scene);
+    void enterKeyConfig();
+    bool tickMenuScene(const std::array<NormalizedPadSample,2>&);
+    void tickColorEdit(const std::array<MenuPad,2>&,const std::array<uint32_t,2>& held);
+    void tickGallery(const std::array<MenuPad,2>&,const std::array<uint32_t,2>& held);
+    void tickKeyConfig(const std::array<MenuPad,2>&,const std::array<uint32_t,2>& held);
+    void galleryEvents(const std::vector<GalleryEvent>&);
+    // 177310 reads the key masks 4eaac0 of the save image for each fighter button.
+    void applyKeyMasks();
     void returnToModeMenu();
     void enterOption(OptionScene);
     void tickOption(const std::array<NormalizedPadSample,2>&);

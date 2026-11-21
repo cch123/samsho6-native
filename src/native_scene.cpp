@@ -86,6 +86,8 @@ void NativeScene::paint(const NativeMatch& match,std::span<uint8_t> rgba,const E
     if(match.mikiriWhiteFrame()){std::fill(rgba.begin(),rgba.end(),255);return;}
     const auto& battle=match.battle();
     const auto& gauges=battle.gauges;
+    if(const auto& edited=match.editedPalettes())
+        tiles_.palettes.bindEdited(&edited->tables,&match.system(),{edited->runtime[0],edited->runtime[1]});
     // The super's startup highlights its owner after the queue was submitted.
     // Sample the displayed focus here so both the opponent and referee use
     // the same value seen by the original sprite callback.

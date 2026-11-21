@@ -160,6 +160,7 @@ void NativeMatch::tickPractice(const std::array<NormalizedPadSample,2>& pads) {
     const auto widgetPad=[&](unsigned i){return WidgetPad{physicalPad(pads[i].held),menuPads[i].pressed,menuPads[i].repeat};};
     if(gates[0]&&p.keyConfigOpen) {
         const auto r=keyConfig_.tick({widgetPad(0),widgetPad(1)},*system_,*keyAssets_,false,tones);
+        applyKeyMasks();
         if(r.returnedToPause){sub.keyConfig=5;p.keyConfigOpen=false;}
     }
     if(gates[1]&&p.skillListOpen&&skillList_) {

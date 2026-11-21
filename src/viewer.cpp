@@ -874,6 +874,10 @@ private:
 public:
     explicit VersusScreen(const fs::path& assets):textures_(assets),rage_(assets),identity_(assets),assets_(assets) {}
     const Frame& paint(const ss6::NativeMatch& match,const fs::path& stageDump={},bool includeHudPortraits=false) {
+        if(match.menuScene()!=ss6::NativeMatch::MenuScene::None) {
+            match.rasteriseMenu(result_.rgba);
+            return result_;
+        }
         if(match.title() || match.characterSelect()) {
             const auto& selection=match.characterSelect();
             if(const auto& title=match.title()) {
@@ -922,25 +926,18 @@ public:
         const auto& battle=match.battle();
         const auto& result=battle.resultScreen;
         const auto& menu=battle.consoleMenu;
-        if(match.option()||match.spiritsEdit()) {
-            // The page frame, fonts and background are not ported yet: list
-            // the original text submissions with the debug font.
-            color(r,18,20,34);check(SDL_RenderClear(r));
-            if(match.option()&&match.menuCanvas()) {
-                menuPixels_.assign(640*480*4,0);
-                match.menuCanvas()->rasterise(match.menuDrawList(),menuPixels_);
-                for(size_t i=3;i<menuPixels_.size();i+=4)menuPixels_[i]=255;
-                check(SDL_UpdateTexture(texture,nullptr,menuPixels_.data(),640*4));
-                check(SDL_RenderTexture(r,texture,nullptr,nullptr));
-                // The canvas already applies the scene fade to its colours.
-                present(r,{},paused);
-                return;
-            } else {
-                color(r,235,235,235);text(r,20,220,"SPIRITS EDIT MODE: SCREEN IN DEVELOPMENT");
-                text(r,20,242,"LIGHT: CANCEL / RETURN TO TITLE");
-            }
-            ss6::VersusResultState fade;fade.fadeWhite=true;
-            present(r,fade,paused,match.sceneFade().level());
+        if(match.menuScene()!=ss6::NativeMatch::MenuScene::None) {
+            // The menu pages are 448-line frames. The video output shows them
+            // over the whole 4:3 picture; the scaling belongs to presentation
+            // and leaves the rasterised frame (--dump) untouched.
+            const auto& image=paint(match);
+            check(SDL_UpdateTexture(texture,nullptr,image.rgba.data(),image.width*4));
+            const SDL_FRect lines{0,0,640,448};
+            check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_LINEAR));
+            check(SDL_RenderTexture(r,texture,&lines,nullptr));
+            check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_NEAREST));
+            // The art modules already apply the scene fade to their colours.
+            present(r,{},paused);
             return;
         }
         if(match.title() || match.characterSelect()) {

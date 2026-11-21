@@ -1,4 +1,5 @@
 #include "local_versus.hpp"
+#include "console_versus_session.hpp"
 #include <istream>
 #include <stdexcept>
 
@@ -41,7 +42,7 @@ void LocalVersus::configureControllers(NativeMatch& match) const {
 }
 
 void LocalVersus::restart() {
-    match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
+    match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_,std::nullopt,stage_?pinnedStageBase+stage_:0);
     if(entry_==VersusEntry::Fight)configureControllers(*match_);
     if(entry_==VersusEntry::CharacterSelect)match_->openCharacterSelect(true);
     if(entry_==VersusEntry::Title)match_->openTitle(false);

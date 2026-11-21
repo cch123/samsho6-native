@@ -1,0 +1,341 @@
+Battle scenery tasks (stages 0..11)
+====================================
+
+Source baseline: SLPS_255.59, SHA-256 72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf.
+Status words: OBSERVED = read from the executable or its data; VERIFIED = compared with the
+running original under work/ss6/mips_probe.py; MODEL = an explicit model, not hardware proof.
+
+1. Constructors (OBSERVED)
+--------------------------
+50e080 holds twelve constructor pointers, indexed by stage number:
+
+  stage  ctor     task     textures (slot:bank)             CLUT files   once flag
+  0      1a7690   1a7810   4:32 5:32 6:48 7:48              1, 3         5137b0
+  1      1a7f28   1a8098   4:32 5:32 6:48 7:48              1, 3         5152a8
+  2      1a8b90   1a8cf0   4:32 5:32 6:48 7:48              1, 3         51ba40
+  3      1aa250   1aa3e8   4:32 5:48 6:48 7:48 8:48         1, 2         51c920
+  4      1ab368   1ab518   4:32 5:32 6:48 7:48 8:48         1, 3         5331b0
+  5      1ac1f8   1ac360   4:32 5:32 6:48                   1, 3         544618
+  6      1ae020   1ae1b8   4:32 5:32 6:48 7:48 8:48         1, 3         551248
+  7      1af840   1afa48   4:32 5:32 6:48 7:48              1, 3         56ac38
+  8      1b05b8   1b0738   4:32 5:32 6:48 7:48              1, 3         56f468
+  9      1b15b0   1b1730   4:32 5:48 6:48 7:48              1, 2         570388
+  10     1b2350   1b24e0   4:32 5:32 6:48 7:48 8:48         1, 3         5720a0
+  11     1b3aa8   1b3bb8   4:32 5:48                        1, 2         5733e4
+
+Every constructor: 112670(priority 10, task, 16, tag fa1); 50e048 = shadow color (60000000,
+stage 10: a0000000); 510ce8 = shadow Y skew (0.1) and 510ce4 = shadow X skew (0) where the
+stage uses shadows; 1142d8(slot, "bgNN_k.pvr") per texture; two CLUT files to entries 200 and
+300 with entry zero cleared; 10add8(slot, bank); stage table initializers (some guarded by the
+stage's once flag, so their state survives stage changes and rematches inside one process);
+510cec = stage number; 50e04c = 0. Texture UV scale per slot is the fixed table 5dd448
+(slots 4,5: 1/1024; others 1/512).
+
+2. Common task structure (VERIFIED for stages 0, 1, 2)
+-------------------------------------------------------
+A task draws, in a fixed order: stage-specific backdrop code, a loop over 0x48-byte object
+rows, then stage-specific foreground/floor code. Row layout:
+
+  +00 texture slot     +04 flags          +08 x  +0c y  +10 z      +14 sx  +18 sy
+  +1c piece count      +20 pieces         +24 (helper argument)    +28 animation {state*, table*}
+  +2c prologue type    +30 mesh params    +34 +38 +3c shadow position
+
+Flags select the helper: 1 -> 1a6210, 2 -> 1a66b8 (scaled), 4 -> 1a6460 (mirrored),
+8 -> 1a6b08 (mirrored, scaled), 0x40 -> 1a4e80, 0x80 -> 1a4ee0 (mirrored); 0x10 and others are
+stage specific. 0x100 marks an animated row. Prologue type 1 -> shadow 1a5428, 5 -> 1a5d40,
+6 -> 1a5f68 (mesh shadows). Pieces are 24-byte records {u, v, w, h, flags, -}; record zero is
+the bounding rectangle when a row has more than one piece. Piece flag 0x200 submits that piece
+with alpha mode 0.
+
+Animated rows: state {+0 elapsed 8.8, +4 picture, +2c step, +34 piece counts, +84 piece
+tables per picture}; table records {picture, duration 8.8}, negative picture restarts at record
+zero. The remainder carries but only one record is consumed per visit (src/stage_clock.hpp).
+Two rows may share one state object and then advance it twice per visit.
+
+Render state: 3db900 = vertex color (-1 white), 3db8fc = alpha mode handed to 1149d0 as
+argument 3 (1: halved vertex alpha is used; otherwise alpha is forced to 0x80). 1149d0 copies
+vertex zero's color to the whole strip and halves every channel. 114d88(z) returns
+10000000 - 100 z + counter and increments the counter (3db8f4, reset to 100 by 114e80);
+114dc8(z) returns the same key without incrementing. Helpers that go through 113f98 cull
+against the 640x480 buffer first and only then take an order number; direct 1149d0
+submissions neither cull nor count.
+
+50e04c != 0 hides the stage: helpers return early, the animation clocks still advance.
+
+Shared leaf helpers and their native counterparts (src/stage_draw.hpp, struct Projector):
+
+  1a6210 / 1a6460 / 1a66b8 / 1a6b08   sprites()      command kinds 1, 2
+  1a51b0 / 1a52e8                     sprites()      kinds 1, 2 (single float rectangle)
+  1a4f40 (via 1a5428)                 shadow()       kind 3
+  1a5890 (via 1a5868)                 floor()        kind 4
+  1a5d40 / 1a5f68                     meshShadow()   kind 5
+  1a8768 / 1a88e8 (stage 1 only)      floor(full)    kind 6
+  1a4cb8 / 1a4d98 (via 1a4e80/1a4ee0) plain()        kinds 7, 8
+  1a6f90                              quarter()      kind 10
+  113f98                              rectangle()
+  1a5ad0 / 1a5b38 / 1a5ba0            save / restore / shift the projection (copy the camera)
+
+Kinds 9 and 11.. are private to the stage that exports them.
+
+3. Tooling
+----------
+work/ss6/stage_fixture.py            shared Probe fixture; per-stage config in stage_fixture_NN.py
+work/ss6/extract_combat_stage_n.py   --stage N -> extracted/resources/combat_stage_NN.bin
+                                     (commands per group = prefix, each row, suffix; one variant
+                                     per picture; asserts camera independence with 3 cameras)
+work/ss6/validate_combat_stage_n.py  --stage N [--visits 900]: one continuous run, whole task
+                                     per visit; compares complete sorted 1149d0 lists, order
+                                     counter, library seed, and sampled 640x480 pixels.
+
+Native: src/combat_stage_NN.{hpp,cpp} hold the per-stage state (clocks, state machines) and
+the draw function in original submission order; CombatStageState owns one state per stage;
+CombatStage loads the command file and dispatches. Stage 0/1 keep their earlier files.
+
+4. Stage notes
+--------------
+Stage 2 (ship deck, VERIFIED): 34 rows at 51b0b0. Everything except the deck floor and the
+side walls is drawn under a projection shifted in Y by the swell value returned by 1a9928, an
+eight-state machine (table 51ba48: wait 300 ticks, dip to -5, rise to 100 over 0x1f400, damped
+settle, wait, 105, fall back, damped settle). Rows 14..21 (flags 0x110) are turned rectangles
+(1a95f0) whose angle clock advances 100 x delta, wrapped to 24 bits. Rows 10/11 share a clock.
+Two side walls are direct four-vertex strips with one depth key per edge.
+
+Stage 3 (VERIFIED): constructor 1aa250 writes 510ce8 = 0.2 (652fb4; not the 0.1 of stages 0..2),
+510ce4 = 0, 50e048 = 60000000. Once-guarded (51c920): 1a9f30 only, which creates the 18 picture
+clocks (1a7290 per row with flag 0x100) and converts the duration tables 51cc38..51ceb8 to 8.8
+(1a7350(51cee0, 1): every table in the null-terminated list 51cee0). Run on every load: 1aa118 (9 x 33 floor mesh at 50e110, constants) and
+1a9fa0 (four 1a5c28 shadow meshes at 51d7c8, 5226b8, 5275a8, 52c498, constants). 29 rows at
+51cfa0; there is no single row loop: 1aad60(first, last) is called for [0,3), [3,7), [7,29).
+Task order (3db900 = -1 throughout):
+  mode 0: sky = one 113f98 rectangle, slot 4, Z key 29999, atlas {0,587,720,437} (51bd20),
+          anchored at world (-2048, -, 4000) / (-, 282, 4000), unit = scale(4000)/0.0909091,
+          width x1.2; floor 1a5868(4, 32, 8) (mesh Z 800 .. -217.9, key 10000000 - 100*800);
+  mode 1: rows 0..2 (row 1 has flag 0x20 -> 1a6f90, a quarter-turned six-piece sprite);
+          one 1a4e80 rectangle, slot 4, world (262.5, 60, 600), atlas {328,194,230,71};
+          four direct 4-vertex strips (slot 4, 1149d0 mode 1, no cull, no order number), each
+          built from two 1aaa38 edges (x, y, z, height, u, v): parallax-corrected X as in the
+          sprite helpers, height x artwork scale, v1 = v + height/1024, key 114dc8(z) per edge;
+          edges at Z 600/300, 299/100, 500/600, 200/500;
+          rows 3..6;
+          six chains 1aabc0(x0,y0,z0, x1,y1,z1): 17 links i = 0..16, t = i/16,
+          p = p0*t + p1*(1-t) (MULA/MADD), y += 200*(t-0.5)^2 - 50, link scale =
+          float(double(400/(z+400)) * 1.15) (310be0 = float->double, 310fa0 = double multiply,
+          311510 = double->float), each link 1a55c0(5, 4, 51c1b8, 0) -> 1a6938: three pieces
+          through 113f98 (culled, one order number each; the last piece has flag 0x200 -> mode 0),
+          size = atlas size x link scale x 122ff0(z), anchored at point - 0.5*size, then one
+          height up; all chains start at (390 or 250, 300, 249/300/350) and end at (640,230,0),
+          (690,210,300), (530,160,500), (0,230,0), (-50,210,300), (110,160,500);
+          rows 7..28 (prologue 1 -> 1a5428 shadows; rows 14, 16, 23, 24
+          prologue 6 -> 1a5f68 mesh shadows; all 18 animated rows are 6..10, 12, 14, 16, 18,
+          20..28, one clock each, advanced in row order immediately before the row is drawn).
+1a5d40/1a5f68 scale the mesh shadow height by 510ce8 (1a5df8, 1a6034), not by a constant.
+The task reads delta 46a908, 50e04c, the projection and its own tables only; no RNG, no
+fighter or round state. Hidden visits submit nothing; the clocks still advance. In front of
+the fighters' plane (key >= 10000000): only link 0 of chains 0 and 3 (Z 0, world (640,230)
+and (0,230)), three rectangles each when on screen.
+
+Stage 4 (shore, VERIFIED): 31 rows at 5328f8; the stage code is 1ab078..1abcd4. Constructor
+1ab368 runs 1ab158 (beach floor mesh 50e110, 7 x 33 points, Z 200..-70), 1ab228(0..5) (six sea
+meshes of 9 x 33 points at 5331d0 + n * 2bd4), 1ab0e8 (row clocks; the only call guarded by
+5331b0) and 1ab078 (mesh shadow 12eae38 of row 19). It resets none of the task's state words.
+Task order: 1a5ad0; sway; 1a5ba0(dx, dy); mode 0: sea mesh 12eae30 / 1e00 through 1a5890
+directly (12eae30 += delta, minus b400 once above b3ff); sky 113be0 (slot 6, full width, from
+line 0 down to the projected Y of (0, -10, 25000); its key is the bare order number from
+114d78, behind everything); mode 1: row 0, 1a4cb8 (slot 4, X 1620, Z 10000), rows 1..12;
+1a5b38; mode 0: beach floor 1a5868(5, 32, 6); mode 1: 1a51b0 and 1a52e8 (slot 4, Z 200,
+X 0 and 536, Y scale 1.1); rows 13..30. The row loop is 1ab958(first, end), called three times.
+Sway: when the phase 5331bc is exactly zero the task keeps the old amplitude 6531a8[5331c8]
+in 12eae28, draws index = ((316b90() & 7fff) * 5) >> 15 into 5331c8 and the new amplitude
+(10, 15, 20, 25, 30) into 12eae2c. level 5331cc = from + (to - from) * min(phase, 4000) / 16384;
+dx 5331b8 = to * cos(phase + 3fff); dy 5331b4 = to * sin(2 * phase) + level; then
+5331bc = (5331bc + (delta & ffffff)) mod 10000. Sky and 1a4cb8 are skipped by the task itself
+when 50e04c is set; RNG and all clocks still run. Row prologue type 2 (row 27, 1abbc0)
+multiplies 510ce4/510ce8 by row words +40/+44 (1.0, 3.0) around its 1a5428 shadow and restores
+them. Animation records whose picture has bit 0x100 (row 30) skip the row for that record.
+19 animated rows, one clock each. No input besides 46a908, 50e04c, the projection and 316b90.
+
+Stage 5 (VERIFIED, 900 visits): constructor 1ac1f8 writes 510ce8 = 0.2 (not 0.1), 50e048 =
+60000000, 510ce4 = 0; three textures (4:32 5:32 6:48); runs 1abdd0 (floor mesh 50e110, 33 x 9
+vertices, Z 1500..-100) and 1abf20 (two 5 x 5 world meshes 544620 / 5471f8 built from atlas
+rectangles 543958[0] / 543a78[0]; it also fills 12f0ce8 through 1acf48, which the task never
+reads) on every load, 1abcd8 (five 1a7290 clocks, 1a7350 duration scaling of 544430) only while
+544618 is zero, and 1abd80 (descriptor 12f14c0; drift X 12f14c8 = 0, speed 12f14d4 = -1) on
+every load. Six rows at 544468; the task 1ac360 has no row loop: 1ad298(first, last) draws rows
+0..1 and later rows 2..5 (frame clocks 12f1170/1244/1318/13ec with timelines
+544318/544330/544350/544380; rows 4 and 5 have shadow prologue 1). The task saves 50e048,
+writes 90000000 for its own duration (shadows of rows 4, 5 and of the last sprite use it) and
+restores the saved word at 1acd6c. Submission order: backdrop rectangle 543df0 through 113f98
+(alpha mode 0, Z key 30000); floor 1a5868(4, 32, 8); rows 0, 1; then with alpha mode 1 four
+receding walls, each two 1ace00 edges (parallax-corrected X, top = base - height x artwork
+scale, key 114dc8(z)): 543be0 and 543c40 (keys replaced by 114dc8(1200) / 114dc8(1300), pieces
+through 1af1f8 on slot 5), 543d00 and 543cb8 (same key replacement, one direct four-vertex
+1149d0 strip each); two 1ad0f0 meshes (key 114e40(950) without the order counter, color
+117288(3db900), one 114e68 order number per mesh); walls 5438e0 and 543928 keeping their
+per-edge keys (1af1f8 on slot 4; 1af1f8 interpolates X and the key along the top edge only and
+gives each piece one flat key; piece flag 0x200 -> alpha mode 0); sprite 544300 through 1a6210
+at (drift + 320, 305, 1550), where drift += -1 x delta / 256 per visit (delta converted as an
+unsigned word) and a value below -1100 becomes 1100; rows 2..5; finally the clock 12f1594
+(timeline 5443b0, advanced by the task at 1acc6c; pictures 0x100/0x101 take their piece from
+the second descriptor 12f1668) drawn as shadow 1a5428 + 1a6210 at (345, 13.7, 351). With
+50e04c set nothing is submitted; the drift and all five clocks still advance. No RNG use. The
+global fade read by 117288 (3ebf18 bit 1, 3ec730, 3ec734) is not driven by the validator, as
+for the shared floor helper.
+
+Stage 6 (constructor 1ae020, task 1ae1b8; code 1ad580..1af510; VERIFIED): 26 rows at 550af8.
+Initializers: 1ad838 (every load) builds eight 9x5-vertex floor meshes at 551250, 553e28,
+556a00, 5595d8, 55c1b0, 55ed88, 561960, 564538 (X -448..1088 in 48-unit columns, Z bands
+1200..560 and 560..-80 in 160-unit rows, Y 0; depth keys 9880000 and 9944000); 1ad748
+(guarded by 551248) creates the frame-clock descriptors of the 22 animated rows and of two
+banners (pointer pairs 550ae8, 550af0; shared timeline 5509d0)
+and runs 1a7350(5509f0, 1), which multiplies the durations of seventeen timelines by 256;
+1ad580 (every load) fills five mesh-shadow tables through 1a5c28. Submission order: sky
+(113f98, slot 4, Z key 29999, alpha mode 0); the eight floor meshes through 1a5890 with vertex
+color ffc0c0c0 and alpha mode 0; one scaled and six plain multi-piece sprites of slot 5 (Z
+1001..1003); a static banner (1aedb8 x2 + 1af1f8, slot 5, 30 pieces of 54b888, key from the
+fixed Z 980); two animated banners and one static banner of slot 8 (1aeef8 x2 + 1af1f8; piece
+tables per picture, 54ff80 static); five lines of 21 lanterns (1af030 -> 1a54e8, slot 5,
+rectangle 54be10); the row loop. Rows pass a piece count of one to the sprite helpers, so each
+row is a single rectangle; prologue types 1 (shadow 1a5428), 5 and 6 (mesh shadows) occur.
+1af1f8 maps every piece of a picture into the quadrilateral of two projected vertical edges
+(X from the top side only, Y along both sides, one depth key per piece taken at its left
+border from 114dc8, i.e. without a new order number) and submits to 1149d0 directly, without
+the screen cull. 1af030 returns early while projection Y (4a2a5c) + 480 < line Y x scale(0);
+otherwise it places 21 centered copies at t = i x 0.05 (constant bits 3d4ccccc) between its end
+points with a sag of 170 (t - 0.5)^2 - 50 and size 2.2 x 400 / (Z + 400). All 24 clocks advance
+on hidden visits; nothing is submitted then. The task reads no state other than 46a908,
+50e04c, the projection, 510cec (floor cull margin 50e050[stage] = 200), the shadow globals and
+the order counter, draws no random numbers and creates nothing. No row or strip of this stage
+has a depth key of 10000000 or more except lantern copies near the Z -173..-268 ends of the
+lines (world X above 900). A double-precision scan of the published camera range (X 160..480,
+Y 120..480, width 320..444) found their left edge at 898 or more, so 113f98 culls them (MODEL).
+
+Stage 7 (VERIFIED): constructor 1af840 sets 510ce8 = 0.2 (6536bc), 510ce4 = 0, 50e048 =
+60000000. Once flag 56ac38 guards 1af510 (1a7290 descriptors of the animated rows, 1a7350
+scaling of their durations to 8.8) and 1af7f0 (picture descriptors 131ad74 / 131ae48 of the two
+hoppers); 1af698 (floor mesh 50e110) and 1af580 (three 1a5c28 shadow meshes 130bad8, 13109c8,
+13158b8) run on every load, as does the seeding of the hoppers (1af99c..1afa34). Task 1afa48,
+in submission order: alpha mode 0; atlas rectangle 567110 {0,0,1023,586} of slot 4 through
+113f98 at Z 3000, depth argument 30000, X -2080, bottom edge Y 201, stretch scale(3000) /
+0.11764705 (skipped when 50e04c is set); floor 1a5868(5, 32, 4); alpha mode 1; 1a6d90(slot 5,
+11 pieces 568f10) = a picture stretched between the projected points (-1090, 638.906) and
+(1730, 0) at Z 2000, each piece through 113f98 with depth argument 30000 - Z (third 123020
+output, 5df4dc) and piece flag 0x200 selecting alpha mode 0; 1afef0(0, 17) = the 17 rows at
+56b168, all flag 1 (1a6210), rows 7, 8, 10, 12, 13, 14, 16 animated; prologue 1 = shadow
+1a5428, 6 = mesh shadow 1a5f68 (rows 8..10), 2 = shadow 1a5428 with 510ce4 / 510ce8
+temporarily multiplied by row +40 / +44 (row 7: 1.0 / 1.5). 1a5f68 reads both skews. After the
+rows the task animates and draws two hoppers, records 130b920 (A: X 409.66, Z 140) and 130b9f4
+(B: sprite X 497.23, shadow X 608, Z 250): wait timer 130bad0 / 130bad4 += delta while below
+0x1400 (picture 3 while timer / 0xa00 == 0, else 0); otherwise flight clock (+0) += delta,
+t = clock / 256, height = 3 t - (0.1 t) t (MULA / MSUB), stored to 130bac8 / 130bacc only when
+delta != 0, picture 2 if the computed height < 0 else 1, and a stored height < 0 clears height,
+timer and clock. Seeds: A timer 0xa00 clock 0, B timer 0x1400 clock 0xf00. A draws 1a5428
+(shadow at Z + 1) then 1a6210 at Y + height; B draws 1a4f40 directly, then 1a6210. The task
+reads only 46a908, 50e04c and the projection; it draws no random numbers and creates no tasks.
+Every strip has Z >= 140, i.e. lies behind the fighters' plane. 1a6f90 is not reached (no row
+has flag 0x20).
+
+Stage 8 (VERIFIED, 900 visits): 19 rows at 56ef10 drawn by 1b10a0(first, end), called for rows
+0..2 and 3..18 (the neighbouring loop 1afef0, which scales 510ce4/510ce8 per row, reads 56b168
+and belongs to stage 7; stage 8 leaves the skew at 0 / 0.1). Constructor tail: 1b0500 (floor
+mesh 50e110, Z 400 - 120 row), 1b0490 (row clocks, the only routine guarded by 56f468), 1b0298
+(seven descriptors 131fee8 + d4 n, zero-filled by 1a7290 on every load), 1b1030 (mesh shadow
+131aff8 of row 18, prologue type 6). Task order: sky rectangle (113f98, atlas 5 rect 56e8b0 =
+243,129,781,442, anchor (-1103, 376) on Z 2001, key Z 30000, alpha mode 0), floor 1a5868(5,32,4)
+(mode 0), rows 0..2, the seven objects, rows 3..18 (mode 1). Animated rows 5, 6, 13..18 use the
+common clock. Objects, all atlas 5:
+  0 (Z 500, 1a6210): X = 320 - 241/4 + A sin(clock / delta); clock += delta << 8, wraps at
+    1000000 and then rerolls A = {10,12,15,17,20}[(rand & 7fff) 5 >> 15] (131aff0). Every 50th
+    visit (56f470, never reset) Y step = (1 / ((rand & 7fff) 10 >> 15) + 5) + 0.3) delta / 256;
+    Y += step every visit, above 1000 it restarts at -400. With delta 0 the quotient is not
+    finite: MODEL (PCSX2 DIV_S/CVT_W) largest float -> 7fffffff -> angle unit ffff.
+  1, 2 (Z 510, 1a6210): X = c + A cos(angle + 3fff), Y = c' + A sin(2 angle), centers (500, 82)
+    and (160, 160); angle (56f47c / 56f488, never reset) += (delta << 7) >> 8, wraps at 10000
+    and rerolls A = {10,15,20,25,30}[...] (56f478 / 56f484).
+  3, 4 (Z 550 / 560, 1a6210): X += step delta / 256, step -0.04 negated at the limits 100..300
+    and 50..250; Y 260 / 200.
+  5 (Z 620, 1a6f90): X -= 0.5 delta / 256; below -1000 it restarts at 1320; Y 455.
+  6 (Z 700, 1a6f90): X -= 0.3 per visit (delta is not read); below -830 restarts at 1150; Y 560.
+Library RNG draws per visit, in order: object 0 amplitude, object 0 step, object 1, object 2
+amplitude; they also happen on hidden visits. No game state other than 46a908, 50e04c, the
+projection and the library RNG is read; nothing outside the stage's own tables is written.
+1a6f90 (quarter) honours 50e04c and is now VERIFIED for single-piece sprites.
+
+Stage 9 (VERIFIED, 900 visits): 16 rows at 56ff08, drawn by the stage's own row routine 1b1e58
+in two runs (rows 0..7, rows 8..15). Constructor 1b15b0 runs 1b14f0 (floor mesh 50e110,
+5 x 33 vertices), 1b13b8 (the only initializer guarded by 570388: 1a7290 for row 2 and the
+one-time duration scaling 1a7350(56fec0, 1)), 1b1428 (six object states 132ae44 + n * d4 and
+handle flags 1320f7c/84/8c = 1) and 1b1d90 (two shadow meshes 1320f90 and 1325e80 via 1a5c28).
+Submission order of task 1b1730: (a) alpha mode 0: 113be0 fills (0,0)-(640,Y) from slot 5,
+texture rows (394-Y)..394, where Y is the projected screen Y of world (0,0,10000) from 123020;
+its depth key is the bare order number (114d78: 100.0, behind everything) and it takes one order
+number; skipped when 50e04c is set. (b) floor 1a5868(5, 32, 4), Z 1000; 1a5890 always submits
+with alpha mode 0 and reads its cull margin from 50e050[510cec] (100 for stages 9..11, 200 for
+0..8). (c) alpha mode 1: rows 0..7; 1a4e80 and 1a4ee0 (slot 4, rectangle 360,557,129,64 at
+X 257.9 / 317.8, Y 479.5, Z 999; the rectangle origin is read from row 6's piece table 56faa8);
+rows 8..15. Rows 12..15 have prologue type 1 (shadow 1a5428). Row 2 (flags 0x101, slot 6) is the
+only animated row: pictures 0,1,2,3, 0xc00 each (table 56fe38). (d) three objects with inline
+clocks (states 132ae44, 132afec, 132b194; all use table 56fe60 = pictures 0,1,2,1,0, 0xc00
+each): object 0 = shadow 1a5428 + 1a6210 in slot 6 at (283.45, 58, 690); objects 1 and 2 = mesh
+shadow 1a5f68 + 1a6210 in slot 7 at (220, 0, 575) and (361.5, 0, 575). The inline clock differs
+from the row clock: when a table ends the handle flag is set and the clock is evaluated again in
+the same visit. Objects 1 and 2 restart with elapsed = 0. Object 0 (state 132ae44) keeps the
+remainder and draws the library RNG 316b90: ((r & 7fff) * 5) >> 15 < 3 steps back to the last
+record (picture 0 for another 0xc00), otherwise restarts at record zero; a long delta can draw
+more than once per visit. The draws happen on hidden visits too. The second descriptor of each
+handle (states 132af18, 132b0c0, 132b268, table 56fe90 = 0,1,2,1,2) is initialized but the task
+only ever stores the first descriptor into a handle (OBSERVED: no other writer in 1b13b8..1b2170).
+A reload clears the three object clocks (1b1428) and keeps row 2's clock. No row uses flags 0x20
+(1a6f90) or prologue types 5/6, so quarter() remains unverified by this stage. All geometry has
+Z >= 550: nothing lies in front of the fighters' plane. Shadows use 50e048 = 60000000 and
+510ce4 = 0, 510ce8 = 0.1 as written by the constructor; the task does not change them.
+
+Stage 10 (VERIFIED, 900 visits): constructor 1b2350 runs 1b2290 (floor mesh 50e110 from the five
+Z values at 572938: 1000, 460, 180, 60, -80) on every load and 1b2170 once (flag 5720a0):
+1a7290 for the three animated rows and the eight private descriptors 132b5bc + d4 k, then
+1a7350(572360, 1), which multiplies the tick counts of the nine timelines 5720a8..572310 by
+256. No clock is reset by a reload. The task 1b24e0 has no inline row loop. In submission
+order: sky rectangle (113f98, piece 570af0, Z key 30000, alpha mode 0, two anchors at Z 2001,
+width x 1.2); fourteen blinking rectangles on slot 6 (records 571498, stride dc, Z 1999,
+1a4e80): 57294c += delta, piece index = (57294c / 600h) % count, index 0 is not drawn, four
+records have count 0; 57294c is written by nothing else and never reset; floor 1a5868(5, 32, 4)
+with alpha mode 0; eight clocks bound at 5723a0 whose picture 256 draws nothing: clocks 0..3
+are perspective quads (1b3398: four 123020 points, far edge at Z 2000, near edge at Z 1001 or
+1201, order number from 114d88 without screen cull, alpha mode 1), clocks 4, 5, 7 one 1a4e80
+rectangle, clock 6 two 1a4e80/1a4ee0 mirrored pairs and one rectangle narrowed by 140 texels;
+1b3588(0, 7) (rows 5723e0, 19 rows); two fixed rectangles 1a4e80/1a4ee0 (slot 6, Z 999);
+1b3588(7, 19). 1b3588 is the common row dispatcher plus prologues 2 and 4, which multiply
+510ce4/510ce8 by the row's floats at +40/+44 around the shadow call (row 16: 1a5428 with Y
+skew 0.1 x 3; row 18: 1a5488 -> 1a5078 with 0.1 x 10; 1a5078 is 1a4f40 with the vertex pairs
+exchanged). Rows 12..15 and 17 use prologue 1. Rows 16..18 share timeline 5720a8 but own
+descriptors 132b340/132b414/132b4e8. The task ends with 510ce4 = 0, 510ce8 = 0.1 on every
+visit, hidden or not. Shadow color 50e048 = a0000000. The floor cull margin of 1a5890 is the
+table 50e050 indexed by 510cec: 100 for stages 9..11, 200 otherwise. Inputs: delta 46a908 and
+hide flag 50e04c only; no RNG. No row has flag 0x20, so 1a6f90 is not reached. Every key is
+behind the fighters' plane (smallest row Z 470; floor key from Z 1000).
+
+Stage 11 (VERIFIED): the scenery code is 1b39a8..1b4134 only. 1b4138 (creates task 1b4228,
+priority 20, tag fa2) and everything up to 1b4d90 is the referee, created by the battle owner
+at 13972c and cancelled at 1397b4, not by this constructor; it is the stage-event module
+(src/stage_event.*, native_match.cpp). The constructor runs 1b39a8 (floor mesh 50e110 from
+573344 = 348 and 653b00..), 1b3e20 and 1b3ee0 on EVERY load; 5733e4 is written 1 but never
+tested. It does not write the shadow skews 510ce4/510ce8. There is no 0x48-byte row table.
+Task order: (1) mode 0, 113f98 rectangle of slot 4, atlas {0,0,1024,599} (572950), anchored at
+world Z 700 (x = (320 - 1024*0.25 - 320)*2.75 + 320, y anchor 38, scale/0.3636 horizontally,
+times 1.2 vertically), queued at Z 30000; (2) floor 1a5868(5, 32, 4), cull margin 50e050[11] =
+100; (3) mode 1, 1a6210(5, 15 pieces at 5731d8) at (64, 17, 401); (4) seven 0x9c-byte objects
+at 132bc60 (home positions and piece lists from 573358, all at Z 399), each updated by 1b3fb0
+and drawn by 1a6210 on slot 4 with vertex color alpha<<24 | ffffff. 1b3ee0 groups an object's
+pieces by flag word (less 0x200) into up to ten pictures (+74 pointers, +4c counts); three
+exist. 1b3fb0 per visit: y = home y + amplitude(+24) * sine(phase +34); phase += step(+38),
+on bit 16: phase &= ffff, amplitude = 5733e8[r] {5,10,15,20,25}, step = 573400[r]
+{64,72,80,88,96}; picture(+28) = clock(+30)/0xc00, clock += 46a908, minus 0x2400 once if
+>= 0x2400; alpha(+44) = trunc(sine(fade +3c) * 255), fade += step(+40), above 0x6500: fade =
+0x1500, step = 573418[r] {64..96}. r = ((316b90() & 7fff) * 5) >> 15. 1b3e20 clears the
+objects and draws fade step then phase step for each (14 library draws per constructor run);
+amplitude starts at zero. Bob and fade advance per visit, independent of 46a908, also while
+hidden. A step above 0x2400 selects empty pictures 3..9 (nothing drawn; verified for 3..5);
+past 9 the task would read neighbouring object fields (not modeled, needs 46a908 > 0x5400
+or repeated steps > 0x2400). No strip is in front of the fighters' plane.
+
+Depth MODEL: strips are painted in stable order of their first vertex's key (painter's
+algorithm). A strip with per-vertex keys is not depth-interpolated per pixel.

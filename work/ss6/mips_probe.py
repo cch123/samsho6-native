@@ -291,6 +291,14 @@ class Probe:
                     self.floats[sa]=0x7fffffff  # ps2autotests ee_fpu/muldiv.expected
                 elif self.finite_model and rs==16 and fn==0x24 and self.floats[rd]==0x7fffffff:
                     self.floats[sa]=0x7fffffff  # ps2autotests ee_fpu/convert.expected
+                # MODEL (PCSX2 pcsx2/FPU.cpp DIV_S, CVT_W): a nonzero dividend over
+                # zero gives the signed largest finite value, and a conversion
+                # beyond 32 bits saturates. Stage 8 (1b0944/1b094c) divides its
+                # sway clock by a zero delta 46a908 on frozen frames.
+                elif self.finite_model and rs==16 and fn==3 and not self.floats[rt]&0x7fffffff:
+                    self.floats[sa]=((self.floats[rd]^self.floats[rt])&0x80000000)|0x7f7fffff
+                elif self.finite_model and rs==16 and fn==0x24 and ((self.floats[rd]>>23)&255)>=0x9e:
+                    self.floats[sa]=0x80000000 if self.floats[rd]>>31 else 0x7fffffff
                 elif rs == 16 and fn in (0,1,2,3,6,7,0x24,0x32,0x34,0x36):
                     left = self.float_value(rd)
                     if fn == 6: self.floats[sa] = self.floats[rd]

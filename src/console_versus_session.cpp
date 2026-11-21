@@ -36,6 +36,9 @@ int selectConsoleVersusStage(GameRandom& random,int selectedStage) {
 
     // 139be8 consumes this draw before asking whether a stage was pinned.
     const int randomStage=random.bounded(10);
+    // Selector cell 10 is RANDOM. A directly started fight pins any of the
+    // twelve stages, including 10 and 11, as pinnedStageBase + stage.
+    if(selectedStage>=pinnedStageBase)return selectedStage-pinnedStageBase;
     return selectedStage==10?randomStage:selectedStage;
 }
 }

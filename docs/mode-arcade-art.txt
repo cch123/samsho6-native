@@ -1,0 +1,242 @@
+Arcade overlay, Continue and Game Over drawing (SLPS-25559)
+==========================================================
+
+Scope: the draw routines of the arcade score digits (1bc098), the free-seat legend (1ba1b0),
+the state-9 tally (1c8a98 and the 113028 texts of 1c7f08), Continue (137d20) and Game Over
+(138af0). Logic is in docs/mode-arcade-tally.txt and docs/mode-arcade-flow.txt; where this file
+disagrees with their drawing notes, this file wins (section 9).
+
+Evidence classes
+  OBSERVED   read from the disassembly; [V] = compared with the original routine executed in
+             Probe by work/ss6/validate_arcade_art.py (outputs/ss6-feasibility/
+             arcade_art_validation.json): identical submission-queue entries (exact float bits)
+             and identical 640x480 frames under the reference painter of validate_menu_canvas.py.
+  INFERRED   deduced from use; not executed.
+  UNKNOWN    not read.
+Native port: src/arcade_art.hpp/.cpp. Tables: work/ss6/extract_arcade_art.py -> arcade_art.bin
+(700 bytes), manifest outputs/ss6-feasibility/arcade_art_tables.json; the tally, score and
+legend layout words come from arcade_tally.bin.
+
+
+1  Submitters used by these routines (OBSERVED [V])
+---------------------------------------------------
+
+117de8(record, flags, colour, mirror; x, y, z, w, h)      record = {u, v, w, h, +0x10, slot}
+    slot <= 0 or flags & 0x100: nothing. 3db8fc = (flags & 0x200) ? 0 : 1.
+    10add8(slot, flags & ~0x200): for a 4-bit sheet (slot table type 0x14) the argument is the
+    CLUT bank; for an 8-bit sheet (type 0x13) the bank is flags / 16 when flags & 0xf != 0.
+    colour != 0: 3db900 = colour; colour == 0: additive latch 1142b8 / 1142c8 around the call.
+    Then 113f98 (mirror: x + w, -w).
+113f98(slot; x, y, z, w, h, u, v, uw, vh)
+    114e98 window cull, 117288 fade of 3db900 (skipped for slot 0x28), 114d88 depth with the
+    tie-break counter 3db8f4, 1149d0.
+1149d0(vertices, 4, slot, blend)
+    Returns without submitting when 3ec73c != 0 (fade complete) unless slot == 0x28 or word
+    34541c != 0: the free-seat legend stays visible over a completed fade (INFERRED purpose).
+    slot < 0x2c -> 108118, else 1085e0.
+108118  (10849c..108514, 3db908 != 1): each vertex u, v is scaled to texels and then clamped
+    to width-1 / height-1. A record that reaches the sheet edge (Game Over title, v 380 + 132)
+    is submitted with far coordinate 511.                                             [V]
+114118(slot; x0, y0, x1, y1, x2, y2, x3, y3; stack z, u, v, uw, vh)
+    Four explicit corners with texels (u,v), (u,v+vh), (u+uw,v), (u+uw,v+vh); 114f20 cull,
+    114d88 depth, colour = 3db900 WITHOUT the 117288 fade, blend 3db8fc, 1149d0.     [V]
+    (114f20 was not read; the panel is never culled. The native port tests the four corners
+    against the window like 114e98. INFERRED.)
+1148f0(colour; x, y, z, w, h)
+    Float form of the flat rectangle 1145c0: 114e98 cull, 114d88 depth, 117288 fade, 114c10
+    with a2 = 3db8fc. Queue colour as 1145c0 (alpha halved, RGB through BRIGHT).      [V]
+1b8e28(slot ignored; x, y, z, w, h, u, v, uw, vh; stack vh)
+    109e00 (word 11e7920 = 1), 113f98 with slot forced to 0x28, 109e10 (word = 0). The flag
+    only changes the upload-list argument of 10af70 inside 108118 (not a pixel state).
+113028(text, x, y, colour)                                                           [V]
+    Per byte: 0x0a -> x = start, y += 0x18; byte < 0x80 -> 1130f8(ch, x, y, colour), x += 12;
+    otherwise a two-byte code -> 1131d8, x += 24.
+    1130f8: skipped when the reveal limit 3d3aa0 >= 0 has been reached (counter 3d3ab0) or
+    when 3ec73c != 0. Text depth 348a8c = trunc(114e40(3d3aac)) for the call (114e40 = the
+    depth conversion without tie-break; 3d3aac = -200 unless 113828 changed it), then
+    10a010(ch, x, y, r = colour>>16, g = colour>>8, b = colour, alpha = colour>>24): the
+    12x24 half-width glyph of 109f08 (GOTH_H sheet). Spaces submit nothing.
+    The tally passes 0xff000000: black glyphs, full alpha. 112f30(0, 0xffffff) leaves the
+    16-entry glyph CLUT 348a48 at its default values.
+1132c0(x, y, colour, format, ...) -> 113330 -> 1133d8: the 15x15 obj0_16 font at depth -700
+    (5dd420), gated by word 3d2e50 == 0 and !(3d3aa8 & 1). The ELF's initial data has
+    3d3aa8 = 1 (and 3d2e50 = 0), so the seven calls in the Continue handler
+    (137afc..137b9c) and the three in the Game Over handler (13890c..13894c) submit nothing.
+    INFERRED: debug read-outs. No writer of 3d3aa8 exists in 105000..118000; writers elsewhere
+    were not searched (UNKNOWN). Not ported.
+
+Sheets (slot table 3a9680 + 40*slot):
+  1     obj0_16.tex      512x512, 8-bit, appended 16x16 CLUT (CSM1 order)   panel pieces
+  0x0a  obj2_16.tex      512x512, 8-bit, appended CLUT (CSM1 order)         score digits
+  0x0c  font_otherscene16.tex  512x512, 4-bit (low nibble first); CLUT bank b = entries
+        16*b.. of the resident obj0 palette (11e7980 + 64*b after 116588, so a running fade
+        interpolates it in 5-bit RGB); 113890 clears entry 0 of every bank    Continue, Game Over
+  0x28  font_coin.tex    128x128, 8-bit, appended CLUT in file order (1099f0) legend
+The GS texture page is shared (TBP 1a40); the CLUT page tells the slots apart: 3119 slot 1,
+311d slot 0xa, 3189 slot 0x28, 3081 + bank slot 0xc.
+
+
+2  Arcade score digits (OBSERVED [V]; gate as a tail slice)
+-----------------------------------------------------------
+
+HUD task 1bab38, 1bac1c..1bac4c: if (word 582240 != 5 && (word 58223c == 1 || == 2)) 1bc098().
+(582240 / 58223c are the HUD's copies of gameData+0xa0 / +0.)
+1bc098 -> 1ba768(x = word[58224c + 4*mode] (115 / 571), y = 0x10, depth = -0x12d,
+                 value = gameData+0x90, pitch = record[0].w = 10, flag = 0, records 4c5ae8,
+                 flags 0)
+1ba768: n = 1b9838(value); for i in 0..n-1: d = (value / 10^i) % 10 (32-bit product for 10^i,
+    truncating division); 117de8(&records[d], 0, 0xffffffff, 0; x, y, depth, w, h); x -= pitch.
+    Digit records (181 + 11*d, 494, 10, 12), slot 0x0a.
+Negative scores index the nine records in front of the table (4c5a10..4c5ad0, all slot 0x0a):
+    d = -9..-5: (1, 130 + 17*(d+9), 208, 16)   d = -4: (230, 1, 82, 65)   d = -3: (230, 67, 82, 65)
+    d = -2: (449, 75, 62, 58)                  d = -1: (163, 215, 62, 24)
+    i.e. unrelated HUD pictures drawn at the digit positions; extracted, not typed.     [V]
+1b9838 returns 31 for |value| >= 10^9: 10^i wraps in 32 bits and the surplus "digits" lie left
+of the screen or are garbage records; both sides agree for the full int32 range tested.  [V]
+
+
+3  Free-seat legend (OBSERVED [V])
+----------------------------------
+
+1ba1b0: runs only when word 582208 != 0. mode == 0 -> 1ba228; else sub-mode != 5 -> 1ba448.
+The blink clock 1ba148 advances once per call of 1ba228 / 1ba448 and nothing is drawn while it
+returns 0. Every piece: 3db8fc = 1, 3db900 = -1, 1b8e28 (slot 0x28) at depth -600.
+1ba448, seat s drawn for s == 1 in mode 1 and s == 0 in mode 2:
+    gameData+0x2c == 1 || gameData+0x30 == 1: 4c3f10[0] (1,105,124,12) at (0x10,0x10) /
+        (0x1e1,0x10)
+    otherwise: 1b9880 submits 4c3ec8[0] once at the seat position (0x10,0x10) / (0x1b0,0x10),
+        then the loop submits 4c3ec8[0..2] = (1,66,64,12) (60,92,64,12) (1,79,73,12) from the
+        same x, advancing by each width. The first piece is therefore submitted twice.
+    The branch between "draw" and "skip" tests two stack bytes that the empty hooks 110ae8 /
+    110af0 never write. Probe's zeroed stack selects "draw"; the residue on the console
+    stack is UNKNOWN.
+1ba228 (mode 0): latched -> 4c3f10[0] at (0xf9,0x140); otherwise the three pieces from
+    (0xe0,0x140) (no duplicate).
+Mode 3 and others draw nothing but still advance the clock (sub-mode != 5).
+
+
+4  Tally panel and texts (OBSERVED [V], 48 scenarios, every tick)
+-----------------------------------------------------------------
+
+1c8a98 = 1c8bf8, 1c8df0, 1c9040, 1c9258, 1c95a0, then the labels. Floats F[i] = 655510 + 4*i,
+pieces P[k] = 4c5110[k] (16x16, slot 1). 247 queue entries, depth -25, in this order:
+ top 1c8bf8 (117de8, flags = 5 = the piece's +0x10 word, colour -1), y F1 = 112:
+    P0 at F0 = 168; x = F3 = 184: 8 x (P1 at x; x += F4); P2 at x (312); 8 x (x += F4; P1 at x);
+    x += F4; P0 mirrored at x (456).                                                 19 entries
+ left 1c8df0 (3db8fc = 1, 3db900 = -1; 114118), x F6..F8 = 168..184, y from F5 = 128 step F7:
+    per piece: corners (x0,y'), (x1,y'), (x0,y), (x1,y) with y' = y + 16, texels
+    (u, v, w - F10, h): the piece is turned a quarter and its u span is one texel short.
+    5 x P1, P2, 5 x P1.                                                              11 entries
+ right 1c9040 (same globals), x F12 = 472 .. F13 = 456, y from F11 = 128 step F14:
+    corners (472,y), (456,y), (472,y'), (456,y'), full texel span. 5 x P1, P2, 5 x P1. 11 entries
+ bottom 1c9258 (114118, globals as left by 1c9040), y F18 = 320 .. F20 = 304, inset F16 = 1 in
+    both texel directions:
+    P0: corners (168,320), (184,320), (168,304), (184,304);
+    then x = F19 = 184, step F22 = 16, each piece with corners (x+16,320), (x+16,304),
+    (x,320), (x,304): 8 x P1, P2, 8 x P1, P0.                                        19 entries
+ interior 1c95a0 (117de8, flags 0, colour 0xa0ffffff), rows r = 0..10 at y = r*F25 + F26:
+    9 tiles at x = i*F23 + F24 (184 + 32 i) with P4 on even rows / P3 on odd rows, then
+    8 tiles at x = i*F23 + F28 (200 + 32 i) with the other piece.                   187 entries
+ texts: 113028 with colour 0xff000000 exactly as ArcadeTallyDraw::texts lists them (labels,
+    value rows of the current phase, TOTAL); x 0xd8 for labels, right-aligned values at
+    0x1a8 - 12 * columns; one queue entry per non-space character.
+The panel does not depend on the tally state; it is submitted on paused ticks too.
+
+
+5  Continue 137d20(frame) (OBSERVED [V], every remaining value)
+---------------------------------------------------------------
+
+137d40: 3db900 = -1, 3db8fc = 1; 117de8(4c3bc8 = (1,271,381,109) slot 0xc, flags 1 = CLUT
+    bank 1, -1, 0; x 118, y 88, z -297 (5e1618..5e1620)).
+137db8: R = 127f68(); nothing when R == 0. seconds = R / 60, phase = R % 60.
+    Digit records 4c3ad8[d] = (70*(d%7), 134*(d/7), 70, 134) slot 0xc, flags 1; every digit
+    uses the size of record 0. Depth -298 (5e162c) for both digits.
+    tens (only when seconds >= 10), digit R / 600:
+        phase >= 0x15: at (370, 220) (5e1624, 5e1628), colour -1.
+        phase <  0x15: scaled, column X = 0x172.
+    ones, digit seconds % 10:
+        phase >= 0x15: at (0x1b8, 0xdc), colour (trunc(5e1638 = 255) << 24) | 0xffffff.
+        phase <  0x15: scaled, column X = 0x1b8.
+    scaled variant, t = 20 - phase over 20 steps (1382a8, section 7):
+        w' = cubic(t; w, w >> 4, 10w, 10w)     h' = cubic(t; h, 2h, 0, 0)
+        x = X - ((w' - w) >> 1)                y = 0xdc - ((h' - h) >> 1)
+        alpha = trunc(220 - (20 - phase) * 11)  (5e1628, 5e1630, 5e1634)
+        colour = (alpha << 24) | 0xffffff
+      phase 20 is the unscaled digit at alpha 220, phase 0 a 700x0 quad (nothing visible).
+    Order: title, tens, ones. Digits wider than the window are submitted unclipped.
+    The per-second sound (-1, 0xf) at phase 0x3b is in the logic port (ArcadeContinue).
+Not drawn by 137d20: the stage (1a4a98 at entry) and the loser object, created at entry with
+    11d570(object, seat, 0x140, 0, 0), 11d908(object, 0x700, 1, 0), object+0x20 = colour and
+    advanced after the draw by 11d6c8 / 11d868 / 11d730 (object queue 479250).
+
+
+6  Game Over 138af0(frame) (OBSERVED [V], frames 0..0x12d, gameData+0x34 = 0 / 1)
+---------------------------------------------------------------------------------
+
+138b50: gameData+0x34 != 0: 1148f0(0xff000000; 0, 0, z 29990, 640, 480) - a black backdrop at
+    the far end of the depth order (5e18a8..5e18b0).
+138ba8: frame >= 0x88: 3db900 = -1, 3db8fc = 1; alpha = frame - 0x88 < 60 ?
+    trunc((frame - 0x88) * 4.25) : 255; 117de8(4c3be0 = (211,136,206,58) slot 0xc, flags 1,
+    (alpha << 24) | 0xffffff, 0; 204, 260, z -10) (5e18b4..5e18c0).
+138c70: frame >= 0x1e, n = frame - 0x1e, record 4c3bf8 = (0,380,470,132) slot 0xc, flags 0
+    (CLUT bank 0), colour -1, z -9 (5e1908):
+        n < 0x32: w' = cubic(n / 50; 5w, 5w, 5w, w), h' likewise (138eb0);
+                  x = 0x48 - ((w' - w) >> 1), y = 0x9a - ((h' - h) >> 1)
+        n < 0x6a: (0x48, 0x9a) + table 5e18c8[(frame - 0x50) % 8] =
+                  (0,-5) (0,7) (-4,0) (9,0) (-6,-4) (8,2) (6,-5) (-1,4)
+        else:     (0x48, 0x9a)
+    The far v of the record is clamped to 511 (section 1).
+138e18: frame == 0x50: 1170d8(-1); 117170(1) (fade request, no strip on this frame);
+    frame > 0x50: 3db900 = -1, 3db8fc = 1; 1148f0(0xff000000; 0, 185, z -8, 640, 120)
+    (5e190c..5e1918).
+138af0 also requests voice 1e7d60(0x31, 0x4b) at frame 0x1e (logic port).
+Submission order: backdrop, text, title, strip. Paint order (queue depth 10000000 - 100*z plus
+the tie-break counter, ascending; a more negative z is nearer): backdrop (z 29990), strip (-8),
+title (-9), text (-10). The loser object (z 0) lies between the backdrop and the strip
+(INFERRED from the z values; the object queue was not executed here).
+The loser object uses action 0x701 (11d908(object, 0x701, 1, 0)); no colour word is stored.
+
+
+7  Cubic 1382a8 / 138eb0 (OBSERVED [V], whole functions)
+--------------------------------------------------------
+
+f(step a0, P0 a1, P3 a2, P1 a3, P2 t0, total t1), constants 1.0 and 3.0 (5e163c / 5e1640 and
+5e191c / 5e1920):
+    t = step / total; s = 1 - t
+    ACC  = s*s*s * P0                (MULA.S)
+    ACC += ((3s)*s)*t * P1           (MADDA.S)
+    ACC += (((3s)*t)*t) * P2         (MADDA.S)
+    result = trunc(ACC + (t*t*t) * P3)   (MADD.S)
+with the multiplication order of the listing. Each product and each accumulation is rounded
+separately in the project's finite float model (Probe and ScalarFloat agree; not a hardware
+claim).
+
+
+8  UNKNOWN / not done
+---------------------
+
+  - The loser object and the stage background are described as a request
+    (ArcadeFighterRequest) and are not rendered or compared by this slice.
+  - GS coverage of the turned panel edges: both sides use the inverse-affine pixel-centre
+    model of validate_menu_canvas.py.
+  - 114f20 was not read (section 1). Writers of 3d3aa8 / 3d2e50 outside the graphics module
+    (debug read-outs of 1132c0) were not searched.
+  - The stack bytes tested by 1ba448 (section 3).
+  - 1170d8 / 117170 fade progression is the caller's; this module only accepts the resulting
+    3ebf18 / 3ec734 / 3ec730 state (MenuCanvas::setFade + ArcadeArt::setFade).
+  - Completed fade (3ec73c != 0): 1149d0 and 1130f8 submit nothing except slot 0x28. The
+    caller must skip every overlay but the legend in that state; not modelled in the draw
+    functions.
+
+
+9  Corrections to earlier documents
+-----------------------------------
+
+  - docs/mode-arcade-tally.txt section 7: the legend is submitted through sheet slot 0x28
+    (1b8e28 overrides the record's slot word 27), not "texture slot 27".
+  - docs/mode-arcade-tally.txt section 6: a negative score is not an UNKNOWN picture: the
+    records in front of 4c5ae8 are listed in section 2 above.
+  - docs/mode-arcade-tally.txt section 5: 113028 draws 12x24 half-width glyphs at depth
+    114e40(3d3aac) = -200, black (colour argument 0xff000000 = alpha ff, RGB 0).
+  - docs/mode-arcade-flow.txt 5.9: the scaled digit variant is selected by R % 60 < 0x15
+    (21 frames); src/arcade_run.hpp's comment "phase < 15" is hexadecimal.

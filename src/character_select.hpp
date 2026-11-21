@@ -54,6 +54,9 @@ public:
     void configure(int modeWord) {
         mode=modeWord;
         submode=modeWord==6?2:modeWord==9||modeWord==10?3:modeWord==11||modeWord==12?4:1;
+        // 1cd44c: the PRACTICE menu item writes gameData+10 = confirming seat ^ 1, so the
+        // dummy's spirit record owns the stage page.
+        if(modeWord==9||modeWord==10)stageOwner=modeWord==9;
     }
     bool twoSided() const {return mode==3||mode==6||mode==9||mode==10;}
     // The seat of a single-seat mode.

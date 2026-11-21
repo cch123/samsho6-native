@@ -1,4 +1,6 @@
 #include "local_versus.hpp"
+#include "arcade_presentation.hpp"
+#include <fstream>
 #include <algorithm>
 #include <iostream>
 #include <bit>
@@ -12,6 +14,7 @@ int main(int argc,char** argv) {
     try {
         if(argc<2)throw std::runtime_error("Expected an asset directory");
         std::string_view trace;
+        std::string arcadeDump;
         std::array<bool,2> cpuSeats{};
         auto mode=ss6::VersusMode::FixedMatch;
         bool unlockModes=false,unlockAll=false;std::string saveFile;
@@ -22,6 +25,7 @@ int main(int argc,char** argv) {
             else if(arg=="--unlock-modes")unlockModes=true; // byte 43d0d6: SURVIVAL and SPIRITS EDIT rows
             else if(arg=="--unlock-all")unlockModes=unlockAll=true; // and one seen ending: the GALLERY row
             else if(arg=="--save"&&i+1<argc)saveFile=argv[++i];
+            else if(arg=="--arcade-dump"&&i+1<argc)arcadeDump=argv[++i]; // 640x480 RGBA of each segment's arcade scene
             else if(arg=="--cpu"&&i+1<argc)cpuSeats=ss6::versusCpuSeats(argv[++i]);
             else if((arg=="--p1-spirit"||arg=="--p2-spirit")&&i+1<argc)spirits[arg=="--p2-spirit"]=ss6::versusSpirit(argv[++i]);
             else if(arg=="--mode"&&i+1<argc) {
@@ -51,7 +55,9 @@ int main(int argc,char** argv) {
         const bool practiceFields=trace=="--practice-fields";
         const bool survivalFields=trace=="--survival-fields";
         const bool sceneFields=trace=="--scene-fields";
-        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields&&!survivalFields&&!practiceFields&&!sceneFields)
+        const bool arcadeFields=trace=="--arcade-fields";
+        std::vector<uint8_t> arcadePixels(640*480*4);unsigned segment=0;
+        if(!trace.empty()&&!selectFields&&!titleFields&&!soundFields&&!shakeFields&&!stageFields&&!itemFields&&!resultFields&&!menuFields&&!rageFields&&!lifeFields&&!contactFields&&!projectileFields&&!spiritFields&&!zeroFields&&!kenFields&&!mikiriFields&&!survivalFields&&!practiceFields&&!sceneFields&&!arcadeFields)
             throw std::runtime_error("Unknown replay trace");
         if(menuFields)mode=ss6::VersusMode::Console;
         ss6::LocalVersus session(argv[1],roundTime,mode,spirits,entry,cpuSeats);
@@ -74,7 +80,15 @@ int main(int argc,char** argv) {
             if(soundFields)sounds.clear();
             for(unsigned tick=0;tick<n;++tick) {
                 std::array<ss6::NormalizedPadSample,2> pads;
-                for(unsigned i=0;i<2;++i)pads[i]={held[i],held[i]&~previous[i]};
+                // Arcade validation fixture: bit 31 / 30 of the second word ends the running
+                // arcade fight with a win of the arcade seat / of its opponent (bit 29: a draw).
+                std::array<uint32_t,2> word=held;
+                if(arcadeFields&&(held[1]>>29)&&!(previous[1]>>29)) if(const auto* a=session.arcade()) {
+                    const int human=int(a->run.humanSeat());
+                    session.forceArcadeResult(held[1]>>31?human:(held[1]>>30)&1?human^1:-1);
+                }
+                word[1]&=0x1fffffffu;
+                for(unsigned i=0;i<2;++i)pads[i]={word[i],word[i]&~(previous[i]&(i?0x1fffffffu:~0u))};
                 session.tick(pads);previous=held;
             }
             const auto& match=session.match();
@@ -171,6 +185,47 @@ int main(int argc,char** argv) {
                     std::cout<<' '<<g.mode<<' '<<g.submode<<' '<<g.winner<<' '<<arcade->gameOver.frame<<' '<<p.character
                              <<' '<<record.wins<<' '<<record.seconds<<' '<<session.arcadeNotice().empty();
                 }
+            }
+            if(arcadeFields) {
+                // Columns from 23: the arcade session, its transition task, the run words and
+                // the presentation picture (checksum of its draw lists, record / object counts).
+                const auto* a=session.arcade();
+                if(!a)std::cout<<" -1";
+                else {
+                    const auto& r=a->run;const auto& g=r.game;const auto& t=a->transitionTask();
+                    const auto& p=r.players[r.humanSeat()];
+                    auto* pres=a->presentation.get();
+                    uint32_t check=0;size_t records=0,objects=0;
+                    const bool picture=pres&&(ss6::ArcadePresentation::presents(a->scene)||
+                        ((a->scene==ss6::ArcadeScene::Continue||a->scene==ss6::ArcadeScene::GameOver)&&pres->current==a->scene));
+                    if(picture) {
+                        pres->paint(*a,arcadePixels);
+                        check=pres->listChecksum;records=pres->listRecords;objects=pres->objectCount;
+                        if(!arcadeDump.empty()) {
+                            std::ofstream out(arcadeDump+"/"+std::to_string(segment)+".rgba",std::ios::binary);
+                            out.write(reinterpret_cast<const char*>(arcadePixels.data()),std::streamsize(arcadePixels.size()));
+                        }
+                    }
+                    std::cout<<' '<<std::hex<<unsigned(a->scene)<<' '<<unsigned(pres?pres->current:ss6::ArcadeScene::None)<<std::dec
+                             <<' '<<t.active()<<' '<<t.phase<<' '<<t.request.kind<<' '<<t.request.speed<<' '<<a->fade.level<<' '<<a->fade.mode
+                             <<' '<<g.mode<<' '<<g.stage<<' '<<p.stageIndex<<' '<<p.progress<<' '<<p.preFinalSeen<<' '<<g.versusInterrupted
+                             <<' '<<g.challengerInhibit<<' '<<g.transitionLock<<' '<<g.levelEnding<<' '<<g.score<<' '<<g.winner<<' '<<g.versusStreak
+                             <<' '<<(pres?pres->frame:0)<<' '<<check<<' '<<records<<' '<<objects<<' '<<(a->notice.empty()?0:1)
+                             <<' '<<(pres?pres->log.size():0)<<' '<<a->gameOver.frame<<' '<<a->continueScene.frame
+                             <<' '<<unsigned(session.system().option(size_t(0x47+std::clamp(p.character,0,48))))
+                             <<' '<<a->random.librarySeed<<' '<<a->random.gameSeed<<' '<<p.character<<' '<<r.players[r.humanSeat()^1].character
+                             <<' '<<a->battleOver<<' '<<r.intruderFight<<' '<<r.dialoguePostFight<<' '<<picture
+                             <<' '<<(pres&&!pres->paintError.empty()?1:0);
+                    // The character select of the run (CONTINUE / challenger) and its face-off.
+                    const auto& select=match.characterSelect();
+                    std::cout<<' '<<bool(select)<<' '<<(match.faceoff()?1+int(match.faceoff()->complete):0);
+                    for(unsigned i=0;i<2;++i)std::cout<<' '<<(select?select->seats[i].phase:-1)<<' '<<(select?select->seats[i].selected:-1);
+                    std::cout<<' '<<(select?int(select->complete):-1)<<' '<<match.battle().gameMode;
+                    // Fade colour, the other seat's pre-final flag, the spirit clear record 81 + spirit.
+                    std::cout<<' '<<a->fade.colour<<' '<<r.players[r.humanSeat()^1].preFinalSeen
+                             <<' '<<unsigned(session.system().option(size_t(0x81+std::clamp(p.spirit,0,8))));
+                }
+                ++segment;
             }
             if(sceneFields) {
                 // Columns from 23: scene, title, mode menu, row, mode word, sub-mode, fade level, library seed,
@@ -489,6 +544,17 @@ int main(int argc,char** argv) {
                 for(unsigned i=0;i<2;++i)std::cout<<' '<<match.fighter(i).actor.timers[0];
             }
             std::cout<<'\n';
+            if(arcadeFields)std::cout.flush(); // the arcade validator drives one process interactively
+        }
+        if(arcadeFields) {
+            const auto* a=session.arcade();
+            // The scenes entered and how: transition kind (-1 = 1c1ac0 hand-off) and speed.
+            for(const auto& e:session.arcadeLog()) {
+                std::cout<<"#scene "<<std::hex<<unsigned(e.scene)<<std::dec<<' '<<e.kind<<' '<<e.speed<<' '<<e.frame<<' '<<e.state.size();
+                for(auto w:e.state)std::cout<<' '<<w;
+                std::cout<<'\n';
+            }
+            if(a&&!a->notice.empty())std::cout<<"#notice "<<a->notice<<'\n';
         }
     } catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

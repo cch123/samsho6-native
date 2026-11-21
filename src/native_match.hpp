@@ -148,6 +148,7 @@ public:
     // A pause-menu exit the session must route (arcade runs only).
     PauseScene pauseExit() const {return pauseExitDone_?pauseExit_:PauseScene::None;}
     void openSoloSelect(unsigned seat);
+    void openChallengerSelect();          // ARCADE challenger: mode word 3, both seats (12eee8)
     // PRACTICE MODE: menu confirm 1cd428 (mode word 9/10, sub-mode 3), the
     // battle-side window 17f790 and its exits.
     void openPracticeSelect(unsigned seat);

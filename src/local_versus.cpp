@@ -1,5 +1,6 @@
 #include "local_versus.hpp"
 #include "fighter_roster.hpp"
+#include "arcade_presentation.hpp"
 #include <istream>
 #include <utility>
 #include <stdexcept>
@@ -64,8 +65,9 @@ void LocalVersus::startArcade(unsigned seat,int character,int colour,int spirit)
     arcade_=std::make_unique<ArcadeSession>(assets_,match_->system());
     arcade_->random=match_->battle().random;
     arcade_->start(seat);
+    arcade_->selectRequested=false; // the mode menu's select has already run
     arcade_->selected(character,colour,spirit,0);
-    if(arcade_->scene==ArcadeScene::Battle)startArcadeFight();
+    arcadeSceneFlow();
 }
 void LocalVersus::startArcadeFight() {
     auto& run=arcade_->run;
@@ -94,6 +96,8 @@ void LocalVersus::startArcadeFight() {
     } catch(const std::exception& error) {
         // A scheduled opponent or spirit without a native port ends the run.
         arcadeNotice_=std::string("ARCADE OPPONENT ")+std::to_string(setup.character[run.humanSeat()^1])+" IS IN DEVELOPMENT";
+        // Validation fixture: a forced result stands in for the fight that cannot be built.
+        if(forced_){fightMissing_=true;return;}
         arcade_->scene=ArcadeScene::None;arcade_->leftToTitle=true;
     }
 }
@@ -102,55 +106,74 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
     if(arcadeSelecting_) {
         match_->tick(pads);
         if(observer_)observer_(*match_);
+        // The shutter of the challenger banner (kind 4, state 3) opens over the new select.
+        if(arcade_->transitionActive())arcade_->tickTransition();
+        if(run.game.mode==3) {
+            // The challenger's two-seat select (mode 3) ends with the face-off 125e10.
+            if(!match_->faceoff()||!match_->faceoff()->complete)return;
+            arcadeSelecting_=false;
+            arcade_->random=match_->battle().random;
+            const auto picks=match_->selectedLineup();
+            for(unsigned i=0;i<2;++i) {
+                auto& p=run.players[i];
+                p.character=int(picks[i].character);p.colour=int(picks[i].palette&0xffff);p.versusSpirit=int(picks[i].spirit);
+            }
+            arcade_->versusSelected();
+            arcadeSceneFlow();
+            return;
+        }
         const auto pick=match_->soloSelection();
         if(!pick)return;
         arcadeSelecting_=false;
         arcade_->random=match_->battle().random;
         arcade_->selected(pick->character,pick->colour&0xffff,pick->spirit,physicalPad(pads[run.humanSeat()].held));
-        if(arcade_->scene==ArcadeScene::Battle)startArcadeFight();
+        arcadeSceneFlow();
         return;
     }
     const std::array<uint32_t,2> pressed{physicalPad(pads[0].pressed),physicalPad(pads[1].pressed)};
     const uint32_t held=physicalPad(pads[run.humanSeat()].held);
-    switch(arcade_->scene) {
-    case ArcadeScene::Battle: {
-        try {match_->tick(pads);}
-        catch(const UnportedFighterState& move) {
-            arcadeNotice_="MOVE "+std::to_string(move.table)+"/"+std::to_string(move.state)+" IS IN DEVELOPMENT";
-            arcade_->scene=ArcadeScene::None;arcade_->leftToTitle=true;break;
+    if(arcade_->scene==ArcadeScene::Battle) {
+        if(arcade_->battleOver) {
+            // 1252f0(2, 0, 139778, next): the last fight frame stays while the screen fades out.
+            arcade_->tickTransition();
+            deliverSceneSounds();
+        } else if(forced_) {
+            forced_=false;
+            if(!std::exchange(fightMissing_,false))arcade_->random=match_->battle().random;
+            arcade_->matchEnded(forcedWinner_,run.game.stage,0,0,held);
+        } else {
+            try {match_->tick(pads);}
+            catch(const UnportedFighterState& move) {
+                arcadeNotice_="MOVE "+std::to_string(move.table)+"/"+std::to_string(move.state)+" IS IN DEVELOPMENT";
+                arcade_->scene=ArcadeScene::None;arcade_->leftToTitle=true;
+            }
+            if(arcade_->scene==ArcadeScene::Battle) {
+                if(observer_)observer_(*match_);
+                // The fade-in of the scene switch that started this fight.
+                if(arcade_->transitionActive())arcade_->tickTransition();
+                const auto& b=match_->battle();
+                if(b.modeMatchEnded) {
+                    const unsigned human=run.humanSeat();
+                    // 143d6c and 145118 update the schedule record during the fight.
+                    for(int i=0;i<b.arcadeQualifyingWins;++i)run.addRoundWin(run.players[human].stageIndex,1);
+                    if(b.match.players[human^1].wins>0)run.disableSpecialOpponents();
+                    run.game.score=match_->arcadeScore();
+                    arcade_->random=b.random;
+                    arcade_->matchEnded(b.matchEnd.winner08,int(b.matchEnd.metadataStage04),b.matchEnd.result8c,b.endingParameter2c,held);
+                }
+            }
         }
-        if(observer_)observer_(*match_);
-        const auto& b=match_->battle();
-        if(!b.modeMatchEnded)return;
-        const unsigned human=run.humanSeat();
-        // 143d6c and 145118 update the schedule record during the fight.
-        for(int i=0;i<b.arcadeQualifyingWins;++i)run.addRoundWin(run.players[human].stageIndex,1);
-        if(b.match.players[human^1].wins>0)run.disableSpecialOpponents();
-        run.game.score=match_->arcadeScore();
-        arcade_->random=b.random;
-        arcade_->matchEnded(b.matchEnd.winner08,int(b.matchEnd.metadataStage04),b.matchEnd.result8c,b.endingParameter2c,held);
-        break;
+    } else if(arcade_->scene!=ArcadeScene::None) {
+        arcade_->tickScene(pressed,held);
+        deliverSceneSounds();
+        // 10f158 writes the card only while AUTO SAVE is on.
+        if(arcade_->autosave&&match_->system().autoSave())match_->system().saveFile();
     }
-    case ArcadeScene::Continue:arcade_->tickContinue(pressed);break;
-    case ArcadeScene::GameOver:
-        arcade_->tickGameOver(pressed);
-        // 10f158 at frame 12c writes the card only while AUTO SAVE is on.
-        if(arcade_->gameOver.autosave&&match_->system().autoSave())match_->system().saveFile();
-        break;
-    default:break;
-    }
-    if(arcade_->scene==ArcadeScene::CharacterSelect) {
-        // CONTINUE returns to the single-seat character select (128008).
-        auto select=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_);
-        select->openSoloSelect(run.humanSeat());
-        match_=std::move(select);
-        arcadeSelecting_=true;
-        return;
-    }
-    if(arcade_->scene==ArcadeScene::Battle)startArcadeFight();
+    if(arcadeSceneFlow())return;
     if(arcade_ && (arcade_->leftToTitle||arcade_->scene==ArcadeScene::None)) {
         // The ranking scene leads back to the title (127940).
         const auto system=match_->systemHandle();
+        if(arcade_->presentation)arcadeLog_.insert(arcadeLog_.end(),arcade_->presentation->log.begin(),arcade_->presentation->log.end());
         arcade_.reset();
         // 124d50 after a survival run: the mode word, the sub-mode and the battle kind
         // of the last fight must not reach the title's battle block.
@@ -245,6 +268,9 @@ void LocalVersus::endSurvival() {
     // not ported: the scene runs its ordinary GAME OVER part.
     run.game.levelEnding=0;
     survivalStoreRecord(match_->system(),word,s.config,s.run.winCount(),s.run.playSeconds());
+    // The survival Game Over keeps its own path to the title (138340 is shared, the
+    // arcade presentation scenes are not entered from here).
+    arcade_->presentation.reset();
     arcade_->scene=ArcadeScene::GameOver;arcade_->gameOver.enter(run);
     survival_.reset();survivalReload_=0;
     survivalOver_=true;
@@ -318,6 +344,35 @@ bool LocalVersus::tickPracticeSession() {
         return true;
     }
     return false;
+}
+std::vector<ArcadeSceneEntry> LocalVersus::arcadeLog() const {
+    auto log=arcadeLog_;
+    if(arcade_&&arcade_->presentation)log.insert(log.end(),arcade_->presentation->log.begin(),arcade_->presentation->log.end());
+    return log;
+}
+bool LocalVersus::arcadeSceneFlow() {
+    if(!arcade_)return false;
+    auto& run=arcade_->run;
+    if(arcade_->selectRequested) {
+        arcade_->selectRequested=false;
+        auto select=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_);
+        if(run.game.mode==3) {
+            // 1253e0 switched the run to mode 3: both seats select (12eee8), then the face-off.
+            select->openChallengerSelect();
+        } else select->openSoloSelect(run.humanSeat()); // CONTINUE returns to 128008
+        match_=std::move(select);
+        arcadeSelecting_=true;
+        return true;
+    }
+    if(arcade_->fightRequested) {
+        arcade_->fightRequested=false;
+        startArcadeFight();
+    }
+    return false;
+}
+void LocalVersus::deliverSceneSounds() {
+    if(!arcade_||!arcade_->presentation)return;
+    if(sceneSounds_)sceneSounds_(arcade_->presentation->sounds);
 }
 void LocalVersus::restart() {
     practice_.reset();practiceRow_=-1;

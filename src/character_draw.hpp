@@ -4,7 +4,18 @@
 #include "scalar_float.hpp"
 #include <filesystem>
 #include <map>
+#include <string>
 #include <vector>
+
+namespace ss6 {
+// Resource "99a" of the ending scenes (182968 binds it to both slots). Its
+// files carry the suffix 99a; the other resources are numbered 00..51.
+constexpr unsigned endingObjectResource=0x99a;
+inline std::filesystem::path characterResourcePath(const std::filesystem::path& assets,const char* kind,unsigned resource) {
+    if(resource==endingObjectResource)return assets/(std::string(kind)+"_99a.bin");
+    return assets/(std::string(kind)+"_"+(resource<10?"0":"")+std::to_string(resource)+".bin");
+}
+}
 
 namespace ss6 {
 //Arguments at the original121b80 boundary, before tile/palette resolution

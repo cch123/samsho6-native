@@ -96,7 +96,10 @@ ActionClip::ActionClip(const Bytes& aid,const Bytes& act,unsigned id,bool mutedI
         !(id>=185&&id<=240) && !(id>=242&&id<=257) && !(id>=264&&id<=266) && !(id>=278&&id<=305) && !(id>=307&&id<=319) &&
         !(id>=338&&id<=373) && !(id>=378&&id<=395) &&
         !(id>=424&&id<=429) && !(id>=396&&id<=419) && !(id>=430&&id<=441) && !(id>=492&&id<=506) && !(id>=529&&id<=531) && id!=539 && !(id>=549&&id<=554) &&
-        !(id>=568&&id<=570) && !(id>=584&&id<=586) && id!=592 && id!=598 && id!=599 && id!=612 && id!=613 && id!=625 && !(id>=1294&&id<=1297) && !(id>=1280&&id<=1285) && id!=1793)
+        !(id>=568&&id<=570) && !(id>=584&&id<=586) && id!=592 && id!=598 && id!=599 && id!=612 && id!=613 && id!=625 && !(id>=1294&&id<=1297) && !(id>=1280&&id<=1285) && id!=1793 &&
+        // Presentation actions of the arcade scenes: Continue / Game Over 700 / 701, map walk 703 / 704,
+        // VS result pose 1fb, dialogue stands 400 / 401 (arcade_presentation.cpp).
+        !(id>=0x700&&id<=0x704) && id!=0x1fb && id!=0x400 && id!=0x401)
         throw std::runtime_error("Unsupported action "+std::to_string(id));
     if (aid.size() != 0x1800 || act.size()%60) throw std::runtime_error("Unsupported AID/ACT resource layout");
     // 0x1212c0 reads signed AID starts and multiplies the record number by 60.

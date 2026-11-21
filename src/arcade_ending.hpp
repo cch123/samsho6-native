@@ -9,6 +9,9 @@
 #include <vector>
 
 namespace ss6 {
+// The battle's ending playback (ending_playback.hpp) is also named
+// EndingPlayback; this inline namespace keeps the two classes distinct.
+inline namespace arcade_scene {
 // Per-character ENDING (scene 182968, playback 182a98) and STAFF ROLL (19c1c8).
 // The 50 script functions behind 4eefe8 are branch-free call sequences; they
 // are data here (arcade_ending.bin, work/ss6/extract_arcade_ending.py).
@@ -286,4 +289,5 @@ void drawEnding(MenuCanvas& canvas,MenuDrawList& list,const EndingData& data,con
 // flag (3d3ab0 < 3d3aa0) for a frame that is not blank.
 bool layoutEndingPage(const EndingData& data,int renderer,std::span<const uint32_t> message,int balloon,
                       int leftPortrait,int reveal,bool blank,EndingFrame& frame);
+}
 }

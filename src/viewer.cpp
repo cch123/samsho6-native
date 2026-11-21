@@ -8,6 +8,7 @@
 #include "trial_script.hpp"
 #include "local_versus.hpp"
 #include "arcade_art.hpp"
+#include "arcade_presentation.hpp"
 #include "fighter_roster.hpp"
 #include "character_select_art.hpp"
 #include "console_title_art.hpp"
@@ -802,7 +803,19 @@ class VersusScreen {
         }
         check(SDL_RenderPresent(r));
     }
-    std::vector<uint8_t> menuPixels_,overlayPixels_,windowPixels_;
+    std::vector<uint8_t> menuPixels_,overlayPixels_,windowPixels_,fadePixels_,scenePixels_=std::vector<uint8_t>(640*480*4);
+public:
+    static bool arcadeScene(const ss6::ArcadeSession* arcade) {
+        using S=ss6::ArcadeScene;
+        return arcade&&arcade->presentation&&(ss6::ArcadePresentation::presents(arcade->scene)||
+               ((arcade->scene==S::Continue||arcade->scene==S::GameOver)&&arcade->presentation->current==arcade->scene));
+    }
+    // The 640x480 picture of the running arcade scene (--dump).
+    const std::vector<uint8_t>& arcadePicture(const ss6::ArcadeSession& arcade) {
+        arcade.presentation->paint(arcade,scenePixels_);
+        return scenePixels_;
+    }
+private:
     std::optional<ss6::MenuCanvas> overlayCanvas_;
     std::optional<ss6::ArcadeArt> arcadeArt_;
     std::optional<ss6::ArcadeTallyTables> overlayTables_;
@@ -903,6 +916,11 @@ public:
             if(white)for(size_t n=0;n<result_.rgba.size();n+=4)
                 for(unsigned c=0;c<3;++c)result_.rgba[n+c]+=((255-result_.rgba[n+c])*white)>>8;
             paintCurtain(match.curtainFrame());
+            // ARCADE challenger: the shutter of the kind-4 scene switch opens over the select.
+            if(session&&session->arcade()&&session->arcade()->transitionActive()) {
+                const auto& t=session->arcade()->transitionTask();
+                if(t.request.kind==4)paintCurtain(t.frame.curtain);
+            }
             return result_;
         }
         // The stage packets use their priority-10 projection. Fighters and hit
@@ -985,6 +1003,14 @@ public:
             return;
         }
         const auto* arcade=session?session->arcade():nullptr;
+        if(arcadeScene(arcade)) {
+            // The ARCADE presentation scenes, CONTINUE and GAME OVER with their objects.
+            arcade->presentation->paint(*arcade,scenePixels_);
+            check(SDL_UpdateTexture(texture,nullptr,scenePixels_.data(),640*4));
+            check(SDL_RenderTexture(r,texture,nullptr,nullptr));
+            present(r,{},paused);
+            return;
+        }
         if(arcade&&(arcade->scene==ss6::ArcadeScene::Continue||arcade->scene==ss6::ArcadeScene::GameOver)) {
             // Task_Continue / Task_GameOver. The stage picture and the
             // loser's fighter object behind the art are not drawn yet.
@@ -1020,6 +1046,18 @@ public:
                 // are composed over the finished arena and HUD.
                 arcadeOverlay(match,*arcade,false);
                 pixels=overlayPixels_.data();
+            }
+            if(arcade&&arcade->presentation&&frame_.width==640) {
+                // The fade of the arcade scene switch (1252f0) into or out of the fight.
+                const auto& f=arcade->presentation->fadeShown;
+                if(f.vertexFade()&&f.level>0) {
+                    fadePixels_.assign(pixels,pixels+size_t(frame_.width)*frame_.height*4);
+                    const int level=std::min(f.level,256);
+                    const std::array<int,3> target{int((f.colour>>16)&0xff),int((f.colour>>8)&0xff),int(f.colour&0xff)};
+                    for(size_t i=0;i<fadePixels_.size();i+=4)for(unsigned c=0;c<3;++c)
+                        fadePixels_[i+c]=uint8_t((fadePixels_[i+c]*(256-level)+target[c]*level)>>8);
+                    pixels=fadePixels_.data();
+                }
             }
             if(frame_.width==640) {
                 // Pause menu, its key-configuration / skill-list windows and the
@@ -1061,6 +1099,9 @@ std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
     const auto* arcade=session.arcade();
     if(!arcade)return lines;
     if(!session.arcadeNotice().empty())lines.push_back(session.arcadeNotice());
+    if(!arcade->notice.empty())lines.push_back(arcade->notice);
+    if(arcade->presentation)for(const auto& line:arcade->presentation->notices)
+        if(std::find(lines.begin(),lines.end(),line)==lines.end())lines.push_back(line);
     return lines;
 }
 
@@ -1111,6 +1152,21 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
             else playback.write(pcm);
         });
     }
+    if(mixer)session.onSceneSounds([&](const std::vector<ss6::ArcadeSceneSound>& sounds) {
+        // The arcade scenes' own music (1e7c00 ids 11..1b), the scene voice bank 31
+        // and their sound banks are not packaged; only the resident menu sounds
+        // (1e7b70 group -1) and the music stop reach the mixer.
+        for(const auto& e:sounds) {
+            if(e.kind==ss6::ArcadeSceneSound::MusicStop)mixer->stopMusic();
+            else if(e.kind==ss6::ArcadeSceneSound::Sound&&e.a==-1&&e.b>=0)mixer->play(-1,e.b);
+        }
+        // A scene frame does not tick the match, so the mixer advances here.
+        mixer->tick();
+        std::array<int16_t,2*800> pcm;
+        mixer->render(pcm);
+        if(recording)recording->write(pcm);
+        else playback.write(pcm);
+    });
     if(!replay.empty()) {
         std::ifstream in(replay);if(!in)throw std::runtime_error("Cannot open match replay");
         std::array<uint32_t,2> previous{};unsigned count;
@@ -1125,6 +1181,11 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
     }
     for(unsigned i=0;i<updates;++i)session.tick({});
     if(recording){recording->finish();if(snapshot.empty() && dump.empty() && stageDump.empty())return 0;}
+    if(!dump.empty() && VersusScreen::arcadeScene(session.arcade())) {
+        Frame frame;frame.width=640;frame.height=480;frame.rgba=screen->arcadePicture(*session.arcade());
+        writeRgba(dump,frame);
+        if(snapshot.empty())return 0;
+    }
     if(!dump.empty() || !stageDump.empty()) {
         const auto& frame=screen->paint(session.match(),stageDump);
         if(!dump.empty())writeRgba(dump,frame);

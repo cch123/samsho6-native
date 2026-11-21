@@ -29,7 +29,18 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  # streams the sound test can request. pause_art.bin exists once its extractor has run.
                  'edit_art.bin','gallery_art.bin',*(['pause_art.bin'] if (ROOT/'work/ss6/extracted/resources/pause_art.bin').exists() else []),
                  *[f'gl_{i:02}.{ext}' for i in range(55) for ext in ('tex','pal')],
-                 *[f'bgm{i:02}_{side}.vb' for i in range(7,15) for side in 'lr']]:
+                 *[f'bgm{i:02}_{side}.vb' for i in range(7,15) for side in 'lr'],
+                 # ARCADE presentation scenes (docs/mode-arcade-map/talk/results/ending/ranking.txt):
+                 # tables, map / balloon / caption sheets, demo portraits, win portraits, ending
+                 # pictures, the ending object resource 99a and the ranking sheets.
+                 'arcade_talk.bin','arcade_results.bin','arcade_ending.bin','arcade_ranking.bin',
+                 'map_main.tex','map_main.pal','map_cloud.tex','moji4.tex','moji5.tex','hukidasi.tex','hukidasi2.tex',
+                 'demo_mga.tex','demo_mga.pal','menu_bg01_00.tex','menu_bg01_00.pal','font_otherscene2_16.tex',
+                 'rank_obj.tex','cloud_l.tex','cloud_r.tex','face.tex',
+                 *[f'{stem}_99a.bin' for stem in ('aid','act','jdg','pil','idx','map','chr')],
+                 *sorted(p.name for pattern in ('map_icon_*.tex','map_icon_*.pal','demo_[0-9]*.tex','demo_[0-9]*.pal',
+                                                'win_*.tex','win_*.pal','ed_bg*.tex','ed_bg*.pal')
+                         for p in (ROOT/'work/ss6/extracted/resources').glob(pattern))]:
  shutil.copy2(ROOT/'work/ss6/extracted/resources'/resource,ROOT/'outputs/ss6-feasibility/native-viewer/assets'/resource)
 target=ROOT/'outputs/ss6-feasibility/native-viewer/ss6-viewer'
 shutil.copy2(ROOT/'README.txt',target.parent/'README.txt')

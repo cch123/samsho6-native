@@ -28,10 +28,18 @@ public:
     // Set when the scheduled stage or fighter has no native port yet.
     const std::string& arcadeNotice() const {return arcadeNotice_;}
     unsigned matchNumber() const {return matchNumber_;}
+    // Validation fixture: the running arcade fight ends now with `winner` (seat, or -1 for
+    // a draw) as though 145628 had been reached, without playing it out.
+    void forceArcadeResult(int winner) {forcedWinner_=winner;forced_=true;}
+    // Every arcade scene entered in this process (validation trace).
+    std::vector<ArcadeSceneEntry> arcadeLog() const;
     void tick(const std::array<NormalizedPadSample,2>&);
     void restart();
     using TickObserver=std::function<void(const NativeMatch&)>;
     void onTick(TickObserver observer) {observer_=std::move(observer);}
+    // Sound requests of the ARCADE presentation scenes on this tick.
+    using SceneSoundObserver=std::function<void(const std::vector<ArcadeSceneSound>&)>;
+    void onSceneSounds(SceneSoundObserver observer) {sceneSounds_=std::move(observer);}
 private:
     std::filesystem::path assets_;
     int roundTime_;
@@ -62,6 +70,11 @@ private:
     void startArcade(unsigned seat,int character,int colour,int spirit);
     void startArcadeFight();
     void tickArcade(const std::array<NormalizedPadSample,2>&);
+    bool arcadeSceneFlow();      // opens the select / starts the fight the session entered
+    void deliverSceneSounds();
+    SceneSoundObserver sceneSounds_;
+    std::vector<ArcadeSceneEntry> arcadeLog_; // scenes of the finished runs
+    bool forced_=false,fightMissing_=false;int forcedWinner_=-1;
     unsigned matchNumber_=1;
     std::unique_ptr<NativeMatch> match_;
     TickObserver observer_;

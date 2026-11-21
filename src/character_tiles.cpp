@@ -77,7 +77,7 @@ void CharacterPaletteBank::colorize(uint32_t flags,uint32_t fadeColor,uint32_t a
 const CharacterTiles::Resource& CharacterTiles::resource(unsigned slot) {
     const auto id=slots_.at(slot);auto found=resources_.find(id);
     if(found==resources_.end()) {
-        found=resources_.emplace(id,Resource{read(fighterResourcePath(assets_,"idx",id)),read(fighterResourcePath(assets_,"map",id)),read(fighterResourcePath(assets_,"chr",id))}).first;
+        found=resources_.emplace(id,Resource{read(characterResourcePath(assets_,"idx",id)),read(characterResourcePath(assets_,"map",id)),read(characterResourcePath(assets_,"chr",id))}).first;
     }
     return found->second;
 }

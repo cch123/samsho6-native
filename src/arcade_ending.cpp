@@ -13,6 +13,7 @@
 #include <string>
 
 namespace ss6 {
+inline namespace arcade_scene {
 namespace {
 constexpr int width=640,height=480;
 constexpr uint32_t hidden=0x400000;
@@ -775,5 +776,6 @@ void drawEnding(MenuCanvas& canvas,MenuDrawList& list,const EndingData& data,con
     // 113b28 takes its depth before it tests 3ec73c.
     if(frame.flash)canvas.rectangle(list,0,0,int(data.flash[2]),int(data.flash[1]),frame.flashColour|0xff000000u,data.flash[0]);
     else canvas.depth(list,data.flash[0]);
+}
 }
 }

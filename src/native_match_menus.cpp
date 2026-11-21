@@ -1,5 +1,6 @@
 #include "practice_art.hpp"
 #include "native_match.hpp"
+#include "arcade_presentation.hpp"
 #include "gallery_art.hpp"
 #if SS6_HAVE_PAUSE_ART
 #include "pause_art.hpp"
@@ -47,6 +48,8 @@ struct NativeMatch::MenuScenes {
     std::unique_ptr<SoundTest> sound;
     std::unique_ptr<EndingViewer> ending;
     bool reselect=false;                     // 182ce0: 182a98 returned, the selection starts again
+    std::unique_ptr<GalleryEndingPlayer> endingPlayer; // 182a98 for the chosen character
+    bool endingPlaying=false;
     std::array<int,2> banks{51,52};          // sample banks of groups 0 and 1 (1e79c8)
     int musicAge=-1;                         // visits since an accepted 214060 request
     // KEY CONFIGURATION
@@ -176,7 +179,10 @@ void NativeMatch::rasteriseMenu(std::span<uint8_t> rgba) const {
     switch(menuScene()) {
     case MenuScene::Option:menuCanvas_->rasterise(menuList_,rgba);break;
     case MenuScene::SpiritsEdit:case MenuScene::ColorEdit:menus_->editArt->rasterise(menuList_,rgba);break;
-    case MenuScene::GalleryTop:case MenuScene::Illustrations:case MenuScene::SoundTest:case MenuScene::EndingSelect:
+    case MenuScene::EndingSelect:
+        if(menus_->endingPlaying){menus_->endingPlayer->paint(rgba);break;}
+        menus_->galleryArt->rasterise(menuList_,rgba);break;
+    case MenuScene::GalleryTop:case MenuScene::Illustrations:case MenuScene::SoundTest:
         menus_->galleryArt->rasterise(menuList_,rgba);break;
     case MenuScene::KeyConfig:
 #if SS6_HAVE_PAUSE_ART
@@ -394,7 +400,14 @@ void NativeMatch::galleryEvents(const std::vector<GalleryEvent>& events) {
     case GalleryEvent::Scene:
         if(!sceneFade_.active()){m.pending=uint32_t(e.b);sceneFade_.begin(true);}
         break;
-    case GalleryEvent::EndingChosen:m.reselect=true;break;
+    case GalleryEvent::EndingChosen:
+        // 182ce0: 4ef0c8 = 0; 182a98(c).
+        try {
+            if(!m.endingPlayer)m.endingPlayer=std::make_unique<GalleryEndingPlayer>(assets_);
+            m.endingPlayer->begin(e.a,system_->setting(2)!=0);
+            m.endingPlaying=true;
+        } catch(const std::exception&) {m.reselect=true;} // the ending assets are not packaged
+        break;
     // The narration language bank (213180/213238) is not routed: the mixer plays the factory language.
     default:break;
     }
@@ -432,8 +445,19 @@ void NativeMatch::tickGallery(const std::array<MenuPad,2>& pads,const std::array
         galleryEvents(m.sound->events);
         break;
     case MenuScene::EndingSelect:
+        if(m.endingPlaying) {
+            std::vector<ArcadeSceneSound> requests;
+            const bool done=m.endingPlayer->tick(pads[m.ending->seat].pressed,requests);
+            for(const auto& r:requests) {
+                // 1e7b70 of the scripts; the ending music tracks are not packaged.
+                if(r.kind==ArcadeSceneSound::Sound&&r.a<0)sounds_.sample(-1,r.b);
+                else if(r.kind==ArcadeSceneSound::MusicStop)sounds_.stopMusic();
+            }
+            if(!done)break;
+            // 182a98 returned: this visit continues into 182858 and 13f4a8 without a yield.
+            m.endingPlaying=false;m.reselect=true;
+        }
         if(m.reselect) {
-            // 182a98 (ending playback) is not ported: it returns at once and
             // 182ce0 starts the next selection with the last choice preselected.
             const uint64_t seed=random.librarySeed;
             m.ending->beginSelection(unsigned(m.top.operatingSeat),*system_,*widgetData_,m.chrome,random);

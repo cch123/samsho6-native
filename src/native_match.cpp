@@ -1308,6 +1308,15 @@ void NativeMatch::openSoloSelect(unsigned seat) {
     soloSelection_.reset();
     selectAudioPending_=false;enterSelectAudio();
 }
+void NativeMatch::openChallengerSelect() {
+    // 1253e0 sets mode word 3 (sub-mode stays 1); the select runs both seats.
+    battle_.gameMode=3;battle_.matchEnd.submodeA0=1;
+    openCharacterSelect(true);
+    characterSelect_->configure(3);
+    characterSelect_->random=battle_.random;
+    soloSelection_.reset();
+    selectAudioPending_=false;enterSelectAudio();
+}
 void NativeMatch::returnToModeMenu() {
     // 124d50 clears GameData before the title scene 127940; the mode menu
     // reopens on the row that started the mode (582af8 is not reset).
@@ -1530,7 +1539,10 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
                 // enters the match in the same priority-60 dispatch.
                 sounds_.stopMusic();sounds_.stopGroup(2);
                 auto random=battle_.random;
-                const auto stage=selectConsoleVersusStage(random,characterSelect_->stage);
+                // ARCADE challenger (mode word 3, sub-mode 1): 1398c0 draws the arena when the
+                // fight starts; the console VS stage page does not run here.
+                const bool challenger=battle_.gameMode==3&&battle_.matchEnd.submodeA0==1;
+                const auto stage=challenger?0u:selectConsoleVersusStage(random,characterSelect_->stage);
                 if(!CombatStageState::supports(stage)||!playableFighter(logicCharacter(characters[0]))||!playableFighter(logicCharacter(characters[1]))||(picks[0].spirit>5&&picks[0].spirit!=8)||(picks[1].spirit>5&&picks[1].spirit!=8)) {
                     unavailable_=true;unavailableStage_=stage;
                 }

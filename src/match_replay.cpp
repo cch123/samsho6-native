@@ -175,7 +175,8 @@ int main(int argc,char** argv) {
             if(sceneFields) {
                 // Columns from 23: scene, title, mode menu, row, mode word, sub-mode, fade level, library seed,
                 // CRCs of the edit block, the spirit records and the key masks, AUTO SAVE, submission count,
-                // four scene words, then the 16 fighter button masks.
+                // four scene words, the 16 fighter button masks, the library seed at the scene entry,
+                // CRCs of the runtime palette tables 3ec740 / 3f28c0, character select open.
                 const auto crc=[&](size_t at,size_t size) {
                     uint32_t c=~0u;
                     for(const uint8_t byte:session.system().image().subspan(at,size)) {
@@ -204,6 +205,13 @@ int main(int argc,char** argv) {
                 } else if(scene!=Scene::None&&scene!=Scene::Option)words={match.galleryRow(),match.galleryCursor(),-1,-1};
                 for(int w:words)std::cout<<' '<<w;
                 for(unsigned i=0;i<2;++i)for(auto mask:match.inputMapping(i).normal)std::cout<<' '<<mask;
+                std::cout<<' '<<match.menuEntrySeed();
+                for(const auto& table:match.editedPalettes()->runtime) {
+                    uint32_t c=~0u;
+                    for(const uint8_t byte:table){c^=byte;for(int k=0;k<8;++k)c=(c>>1)^(0xedb88320u&(0u-(c&1)));}
+                    std::cout<<' '<<~c;
+                }
+                std::cout<<' '<<bool(match.characterSelect());
             }
             if(titleFields) {
                 const auto& title=match.title();

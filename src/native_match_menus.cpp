@@ -139,6 +139,7 @@ void NativeMatch::enterSpiritsEdit(unsigned seat) {
     if(!spiritsAssets_)spiritsAssets_=std::make_unique<SpiritsEditAssets>(assets_);
     if(!editWidgets_)editWidgets_=std::make_unique<EditWidgetAssets>(assets_);
     if(!m.editArt)m.editArt=std::make_unique<EditArt>(assets_,*menuCanvas_);
+    menuEntrySeed_=battle_.random.librarySeed;
     editSeat_=m.seat=seat;editLeaving_=false;
     // 1822a0 runs 1ce478 for this mode word: 1802 library draws, of which the
     // logic module takes the variant draw alone (see enterGalleryBackdrop).
@@ -181,6 +182,7 @@ void NativeMatch::enterColorEdit(unsigned seat) {
         std::ifstream file(assets_/"pal_all.bin",std::ios::binary);
         m.palAll.assign(std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>());
     }
+    menuEntrySeed_=battle_.random.librarySeed;
     editSeat_=m.seat=seat;editLeaving_=false;
     // 1822a0 -> 1ce478: the page background state is drawn although the
     // layouts of this scene show the still picture (1ce628).
@@ -228,6 +230,7 @@ void NativeMatch::enterGallery(unsigned seat) {
     if(!widgetData_)widgetData_=std::make_unique<MenuWidgetData>(assets_);
     if(!m.galleryData)m.galleryData=std::make_unique<GalleryData>(assets_);
     if(!m.galleryArt)m.galleryArt=std::make_unique<GalleryArt>(*menuCanvas_,assets_);
+    menuEntrySeed_=battle_.random.librarySeed;
     m.seat=seat;m.pending=0;
     m.galleryArt->gameMode=battle_.gameMode;
     m.galleryArt->extraIcons=system_->option(0x7e)!=0;
@@ -377,6 +380,7 @@ void NativeMatch::enterKeyConfig() {
     if(!widgetData_)widgetData_=std::make_unique<MenuWidgetData>(assets_);
     if(!keyAssets_)keyAssets_=std::make_unique<KeyConfigAssets>(assets_);
     if(!m.galleryArt)m.galleryArt=std::make_unique<GalleryArt>(*menuCanvas_,assets_);
+    menuEntrySeed_=battle_.random.librarySeed;
     const unsigned mode=unsigned(battle_.gameMode);
     m.seat=KeyConfigWindow::operatingSeat(mode,0,0);   // 178f90: mode word 11 / 12
     m.keys=KeyConfigWindow{};

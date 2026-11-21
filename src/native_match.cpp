@@ -1354,7 +1354,8 @@ void NativeMatch::openCharacterSelect(bool boot) {
     if(battle_.gameMode==9||battle_.gameMode==10)characterSelect_->configure(battle_.gameMode);
     faceoff_.reset();unavailable_=false;unavailableStage_=-1;missingMove_.clear();
     selectFade_=0;selectAudioPending_=boot;
-    if(!boot&&battle_.matchEnd.submodeA0==2)palettes_->loadVersusCards(*system_);   // 1251d0 -> 1b6380(0)
+    // 1251d0 -> 1b6380(0): every scene switch of VS mode reads the cards into the runtime palette tables.
+    if(battle_.matchEnd.submodeA0==2)palettes_->loadVersusCards(*system_);
     if(!boot)enterSelectAudio();
 }
 VersusLineup NativeMatch::selectedLineup() const {
@@ -1499,7 +1500,6 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             // 124d50/11d1a8 clear the previous set's game and selection
             // records. The process RNG outlives both, including title visits.
             battle_.matchEnd.submodeA0=2;
-            palettes_->loadVersusCards(*system_);   // 1251d0 -> 1b6380(0)
             openCharacterSelect(true);
             characterSelect_->random=battle_.random;
             selectAudioPending_=false;enterSelectAudio();

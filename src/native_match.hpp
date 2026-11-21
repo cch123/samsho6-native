@@ -90,7 +90,7 @@ public:
     SystemData& system() const {return *system_;}
     const std::shared_ptr<SystemData>& systemHandle() const {return system_;}
     // Call before the first tick or scene: replaces the factory image.
-    void adoptSystem(std::shared_ptr<SystemData> system) {system_=std::move(system);}
+    void adoptSystem(std::shared_ptr<SystemData> system) {system_=std::move(system);applyKeyMasks();}
     NativeMatch(const NativeMatch&)=delete;
     NativeMatch& operator=(const NativeMatch&)=delete;
     void tick(const std::array<NormalizedPadSample,2>& pads);
@@ -121,6 +121,8 @@ public:
     int galleryRow() const;
     int galleryCursor() const;
     const KeyConfigWindow* optionKeyConfig() const;
+    // Library generator state (316b90) just before the last menu scene ran its page setup 1ce478.
+    uint64_t menuEntrySeed() const {return menuEntrySeed_;}
     // The fighter button masks in force (key masks 4eaac0 in logical pad bits).
     const InputMapping& inputMapping(unsigned seat) const {return mappings_.at(seat);}
     // Runtime palette tables 3ec740 / 3f28c0 and the tables of 115d40; shared by every scene of a session.
@@ -248,6 +250,7 @@ private:
     struct MenuScenes;
     std::shared_ptr<MenuScenes> menus_;
     std::shared_ptr<EditedPalettes> palettes_;
+    uint64_t menuEntrySeed_=0;
     MenuScenes& menus();
     void menuFade();                       // 1252f0 colour interpolation of every bound art module
     void enterSpiritsEdit(unsigned seat);

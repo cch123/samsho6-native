@@ -1,0 +1,137 @@
+Menu scenes in the native game (SLPS-25559) - integration notes
+==============================================================
+
+Scope: how SPIRITS EDIT (13ad40), COLOR EDIT (13b160), GALLERY (1d22f8, 13ed98, 13e090,
+182968) and OPTION -> KEY CONFIGURATION (13cdb0) are wired into NativeMatch
+(src/native_match_menus.cpp), what was read from the executable for that wiring, and what is
+still missing. The logic and drawing of each page are documented in docs/mode-edit.txt,
+mode-edit-art.txt, mode-gallery.txt, mode-gallery-art.txt, mode-option.txt, mode-pause-menu.txt
+and mode-pause-art.txt. Addresses are hexadecimal EE addresses. OBSERVED = read from the
+disassembly; NATIVE = a decision of the port.
+
+1. Mode-menu confirm branches (jump table 656828)                              OBSERVED
+----------------------------------------------------
+  1cd4f4  SPIRITS EDIT  1252f0(1, 0, 127d70, 13ad40); 1ccfb8(f, 10, seat); sub-mode 4c38a8 = 0
+  1cd538  COLOR EDIT    1252f0(1, 0, 127d70, 13b160); same mode word f / 10; sub-mode 0
+  1cd54c  GALLERY       1252f0(1, 0, 127d70, 1d22f8); 1ccfb8(d, e, seat); sub-mode 0; 1d2610()
+                        (top row 582d88 = 0)
+  1cd5fc  OPTION        1252f0(1, 0, 127d70, 1cfa10); 1ccfb8(11, 12, seat); sub-mode 0; 1cfda0()
+  None of the four stops the title music. All return to scene 127940, where the mode menu
+  reopens on the raw cursor 582af8 (NativeMatch::returnToModeMenu).
+
+2. Order of one visit (NATIVE composition of validated modules)
+----------------------------------------------------------------
+  Pads: 118128 words through MenuPadRepeat (117fd8); the edit scenes and the gallery
+  sub-scenes read the operating seat only, the gallery top menu and KEY CONFIGURATION both.
+  SPIRITS EDIT   EditFrame::tick (1825b8); SpiritsEdit::tick; EditFrame::follow; drawSpiritsEdit
+  COLOR EDIT     EditPaletteBank::beginFrame (113aa8); EditFrame::tick; ColorEdit::tick with
+                 EditFrame::apply per request; drawColorEdit
+  GALLERY top    copy of MenuChrome; GalleryTopMenu::tick; drawGalleryTop(copy)
+  sub-scenes     tick; drawIllustrationViewer / drawSoundTest / drawEndingSelect
+  KEY CONFIG     KeyConfigWindow::tick(optionScene = true); PauseArt::drawKeyConfig
+  then the transition task: SceneFade::tick (1252f0 mode 1, white), which replaces the scene
+  on its third hold visit. The colour interpolation of 117288 / 117318 / 116588 is set on
+  every bound art module before the draw from the fade level of the previous visit; the
+  request made by the mode menu itself is still falling during the first eleven visits of the
+  new scene (NativeMatch::menuFade; OPTION now shows that fade too).
+  Page setup 1ce478: every one of these scenes runs it through 1822a0 (17ea48 holds for mode
+  words above c) or through its own entry, i.e. 1802 library generator draws per entry.
+  The logic modules draw the variant number alone; enterGalleryBackdrop rewinds the seed and
+  performs the complete setup. COLOR EDIT and KEY CONFIGURATION call MenuBackdrop::enter
+  directly.
+  Exit: SPIRITS EDIT and COLOR EDIT issue 10f158 (the file is written only while AUTO SAVE,
+  image word 0, is non-zero; the factory value is 0) and 1252f0(1, 0, dtor, 127940).
+  KEY CONFIGURATION returns to 1cfa10 (OPTION top page); the masks are part of the save image
+  and reach the file with the next save of another scene.
+
+3. Ending viewer                                                               NATIVE boundary
+-----------------
+  182ce0 loops selection 13f4a8 -> playback 182a98. The playback engine is not ported: on the
+  visit after EndingViewer reports the choice, the selection is started again
+  (beginSelection, with its 1ce478) with the chosen fighter preselected. The frame of the
+  returning visit is kept, because 13f4a8 draws nothing on it.
+
+4. Sound test requests                                                          OBSERVED + NATIVE
+----------------------
+  OBSERVED: 1e7ba0 has the same body as 1e7b70 (tail call 1e7968 while word 345188 is set), so
+  BankTone(a, b) is a sample request for group a.
+  OBSERVED: 213ff0 (behind 1e7c00, used by the select scene) and 214060 both store track + 1
+  in 1553b40 and the BGM variant byte 43d056 in 1553b54; 213ff0 clears 5a9e84, 214060 sets it
+  (214150 then stops through 213db0). Track numbers are therefore the same in both, and equal
+  to the bgmNN stream numbers of src/combat_music.cpp. 213ff0 alone maps track 17 to the
+  resident jingle 212d80(c).
+  NATIVE routing (NativeMatch::galleryEvents):
+    Tone / BankTone   SoundSelection::sample(group, tone)
+    LoadBank(g, b)    SoundSelection::bindPlayers(bank of group 0, bank of group 1)
+    BattleSound       SoundSelection::act(command, group, fighter, 0, mode word d/e, 0, rng)
+    Voice             SoundSelection::voice(31, id)
+    Music             SoundSelection::playMusic(track, 3200) for the streams CombatMusic holds
+                      (1, 2, 5..14, 24) in the factory variant; other tracks and the arranged
+                      variant stop the music
+    MusicStop / EffectsStop   stopMusic / stopGroup(2)
+  Not routed: the narration language bank (213180 / 213238); fighters whose vs_sounds_NN /
+  vs_voice_NN groups are not packaged stay silent; the 214060 volume and the flag argument
+  are not modelled (3200 is the value the title request uses). 213d70 ("stream running") is
+  approximated as true from the eighteenth visit after an accepted request, the service and
+  load time of CombatMusic; it drives the lyrics counter only.
+
+5. Edited palettes outside the editor                                           OBSERVED + NATIVE
+-------------------------------------
+  OBSERVED: 1251d0, phase 2, ends with 1b6380(0) while the sub-mode word 4c38a8 is 2 (VS).
+  1b6380(0) starts task 1b6580 (112670(a, 1b6580, 10, fa4)) with the block
+  132cbc0 cleared, +2c = 2 ports, +50 = 6800. Its state machine (table 573548, switch
+  653c98) reads the card of each port in turn:
+    no card / read failure   115238(port): that seat's runtime table back to the defaults
+    1b67b0 (state 4)         copies 6180 bytes from the loaded image + 4 (df1044) to 3ec740
+                             (port index +30 == 0) or 3f28c0, and sets bit 0 or bit 1 of +58
+    1b6418 (end)             frees the task; when +58 == 1 (only port 0 delivered) 1b6460
+                             copies 3ec740 to 3f28c0
+  So in VS mode both seats play with the edit data of the card in slot 1 unless slot 2 holds
+  its own, and the tables are refreshed at every scene switch. Outside VS the selection word
+  carries the owner bit without 40000 (src/character_select.cpp, 12dedc), and 115d40 then reads
+  the save table 5735cc directly; this answers the open point of mode-edit.txt 3.2 about
+  ARCADE / PRACTICE / SURVIVAL.
+  NATIVE: EditedPalettes (src/edited_palettes.*) holds the two runtime tables; the defaults
+  are the edit block of the factory image. loadVersusCards runs when the VS character select
+  opens: the card is SystemData::file, or the live image when the session has no file; a
+  missing or corrupt file is "no card". The asynchronous card access (several frames) is not
+  modelled. CharacterPaletteBank::resolve hands keys with owner bits to EditPaletteBank bound
+  to the renderer's own cache words and CLUT store, so stock and edited groups share the 24
+  entries exactly as in 115d40. 115f08 clears the first colour of a group in its source table,
+  which for an edited key is the save image or a runtime table.
+  Character select itself draws no fighter object natively, so the edited colour first
+  appears in the fight.
+
+6. Key masks                                                                    NATIVE
+------------
+  177310 tests pad word & mask per fighter button. The fight samples the logical pad word
+  whose bits PadLight << i stand for square, triangle, circle, cross, R1, R2, L1, L2; the
+  masks 4eaac0 are translated to that space (NativeMatch::applyKeyMasks) in the constructor,
+  when a save image is adopted, and after every KeyConfigWindow tick (OPTION page, pause menu,
+  practice menu). Mask bits 1 and 100, which the widget can capture, have no logical button.
+
+7. Presentation
+---------------
+  The menu canvas produces 448 lines; the viewer scales lines 0..447 over the 640x480 logical
+  picture (linear filter) when it presents a menu scene. ss6-viewer --dump writes the
+  unscaled 640x480 buffer, which is what validate_menu_scenes.py compares.
+
+8. Not done
+-----------
+  - COLOR EDIT preview objects (13bf00 portrait of resource 99, 13bfd0 sprite, 13c4f8 check
+    pose): colorEditPreview() delivers the three requests each visit (NativeMatch::
+    colorEditPreview), but no object engine instance animates and submits them
+    (11d908 restart rules, 11d6c8 / 11d868 / 11d730, camera 13f8a8), so the preview window
+    is empty. The editor's cache is a private EditPaletteBank; binding it to the renderer's
+    cache is the remaining step once the objects are drawn.
+  - Ending playback 182a98; narration language; arranged BGM variant; unpackaged fighter banks.
+  - Network palette buffers 1232c80 / 1232ce0 (keys with 80000).
+
+9. Validation
+-------------
+  work/ss6/validate_menu_scenes.py [--build DIR] -> outputs/ss6-feasibility/
+  menu_scenes_validation.json: four replay sessions through the title (state through
+  ss6-match-replay --scene-fields, frames through ss6-viewer --dump); checks the scene
+  sequences, the changed bytes of the save file, the return row, the button masks of a fight
+  built from the saved file, the runtime palette tables after the VS card read, and 20 frames
+  against an independent driver of the validated logic and art modules.

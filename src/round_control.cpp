@@ -108,7 +108,7 @@ void RoundControl::combat(BattleRoundState& b,const std::array<RoundPlayerRef,2>
     //140788 only recognizes exact zero, and only when time is enabled and
     //battle+8 is not exactly1. A timeout returns BEFORE announcer/items.
     if(b.timeExpired()){b.requestedState=5;return;}
-    if(b.gameMode!=3)throw std::runtime_error("Combat control requires local versus mode");
+    if(b.survival())throw std::runtime_error("Combat control does not support survival");
     for(const auto& p:players)if(p.actor.flags23c&0x80)b.requestedState=5;
     combatStageEvent(b,players,events);
     if(const auto drop=events.items.next(b,stagePlayers(players)))
@@ -122,8 +122,9 @@ void RoundControl::snapshotPlayers(BattleRoundState& b,const std::array<RoundPla
 }
 void RoundControl::enterEnding(BattleRoundState& b,const std::array<RoundPlayerRef,2>& players,
                                ScheduledOpening& captions,const MatchEndingRules& results,SoundSelection* sound) {
-    if(b.gameMode!=3||b.matchEnd.profileActive123a168)
-        throw std::runtime_error("Round end requires local versus with profile recording disabled");
+    // 123a168 is the network result reporter (sub-mode 6).
+    if(b.survival()||b.matchEnd.profileActive123a168)
+        throw std::runtime_error("Round end does not support survival or network reporting");
     for(const auto& p:players)if(!playableFighter(p.actor.character)||(p.config.system>5&&p.config.system!=8))
         throw std::runtime_error("Round end requires a supported fighter and spirit");
     BattleGauges::stop(b,players);

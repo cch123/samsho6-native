@@ -50,6 +50,19 @@ struct BattleRoundState {
     int32_t requestedState=0,currentState=0,field08=-1,field0c=-1;
     uint32_t flags138=0,field140=0,phase130=0;
     int32_t gameMode=3,timeOption13c=3;
+    // 123a0c0 (139280): 0 normal, 1 practice, 2 survival. Most battle sites
+    // test this byte through 139388/1393a0 instead of the mode word.
+    int32_t battleKind123a0c0=0;
+    // Option byte 43d061 (DAMAGE LEVEL) and 43d05c (GAME LEVEL).
+    int32_t damagePercent43d061=100,gameLevel43d05c=4;
+    bool practice() const {return battleKind123a0c0==1;}          // 139388
+    bool survival() const {return battleKind123a0c0==2;}          // 1393a0
+    bool networkSubmode() const {return matchEnd.submodeA0==5||matchEnd.submodeA0==6;} // 139408
+    bool fixedRules() const {return survival()||practice()||networkSubmode();}        // 139430
+    // 13fd80: the demo, practice and survival skip the character introduction.
+    bool skipsIntroduction() const {return gameMode==0||practice()||survival();}
+    // The seat whose arcade run this fight belongs to, or -1.
+    int arcadeSeat() const {return gameMode==1?0:gameMode==2?1:-1;}
     // In local versus one displayed count spans 90 normal battle updates.
     static constexpr std::array<int,4> roundTimeLimits{60,90,99,0};
     int remainingSeconds() const;

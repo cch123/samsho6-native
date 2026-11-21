@@ -25,6 +25,19 @@ enum BattleButton : uint32_t {
 enum class VersusMode { FixedMatch, Console };
 struct VersusFighterChoice {unsigned character=0,spirit=0,palette=0;};
 using VersusLineup=std::array<VersusFighterChoice,2>;
+// The mode-dependent part of the setup block 4d3d04 (1398c0) and of 13f9f0.
+struct MatchRules {
+    int gameMode=3;       // 4c3808: 0 demo, 1/2 arcade P1/P2, 3 two humans, 9/10 practice
+    int submode=2;        // 4c38a8: 1 arcade, 2 VS, 3 practice, 4 survival
+    int battleKind=0;     // 123a0c0: 0 normal, 1 practice, 2 survival
+    std::array<int,2> requiredWins{2,2};   // seat +0x20 (13f9f0 forces 1 in practice/survival)
+    int gameTime=0;       // option 43d05d: 0 60, 1 90, 2 infinity
+    int damagePercent=100,gameLevel=4;     // options 43d061, 43d05c
+    // setup[0]: AI level of each CPU seat, or -1 for a human. Arcade passes
+    // the human seat's progress count; 158830 raises it to 8 for 33 and 48.
+    std::array<int,2> cpuLevel{-1,-1};
+    int stage=-1;         // GameData+4 when the caller already chose the stage
+};
 struct MatchFighter {
     explicit MatchFighter(ActionBank& bank):body(bank) {}
     PlayerObject body;
@@ -45,7 +58,8 @@ public:
     explicit NativeMatch(const std::filesystem::path& assets,int roundTime=-1,VersusMode mode=VersusMode::FixedMatch,
                          const NativeMatch* rematchFrom=nullptr,std::array<unsigned,2> spirits={},
                          std::optional<VersusLineup> selection={},int selectedStage=0,
-                         std::array<CpuSeatDecision,2> cpuSeats={});
+                         std::array<CpuSeatDecision,2> cpuSeats={},const MatchRules* rules=nullptr);
+    const MatchRules& rules() const {return rules_;}
     NativeMatch(const NativeMatch&)=delete;
     NativeMatch& operator=(const NativeMatch&)=delete;
     void tick(const std::array<NormalizedPadSample,2>& pads);
@@ -102,6 +116,8 @@ private:
     std::array<CpuSeatDecision,2> cpuSeats_;
     std::array<std::unique_ptr<CpuTactics>,2> cpuTactics_;
     std::array<int,2> cpuLevels_{-1,-1};
+    MatchRules rules_;
+    bool explicitRules_=false;
     CpuCommand runCpu(unsigned seat,PermissionContext&,const SelectionThreat&);
     BattleRoundState battle_;
     GroundStateRuntime ground_;

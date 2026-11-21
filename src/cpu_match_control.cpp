@@ -35,7 +35,7 @@ CpuCommand NativeMatch::runCpu(unsigned seat,PermissionContext& permission,const
     actor.flags240&=~1u;
     CpuDecisionFrame frame;
     frame.level100=cpuLevels_[seat];
-    frame.difficulty=4; // Factory option 43d05c; independent of the fighter's AI level.
+    frame.difficulty=unsigned(battle.gameLevel43d05c); // Option 43d05c; independent of the fighter's AI level.
     frame.clockValue=battle.remainingSeconds();
     frame.roundIndex=battle.match.roundIndex;
     frame.battleMode=battle.gameMode;

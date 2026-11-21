@@ -51,8 +51,8 @@ int MatchEndingRules::select(BattleRoundState& b,const std::array<RoundPlayerRef
     return available(selectedCharacter(a),unsigned(choice),b.matchEnd.characterVersion43d052)?choice:high?7:8;
 }
 void MatchEndingRules::recordFinal(BattleRoundState& b,const std::array<RoundPlayerRef,2>& players) const {
-    if(b.gameMode!=3||b.matchEnd.profileActive123a168)
-        throw std::runtime_error("Final result requires local versus with profile recording disabled");
+    if(b.matchEnd.profileActive123a168)
+        throw std::runtime_error("Final result does not support network reporting");
     auto& e=b.matchEnd;
     e.winner08=b.match.players[0].complete()?(b.match.players[1].complete()?-1:0):1;
     e.stage28=std::bit_cast<int32_t>(e.metadataStage04);e.result8c=select(b,players);

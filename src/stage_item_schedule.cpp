@@ -37,7 +37,10 @@ int StageItemSchedule::roll(BattleRoundState& b,unsigned stage,int second) const
 }
 
 std::optional<StageItemDrop> StageItemSchedule::next(BattleRoundState& b,const StageEventPlayers& players) const {
-    if(!b.stageItemsOption4c3828||b.timers.decrease(3)>0||b.stageItems.busy())return std::nullopt;
+    // 141860: never in the demo; two-human fights need the item option, while
+    // arcade always delivers. Practice and survival use other producers.
+    if(b.gameMode==0||b.practice()||b.survival()||(b.gameMode==3&&!b.stageItemsOption4c3828))return std::nullopt;
+    if(b.timers.decrease(3)>0||b.stageItems.busy())return std::nullopt;
     // 140fa0 looks up just the first kind-5 battle object. A live fuse
     // keeps another item off the stage even after its carrier has departed.
     const auto& pools=b.entry.tasks;
@@ -54,7 +57,7 @@ std::optional<StageItemDrop> StageItemSchedule::next(BattleRoundState& b,const S
     if(kind<0)return std::nullopt;
     // In local versus the three score awards are replaced by a bomb or
     // a thrown item. Keep the extra random call in its original position.
-    if(kind>=4&&kind<=6)kind=b.random.bounded(2)?7:8;
+    if(b.gameMode==3&&kind>=4&&kind<=6)kind=b.random.bounded(2)?7:8;
     const int fromRight=b.random.bounded(2);
     const int anchor=b.random.bounded(4);
     auto scalar=[](float x){return ScalarFloat{std::bit_cast<uint32_t>(x)};};

@@ -56,7 +56,7 @@ void storeMeter(StateEntryActor& a,const DamageActor& m) {
 }
 NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusMode mode,const NativeMatch* rematchFrom,
                          std::array<unsigned,2> spirits,std::optional<VersusLineup> selection,int selectedStage,
-                         std::array<CpuSeatDecision,2> cpuSeats)
+                         std::array<CpuSeatDecision,2> cpuSeats,const MatchRules* rules)
     :assets_(path),lineup_(selection.value_or(rematchFrom?rematchFrom->lineup():VersusLineup{{{0,spirits[0],0},{0,spirits[1],1}}})),
      resourceSlots_{lineup_[0].character,lineup_[1].character,51},
      banks_{ActionBank(path,true,resourceSlots_[0]),ActionBank(path,true,resourceSlots_[1])},
@@ -70,6 +70,8 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
     // 1183f8 + 1b8bc0: the factory volume setting is 100, scaled by 0.25 * 512.
     b.audio.streamParameter5a9e78=0x3200;
     const auto& limits=BattleRoundState::roundTimeLimits;
+    if(rules){rules_=*rules;explicitRules_=true;}
+    else if(rematchFrom&&rematchFrom->explicitRules_){rules_=rematchFrom->rules_;explicitRules_=true;}
     if(mode==VersusMode::Console) {
         if(rematchFrom) {
             const auto& old=rematchFrom->battle_;
@@ -88,11 +90,20 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
             if(roundTime==-1)roundTime=limits.at(old.timeOption13c);
         }
         b.matchEnd.submodeA0=2;
-        b.matchEnd.metadataStage04=selectConsoleVersusStage(b.random,selectedStage_);
+        // 1398c0 draws the VS/practice stage (139be8); arcade and the demo
+        // take the stage the schedule already stored in GameData+4.
+        b.matchEnd.metadataStage04=explicitRules_&&rules_.stage>=0?rules_.stage:selectConsoleVersusStage(b.random,selectedStage_);
     }
     for(unsigned arena=0;arena<combatStages_.size();++arena) {
         combatStages_[arena].stage=arena;
         if(rematchFrom)combatStages_[arena].inheritRematch(rematchFrom->combatStages_[arena]);
+    }
+    if(explicitRules_) {
+        b.gameMode=rules_.gameMode;b.matchEnd.submodeA0=rules_.submode;b.battleKind123a0c0=rules_.battleKind;
+        b.damagePercent43d061=rules_.damagePercent;b.gameLevel43d05c=rules_.gameLevel;
+        // 13f9f0: GAME TIME 0/1 select 60/90 and any other value no limit;
+        // the demo and practice always run without a clock.
+        roundTime=b.gameMode==0||b.practice()?0:rules_.gameTime==0?60:rules_.gameTime==1?90:0;
     }
     // Factory settings 111410 use 60 for VS. A zero supplied explicitly
     // means unlimited. The fixed-match profile retains its unlimited default.
@@ -141,7 +152,8 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         a.damageCharacterA18=logicCharacter(lineup_[1-i].character); // 148ea0 aliases 42 too
         f.config.system=pick.spirit;
         a.fieldA28=f.body.field20=pick.palette;
-        if(rematchFrom)b.match.players[i].requiredWins=rematchFrom->battle_.match.players[i].requiredWins;
+        if(explicitRules_)b.match.players[i].requiredWins=b.practice()||b.survival()?1:rules_.requiredWins[i];
+        else if(rematchFrom)b.match.players[i].requiredWins=rematchFrom->battle_.match.players[i].requiredWins;
         f.body.timeline.setObjectFlags(0x10000000u|(i<<19),0x40000000,0x40);
         f.body.timeline.setSoundObserver([this,i](int16_t c,const ActionClock& clock){
             auto& f=fighters_[i];
@@ -162,6 +174,11 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
     // black midpoint the fighters and clock already exist; priority 50
     // can sample the next pad only on the following scheduler dispatch.
     if(mode==VersusMode::Console)initialize_.begin(ground_,players(),b,effects_);
+    for(unsigned i=0;i<2;++i)if(explicitRules_&&rules_.cpuLevel[i]>=0) {
+        // 158830: Sugoroku (33) and Kuroko (48) always fight at level 8.
+        const auto raw=fighters_[i].actor.characterA14;
+        enableCpu(i,raw==0x21||raw==0x30?8:rules_.cpuLevel[i]);
+    }
 }
 std::array<RoundPlayerRef,2> NativeMatch::players() {
     auto ref=[](MatchFighter& f){return RoundPlayerRef{f.body,f.actor,f.input,f.config,f.storage,f.objects};};

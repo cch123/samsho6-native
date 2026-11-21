@@ -40,6 +40,14 @@ void LocalVersus::configureControllers(NativeMatch& match) const {
     for(unsigned seat=0;seat<2;++seat)if(cpuSeats_[seat])match.enableCpu(seat);
 }
 
+MatchRules LocalVersus::versusRules() const {
+    // 1116d8 copies VS MATCH POINT to both seats; 13f9f0 reads GAME TIME.
+    const auto& data=match_->system();
+    MatchRules rules;
+    rules.requiredWins={data.versusMatchPoint(),data.versusMatchPoint()};
+    rules.gameTime=data.gameTime();rules.damagePercent=data.damageLevel();rules.gameLevel=data.gameLevel();
+    return rules;
+}
 void LocalVersus::restart() {
     match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
     if(entry_==VersusEntry::Fight)configureControllers(*match_);
@@ -56,8 +64,10 @@ void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
     // Deliver the old match's last sound requests before its state is replaced.
     if(observer_)observer_(*match_);
     if(match_->faceoff()&&match_->faceoff()->complete) {
+        const auto rules=versusRules();
         auto next=std::make_unique<NativeMatch>(assets_,-1,mode_,match_.get(),std::array<unsigned,2>{},
-                                                match_->selectedLineup(),match_->characterSelect()->stage);
+                                                match_->selectedLineup(),match_->characterSelect()->stage,
+                                                std::array<CpuSeatDecision,2>{},&rules);
         configureControllers(*next);
         if(entry_==VersusEntry::Fight || match_->updates!=0)++matchNumber_;
         match_=std::move(next);

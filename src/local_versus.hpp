@@ -28,6 +28,7 @@ private:
     VersusEntry entry_;
     std::array<bool,2> cpuSeats_{};
     void configureControllers(NativeMatch&) const;
+    MatchRules versusRules() const;
     unsigned matchNumber_=1;
     std::unique_ptr<NativeMatch> match_;
     TickObserver observer_;

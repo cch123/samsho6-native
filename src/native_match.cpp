@@ -67,6 +67,7 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
      aux_(path,resourceSlots_),angleTrig_(path),damage_(path),reactions_(path),judgments_{JudgmentData(path,resourceSlots_[0]),JudgmentData(path,resourceSlots_[1]),JudgmentData(path,51)},collisions_(path),projectiles_(path),
      combat_(path),rounds_({initialize_,ground_,effects_,stage_,captions_,ending_,lock_,&sounds_}) {
     auto& b=battle_;
+    system_=rematchFrom?rematchFrom->system_:std::make_shared<SystemData>(path);
     // 1183f8 + 1b8bc0: the factory volume setting is 100, scaled by 0.25 * 512.
     b.audio.streamParameter5a9e78=0x3200;
     const auto& limits=BattleRoundState::roundTimeLimits;
@@ -103,7 +104,9 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         b.damagePercent43d061=rules_.damagePercent;b.gameLevel43d05c=rules_.gameLevel;
         // 13f9f0: GAME TIME 0/1 select 60/90 and any other value no limit;
         // the demo and practice always run without a clock.
-        roundTime=b.gameMode==0||b.practice()?0:rules_.gameTime==0?60:rules_.gameTime==1?90:0;
+        // An explicit round time (command line) or a rematch keeps its value.
+        if(b.gameMode==0||b.practice())roundTime=0;
+        else if(roundTime==-1)roundTime=rules_.gameTime==0?60:rules_.gameTime==1?90:0;
     }
     // Factory settings 111410 use 60 for VS. A zero supplied explicitly
     // means unlimited. The fixed-match profile retains its unlimited default.
@@ -1115,7 +1118,7 @@ void NativeMatch::enterTitleAudio() {
     sounds_.playMusic(1,0x3200);
 }
 void NativeMatch::openTitle(bool returningFromVersus) {
-    title_.emplace(returningFromVersus);
+    title_.emplace(returningFromVersus,system_->modeMenuUnlock());
     titleFadeTick_=0;titleAudioPending_=!returningFromVersus;
     if(returningFromVersus) {
         // 1db334 clears GameData before setting its continue and end flags.

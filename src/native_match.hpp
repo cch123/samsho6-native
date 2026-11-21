@@ -14,6 +14,7 @@
 #include "character_select.hpp"
 #include "console_title.hpp"
 #include "versus_faceoff.hpp"
+#include "system_data.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -60,6 +61,9 @@ public:
                          std::optional<VersusLineup> selection={},int selectedStage=0,
                          std::array<CpuSeatDecision,2> cpuSeats={},const MatchRules* rules=nullptr);
     const MatchRules& rules() const {return rules_;}
+    // The save image outlives every scene; rematches and new fights share it.
+    SystemData& system() const {return *system_;}
+    const std::shared_ptr<SystemData>& systemHandle() const {return system_;}
     NativeMatch(const NativeMatch&)=delete;
     NativeMatch& operator=(const NativeMatch&)=delete;
     void tick(const std::array<NormalizedPadSample,2>& pads);
@@ -117,6 +121,7 @@ private:
     std::array<std::unique_ptr<CpuTactics>,2> cpuTactics_;
     std::array<int,2> cpuLevels_{-1,-1};
     MatchRules rules_;
+    std::shared_ptr<SystemData> system_;
     bool explicitRules_=false;
     CpuCommand runCpu(unsigned seat,PermissionContext&,const SelectionThreat&);
     BattleRoundState battle_;

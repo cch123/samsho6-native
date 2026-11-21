@@ -1,0 +1,101 @@
+Scene and stream audio (arcade presentation scenes, gallery, music service)
+=========================================================================
+
+Status legend as elsewhere: OBSERVED = read from SLPS_255.59 / ADPCMST.IRX and executed
+in Probe; NATIVE = what the C++ port does; UNMODELLED = known difference.
+
+1. EE stream entry points (OBSERVED, validate_combat_music.py "requests")
+------------------------------------------------------------------------
+  All three fill the request block and tail-call 213d80 (clears 5a9e6c, "stream ready"):
+              1553b40   1553b44  1553b54        5a9e80   5a9e84  1553b58  1553b5c
+    213ff0    track+1   0        byte 43d056    a1       0       0        -
+    214060    track+1   0        byte 43d056    a1       1       0        -
+    2140b8    track+1   0        byte 43d056    a1       0       1        0
+  a1 is the IOP repeat flag (state 5 sends RPC 0x30000 {5a9e80, 1553b58, 0}); it is NOT a
+  volume. The stream volume is the global 5a9e78 (0x1c00 at boot 213e30, 0x3200 in every
+  native caller), released by 214118 -> 213d08 for a preload.
+  213ff0 alone: track 0x17 jumps to 212d80(12) - the resident jingle BVOICE1[49] tone 12 at
+  volume code 5a9e78 >> 9 (skipped when 5a9e78 == 0); a1 is ignored, the request block and a
+  running stream are untouched. 214060 (sound test) therefore streams BGM23, 1e7c00 never.
+  1e7c00 / 1e7c70 / 1e7ce8 clear / set the voice gate 5850e0 and call 213ff0. 1e7ad0 calls
+  214150; 1e7af8 calls it only while 5850e0 is set.
+
+2. Directory and file (OBSERVED, 214210)
+----------------------------------------
+  n = 1553b40 - 1; d = n < 15 ? 1 : n < 29 ? 2 : 3; d += 2 when 1553b54 != 0;
+  sprintf "\BGM%d\BGM%02d_L.VB;1" / "_R.VB;1" -> 2139d8 (IOP OPEN). The disc has BGM00..27 in
+  BGM1/BGM2 (factory) and BGM3/BGM4 (arranged). Arranged files identical to the factory ones:
+  00, 01, 04, 17..24, 26, 27 (both channels). The 260-entry disc catalogue at 3b1f68 lists all
+  112 files.
+
+3. Request machine 2142c0 (OBSERVED; states in 1553b44, table 665688)
+---------------------------------------------------------------------
+  Each visit with a request: RPC 0x90000 (IOP status v0), then
+    0  214150 (stop); -> 1          4  v0 == 0 (open done) -> 5
+    1  wait while 3b50 (fade); -> 2  5  RPC 0x30000 {repeat, preload, 0}; -> preload ? 6 : 7
+    2  v0 == 0 (idle) -> 3           6  3b5c && v0 == 0x4000 -> RPC 3 (release); -> 7
+    3  214210 (open); -> 4           7  -> 0, 3b48 = track, 1553b40 = 0
+  then 213660 (voice queue stage) and 214438 (fade).
+  214150: 5a9e84 == 0 -> 3b48 = 3b50 = 0, RPC 0x280000 (immediate stop). 5a9e84 != 0 (after a
+  214060 request) -> 213db0 (RPC 0x40000) returns the stream volume and ends the stream; a
+  non-zero answer sets 3b4c = volume, 3b50 = 1. 214438 then subtracts 0x222 per visit and writes
+  it through 213df0 (RPC 0xa0000) until negative (3b50 = 0). Measured in the IRX: the first
+  lowered volume is written on the visit of the stop, KOFF happens on the next service, and the
+  next request's state 1 holds until the fade ends (12800 / 0x222 -> 23 extra visits).
+  212dd8 (bank load behind 1e79c8) runs 2135e0, which repeats 214150 until the IOP is idle:
+  loading a bank stops a running stream. 1e79c8 first calls 1e7a78 (213be8(1), the SE voices).
+
+4. IRX stream behaviour (OBSERVED, all 56 streams in validate_combat_music.py "all_streams")
+-------------------------------------------------------------------------------------------
+  - Repeat: the wire period is the file rounded up to 32 KiB halves. The padding of a short
+    final half is what the 160-sector CD cache still holds: the disc bytes after the file for
+    a stream of at most one read (<= 320 KiB), otherwise the file 320 KiB earlier.
+  - One-shot: KOFF on the half-buffer IRQ after EOF; the last uploaded half is never heard
+    (2 * (halves - 1) transfers).
+  - The IRX does not test EOF after its initial two-half upload. A two-half stream (BGM23)
+    therefore uploads one half past EOF: one-shot it is heard complete (4 transfers); repeating
+    it would play that half once (no caller requests that: the sound test lists 23 as type 1 =
+    one-shot, 213ff0 redirects 23).
+  NATIVE: CombatMusic reads music_streams.bin (extract_stage_music.py) for length, own-asset
+  flag and the padding bytes; endSample = period for repeat, period - half for one-shot (period
+  for a two-half one-shot). The repeating two-half overrun is UNMODELLED (unreachable).
+  The fixture does not wait the two DelayThread(100000) initial reads; the native player waits
+  12 visits, so its key-on trails the fixture's by a constant 10 visits in every scenario.
+
+5. Groups and banks (OBSERVED)
+------------------------------
+  1e7968 / 1e79c8 map the EE group -1 / 0 / 1 to IOP group 0 / 1 / 2. 212dd8(group, bank)
+  loads BVOICE2[bank] into the group (5ad018[group] = bank) and, for group > 0 and bank < 0x31,
+  BVOICE1[bank] into voice slot group - 1. Scene loads:
+    120110 (ending entry 182968, arcade and gallery)   1e79c8(0, 0x31)  bank 49 -> group 1
+    1e5d88 (unlock notice) tail                        1e79c8(0, 0x33)  bank 51 -> group 1
+    sound test                                         1e79c8(0, ch), 1e79c8(1, 0x33 / 0x34)
+  213378(49, t) (21358c): t in 2..43 / 89..93 / 100 is the spoken name of character t - 2 /
+  t - 45 / 42 (last two BVOICE1 lines, the second for language 1), using voice slot 0 if that
+  character is group 1's bank, otherwise slot 1 whatever it holds; other tones are NAL lines
+  t < 44 ? t : t - 42, header row 43d055 * 0x42, data from the NAL bank 213180 loaded.
+  Map stage names 654ea8 = 44 45 46 47 50 51 54 52, walk-in voices 6551b8 = 78 79 80 87 81..86
+  86, pre-final 0x35, challenger banner 0x4d, 138af0's 0x4b: all narrator lines.
+
+6. Scene requests (OBSERVED / NATIVE emission)
+----------------------------------------------
+  opening 1e7c00(0x16,0); map 1e7c00(0x16,0) + stage name; walk-in voices, destructor 1e7ad0
+  1e7b40; dialogue 0x11/0x12/0x13 (repeat); pre-final 0x14 (repeat) + voice 0x35; win quote /
+  VS result 0x19 (one-shot); CONTINUE 1376d0 0x1a; GAME OVER 138340 0x1b (every branch reaches
+  138474), destructors 137c68 1e7ad0 and 138a48 1e7ad0 1e7b40; ending scripts bgm(3,1),
+  (4,1) staff roll, (6,0) one script, se(0, 0x1c..0x21) = bank 49; ending objects' ACT
+  commands through 1e8298 (common bank below 100, group 1 from 300; no voice commands occur).
+  Scene fighter objects (11fed0 / 120ce0) go through the same 120d10 gate (actions
+  188/189/18e/18f silent) and 1e8298.
+  NATIVE: 1e8298's 140090 actor is taken as flag-0x80 clear (no fighter runs in a scene) and
+  the scenes keep their own 1e83c0 history (the original shares 585224 / 58524c with the
+  battle); the stage of 1e83c0 is taken as G.+4 (INFERRED).
+
+7. Validation
+-------------
+  validate_combat_music.py: 336 request blocks + 4 jingle redirects, 56 OPEN name pairs, 56
+  streams (both flags), 4 fade / immediate timelines. validate_scene_audio.py: the arcade route
+  of validate_arcade_session.py through ss6-scene-audio-probe (viewer routing) plus all 50
+  gallery endings; each request's sample identity (disc MSH/MSB extent or decoded BGM prefix)
+  must be read by a keyed voice that becomes audible within the original latency.
+  Not measured: physical console seek time, DAC waveform, GS-independent timing.

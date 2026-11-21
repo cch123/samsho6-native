@@ -47,6 +47,12 @@ void ArcadeSceneObjects::create(int object,int seat,int action,int x,int y,uint3
     const auto& c=o.body->timeline.clock();
     o.body->timeline.setObjectFlags(c.objectFlags|flags,c.flags104,c.flags108);
     o.body->resourceSlot0c=uint32_t(seat);
+    o.body->timeline.setSoundObserver([this,seat,character=o.character,body=o.body.get()](int16_t command,const ActionClock& clock) {
+        if(onSound)onSound(seat,character,body->timeline.action().id(),command,clock);
+    });
+    // The first record was entered by the constructor, before the observer existed.
+    if(onSound&&o.body->timeline.soundEvents())
+        onSound(seat,o.character,unsigned(action),o.body->timeline.lastSoundCommand(),o.body->timeline.clock());
     if(colour>=0)o.body->field20=uint32_t(colour);
     objects_[object]=std::move(o);
 }
@@ -213,6 +219,26 @@ ArcadePresentation::ArcadePresentation(const std::filesystem::path& assets,Syste
     endingArt_=std::make_unique<EndingArt>(assets);
     art_=std::make_unique<ArcadeArt>(assets);
     curtain_=std::make_unique<VsCurtain>(assets);
+    soundSelection_=std::make_unique<SoundSelection>(assets);
+    objects_.onSound=[this](int seat,int character,unsigned action,int16_t command,const ActionClock& clock) {
+        // 120d10 keeps actions 188/189/18e/18f silent; the rest of its gate is 1e8298's record test.
+        if(!session_||action==0x188||action==0x189||action==0x18e||action==0x18f)return;
+        objectSound(*session_,seat,command,character,&clock);
+    };
+}
+void ArcadePresentation::objectSound(ArcadeSession& session,int seat,int16_t command,int character,const ActionClock* clock) {
+    // 1e8298: 140090's actor is the last fight's (no fighter runs in a scene); its
+    // flag 0x80 weapon mute is taken as clear. 1e83c0 draws the game generator.
+    auto& selection=*soundSelection_;
+    selection.beginFrame();
+    auto& run=session.run;
+    if(clock)selection.record(command,*clock,seat,character,0,run.game.mode,run.game.stage,run.random());
+    else selection.act(command,seat,character,0,run.game.mode,run.game.stage,run.random());
+    for(const auto& e:selection.events()) {
+        if(e.kind==BattleSoundKind::Sample)sound(ArcadeSceneSound::Sound,e.bank-1,e.tone);
+        else if(e.kind==BattleSoundKind::Voice)sound(ArcadeSceneSound::Voice,e.bank,e.tone);
+    }
+    selection.beginFrame();
 }
 ArcadePresentation::~ArcadePresentation()=default;
 bool ArcadePresentation::presents(ArcadeScene s) {
@@ -261,7 +287,10 @@ void ArcadePresentation::endingEvents(ArcadeSession& session,const std::vector<E
         case EndingEvent::Music:sound(ArcadeSceneSound::Music,e.a,e.b);break;
         case EndingEvent::MusicStop:sound(ArcadeSceneSound::MusicStop);break;
         case EndingEvent::Sound:sound(ArcadeSceneSound::Sound,e.a,e.b);break;
-        case EndingEvent::ObjectSound:sound(ArcadeSceneSound::ObjectSound,e.b,int32_t(e.c));break;
+        case EndingEvent::ObjectSound:
+            sound(ArcadeSceneSound::ObjectSound,e.b,int32_t(e.c),e.a);
+            objectSound(session,e.a,int16_t(e.b),int32_t(e.c),nullptr);   // 120d10 already applied the record gate
+            break;
         // 1a4a98(n < c): the battle stage loader 50e080[n]; the scripts name the stage of the last fight.
         case EndingEvent::BackgroundStage:stage_=session.run.game.stage;break;
         case EndingEvent::BackgroundClear:stage_=-1;break;
@@ -277,6 +306,7 @@ void ArcadePresentation::syncEndingFade(bool toEnding,ArcadeSession& session) {
 }
 
 void ArcadePresentation::enter(ArcadeSession& session,ArcadeScene scene,uint32_t held) {
+    session_=&session;
     using S=ArcadeScene;
     auto& run=session.run;auto& fade=session.fade;
     const unsigned h=run.humanSeat();
@@ -338,13 +368,18 @@ void ArcadePresentation::enter(ArcadeSession& session,ArcadeScene scene,uint32_t
         ending_=std::make_unique<ArcadeEnding>(*endingData_);
         endingArt_=std::make_unique<EndingArt>(assets_);
         ending_->enter(run,alternateText());
-        // 182968 loads resource "99a" into both slots; 1e79c8(0, 0x31) the scene sound bank.
-        sound(ArcadeSceneSound::Music,-1,0x31);
+        // 182968 -> 120110 loads resource "99a" into both slots and 1e79c8(0, 0x31):
+        // BVOICE2 bank 49 into group 1, the bank of the scripts' 1e7b70(0, n).
+        sound(ArcadeSceneSound::LoadBank,0,0x31);
         nameBefore_={};
         break;
     case S::UnlockNotice: {
         unlock_.emplace();
-        const auto e=unlock_->enter(run,unlockSession);
+        auto e=unlock_->enter(run,unlockSession);
+        // 1e5d88 ends with 1e79c8(0, 0x33), a bank load (ArcadeResultEvents names it music):
+        // the menu bank 51 into group 1 for the notice's 1e7b70(0, 1).
+        if(e.music>=0)sound(ArcadeSceneSound::LoadBank,0,e.music);
+        e.music=-1;
         resultEvents(e);
         break;
     }
@@ -361,12 +396,13 @@ void ArcadePresentation::enter(ArcadeSession& session,ArcadeScene scene,uint32_t
     (void)h;
 }
 void ArcadePresentation::leave(ArcadeSession& session) {
+    session_=&session;
     using S=ArcadeScene;
     auto& run=session.run;auto& fade=session.fade;
     switch(current) {
     case S::Opening:opening_->leave(run,fade);talkEvents(session,opening_->events);break;
     case S::Map:ArcadeMapScene::leave(run);break;
-    case S::WalkIn:sound(ArcadeSceneSound::MusicStop);break;               // 1c44f0: 1e7ad0, 1e7b40
+    case S::WalkIn:sound(ArcadeSceneSound::MusicStop);sound(ArcadeSceneSound::EffectsStop);break; // 1c44f0: 1e7ad0, 1e7b40
     case S::Dialogue:dialogue_->leave(run,fade);talkEvents(session,dialogue_->events);break;
     case S::PreFinal:preFinal_->leave(run,fade);talkEvents(session,preFinal_->events);break;
     case S::WinQuote:ArcadeWinQuote::leave(run);sound(ArcadeSceneSound::MusicStop);break; // 136288
@@ -381,6 +417,7 @@ void ArcadePresentation::leave(ArcadeSession& session) {
 }
 
 bool ArcadePresentation::tick(ArcadeSession& session,std::array<uint32_t,2> pressed,uint32_t held) {
+    session_=&session;
     using S=ArcadeScene;
     auto& run=session.run;auto& fade=session.fade;
     const unsigned h=run.humanSeat();
@@ -503,6 +540,7 @@ bool ArcadePresentation::tick(ArcadeSession& session,std::array<uint32_t,2> pres
 }
 
 void ArcadePresentation::enterLoser(ArcadeSession& session,ArcadeScene scene) {
+    session_=&session;
     current=scene;objects_.clear();objects_.submitted.clear();stage_=-1;failure.clear();
     list_.beginFrame();back_.beginFrame();
     auto& run=session.run;
@@ -693,6 +731,7 @@ bool GalleryEndingPlayer::tick(uint32_t pressed,std::vector<ArcadeSceneSound>& s
         if(e.kind==EndingEvent::Sound)sounds.push_back({ArcadeSceneSound::Sound,e.a,e.b});
         else if(e.kind==EndingEvent::Music)sounds.push_back({ArcadeSceneSound::Music,e.a,e.b});
         else if(e.kind==EndingEvent::MusicStop)sounds.push_back({ArcadeSceneSound::MusicStop});
+        else if(e.kind==EndingEvent::ObjectSound)sounds.push_back({ArcadeSceneSound::ObjectSound,e.b,int32_t(e.c),e.a});
     }
     if(!done) {
         list_.beginFrame();

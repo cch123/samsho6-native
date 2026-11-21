@@ -144,6 +144,7 @@ const std::vector<CombatSoundSample>& CombatSoundBank::characterGroup(unsigned i
     return extra_.emplace(key,std::move(decoded)).first->second;
 }
 const CombatSoundSample* CombatSoundBank::fighterEffect(unsigned id,unsigned tone){return lookup(characterGroup(id,false),tone);}
+const CombatSoundSample* CombatSoundBank::bankEffect(unsigned id,unsigned tone){return id==50?find(0,tone):fighterEffect(id,tone);}
 const CombatSoundSample* CombatSoundBank::fighterVoice(unsigned id,unsigned tone){return lookup(characterGroup(id,true),tone);}
 unsigned CombatSoundBank::voiceCount(unsigned id){return unsigned(characterGroup(id,true).size());}
 const CombatSoundSample* CombatSoundBank::residentVoice(unsigned tone) const {

@@ -56,10 +56,11 @@ def main():
     args = parser.parse_args()
     data = extract(Iso(args.iso))
     args.output.write_bytes(data)
-    # 128180 installs menu banks 51/52 in the player slots. The face-off
+    # 128180 installs menu banks 51/52 in the player slots, the ending scene
+    # 182968 loads 49 and the unlock notice 51 into group 1. The face-off
     # announces each chosen fighter from the final two BVOICE1 lines.
     iso=Iso(args.iso)
-    for name,index,stride in [('BVOICE2',i,0x250) for i in (*(c for c in PACKAGED if c),51,52)]+[('BVOICE1',i,0x110) for i in range(1,49)]:
+    for name,index,stride in [('BVOICE2',i,0x250) for i in (*(c for c in PACKAGED if c),49,51,52)]+[('BVOICE1',i,0x110) for i in range(1,49)]:
         group=extract(iso,[(name,index,stride)])[len(MAGIC):]
         stem='vs_sounds' if name=='BVOICE2' else 'vs_voice'
         (args.output.parent/f'{stem}_{index:02}.bin').write_bytes(group)

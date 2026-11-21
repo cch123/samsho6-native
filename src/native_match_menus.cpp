@@ -1,3 +1,4 @@
+#include "practice_art.hpp"
 #include "native_match.hpp"
 #include "gallery_art.hpp"
 #if SS6_HAVE_PAUSE_ART
@@ -56,6 +57,91 @@ struct NativeMatch::MenuScenes {
     KeyConfigWindow keys;
 };
 
+struct NativeMatch::BattleOverlay {
+#if SS6_HAVE_PAUSE_ART
+    std::unique_ptr<GalleryArt> library;
+    std::unique_ptr<PauseArt> pause;
+    PauseEdgePulse pulse;                   // 582f60/582f64 survive between pauses
+#endif
+    std::unique_ptr<EditArt> edit;
+    std::unique_ptr<PracticeArtTables> practiceTables;
+    std::unique_ptr<EditFrame> practiceFrame;  // help window 12d3870 (1822a0)
+    EditPen pen;
+    MenuBackdrop backdrop;                  // untouched by the battle-mode windows
+    MenuChrome chrome;
+    MenuDrawList edits,windows;             // EditArt pass (practice), PauseArt pass (pause family)
+    bool active=false;
+};
+NativeMatch::BattleOverlay& NativeMatch::battleOverlay() {
+    if(!overlay_)overlay_=std::make_shared<BattleOverlay>();
+    auto& o=*overlay_;
+    if(!menuCanvas_)menuCanvas_=std::make_unique<MenuCanvas>(assets_);
+#if SS6_HAVE_PAUSE_ART
+    if(!o.library){o.library=std::make_unique<GalleryArt>(*menuCanvas_,assets_);o.pause=std::make_unique<PauseArt>(*menuCanvas_,*o.library,assets_);}
+#endif
+    if(!o.edit){o.edit=std::make_unique<EditArt>(assets_,*menuCanvas_);o.pen.colour=o.edit->assets().initialTextColour;}
+    return o;
+}
+void NativeMatch::drawPauseOverlay() {
+    auto& o=battleOverlay();
+    o.windows.beginFrame();o.windows.asciiDepth=-200.f;o.edits.records.clear();
+    o.active=pause_&&pause_->active;
+    if(!o.active)return;
+#if SS6_HAVE_PAUSE_ART
+    menuCanvas_->setBrightness(system_->brightness());o.pause->setBrightness(system_->brightness());
+    auto& list=o.windows;
+    const PauseWindowContext context{unsigned(battle_.gameMode),pause_->ownerSeat(pauseGame_),SkillUnlocks(*system_)};
+    auto random=battle_.random; // the battle-mode windows leave the backdrop and its RNG untouched
+    if(pause_->windowTask[0]==PauseMenu::Woken)
+        o.pause->drawKeyConfig(list,*keyAssets_,keyConfig_,*system_,context,o.backdrop,random,o.chrome);
+    else if(pause_->windowTask[1]==PauseMenu::Woken&&skillList_)
+        o.pause->drawSkillList(list,*skillList_,PauseWindowContext{context.gameMode,skillList_->seat,context.unlocks},o.backdrop,random,o.chrome);
+    else o.pause->drawPauseMenu(list,*pauseAssets_,pauseDraw_,pause_->chrome,pauseGame_.submode==5,o.pulse);
+#endif
+}
+void NativeMatch::drawPracticeOverlay() {
+    auto& o=battleOverlay();
+    const auto& p=*practiceBattle_;
+    o.active=true;
+    o.edits.beginFrame();o.edits.asciiDepth=-200.f;o.edits.resetCursor();
+    o.windows.beginFrame();o.windows.asciiDepth=-200.f;
+    if(!o.practiceTables)o.practiceTables=std::make_unique<PracticeArtTables>(assets_);
+    EditArt::Context c{o.edits,o.pen,0,system_->option(0x7e)!=0};
+    drawPracticeDisplays(*o.edit,*o.practiceTables,c,*practice_,p.damage,p.keys,
+                         {fighters_[0].sampling.replayIndex,fighters_[1].sampling.replayIndex},p.tables);
+    if(!o.practiceFrame)return;
+    drawPracticeWindow(*o.edit,*o.practiceTables,c,p.window,*practice_,*o.practiceFrame,p.tables,[&]{
+#if SS6_HAVE_PAUSE_ART
+        // 212478 / 20ef38 / 210298 sit between the menu and the dialog. They
+        // use the window library of PauseArt, composed in a second pass.
+        const PauseWindowContext context{unsigned(battle_.gameMode),unsigned(practice_->localSeat()),SkillUnlocks(*system_)};
+        auto random=battle_.random;
+        if(p.keyConfigOpen&&keyAssets_)o.pause->drawKeyConfig(o.windows,*keyAssets_,keyConfig_,*system_,context,o.backdrop,random,o.chrome);
+        if(p.skillListOpen&&skillList_)o.pause->drawSkillList(o.windows,*skillList_,context,o.backdrop,random,o.chrome);
+#endif
+    });
+}
+void NativeMatch::practiceFrame(int step) {
+    auto& o=battleOverlay();
+    const auto& p=*practiceBattle_;
+    if(step==0) {
+        if(!editWidgets_)editWidgets_=std::make_unique<EditWidgetAssets>(assets_);
+        o.practiceFrame=std::make_unique<EditFrame>(o.edit->assets(),*editWidgets_,unsigned(practice_->localSeat()));
+    }
+    if(!o.practiceFrame)return;
+    if(step==1)o.practiceFrame->tick();
+    else applyPracticeHelp(*o.practiceFrame,p.help,p.tables);
+}
+bool NativeMatch::composeBattleOverlay(std::span<uint8_t> rgba) const {
+    if(!overlay_||!overlay_->active)return false;
+    if(rgba.size()!=640*480*4)throw std::invalid_argument("Expected a 640x480 RGBA frame");
+    const auto& o=*overlay_;
+    if(!o.edits.records.empty())o.edit->rasterise(o.edits,rgba);
+#if SS6_HAVE_PAUSE_ART
+    if(!o.windows.records.empty())o.pause->rasterise(o.windows,rgba);
+#endif
+    return true;
+}
 NativeMatch::MenuScenes& NativeMatch::menus() {
     if(!menus_)menus_=std::make_shared<MenuScenes>();
     if(!menuCanvas_)menuCanvas_=std::make_unique<MenuCanvas>(assets_);

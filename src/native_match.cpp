@@ -1275,7 +1275,7 @@ bool NativeMatch::tickPause(const std::array<NormalizedPadSample,2>& pads) {
         skillList_->listId=fighters_[seat].actor.characterA14+((fighters_[seat].actor.flags23c&0x100000)?0x32:0);
         skillList_->enter(seat);
     }
-    if(!pause_->active){pauseHold_=false;pauseDraw_={};return hold;}
+    if(!pause_->active){pauseHold_=false;pauseDraw_={};drawPauseOverlay();return hold;}
     const auto widgetPad=[&](unsigned i){return WidgetPad{resultPad(pads[i].held),menuPads[i].pressed,menuPads[i].repeat};};
     std::vector<int> tones;
     if(pause_->windowTask[0]==PauseMenu::Woken) {
@@ -1296,6 +1296,7 @@ bool NativeMatch::tickPause(const std::array<NormalizedPadSample,2>& pads) {
     if(tick.scene!=PauseScene::None){pauseExit_=tick.scene;pauseExitDone_=false;sceneFade_.begin(false);}
     // 1392e8 is a one-frame request: this visit's request stops the next update.
     pauseHold_=pause_->active!=0;
+    drawPauseOverlay();
     return true;
 }
 void NativeMatch::openSoloSelect(unsigned seat) {
@@ -1630,7 +1631,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         updateVersusResult(result,{resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
         return;
     }
-    if(battle_.practice()){tickPractice(pads);return;}
+    if(battle_.practice()){tickPractice(pads);if(practiceBattle_)drawPracticeOverlay();return;}
     if(battle_.survival()){tickSurvival(pads);return;}
     battleFrame(pads);
 }

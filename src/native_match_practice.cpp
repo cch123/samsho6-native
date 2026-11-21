@@ -55,6 +55,7 @@ void NativeMatch::enterPractice() {
     // 210438 drops the STAND option 9 and the ACTION index of the last scene.
     practice_->settings.enterBattle();
     p.window.init(*practice_,p.help);
+    practiceFrame(0); // 17f5a0 builds the help window 1822a0 for the local seat
     p.damage.reset();p.keys.clear();
     p.pauseRequested=true;
     b.practiceDamage=[this](const StateEntryActor& recipient,int32_t amount) {
@@ -154,6 +155,7 @@ void NativeMatch::tickPractice(const std::array<NormalizedPadSample,2>& pads) {
     const auto& dummyFighter=fighters_[unsigned(practice_->menuDummySeat())];
     const PracticeFighter dummy{PracticeSystem{int(dummyFighter.config.system),nullptr},int(dummyFighter.actor.character),
                                 bool(dummyFighter.actor.flags23c&0x100000)};
+    practiceFrame(1); // 1825b8 before the window update
     const auto gates=p.window.begin(menuPads[port],*practice_,dummy,p.tables);
     PracticeSubEvents sub;
     std::vector<int> tones;
@@ -175,6 +177,7 @@ void NativeMatch::tickPractice(const std::array<NormalizedPadSample,2>& pads) {
     for(int id:out.sounds)sounds_.sample(-1,id);
     for(int id:tones)sounds_.sample(-1,id);
     p.help=std::move(out.help);
+    practiceFrame(2);
     if(p.window.state!=before&&(p.window.state==5||p.window.state==6)) {
         if(!keyAssets_) {
             keyAssets_=std::make_unique<KeyConfigAssets>(assets_);

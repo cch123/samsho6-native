@@ -802,7 +802,7 @@ class VersusScreen {
         }
         check(SDL_RenderPresent(r));
     }
-    std::vector<uint8_t> menuPixels_,overlayPixels_;
+    std::vector<uint8_t> menuPixels_,overlayPixels_,windowPixels_;
     std::optional<ss6::MenuCanvas> overlayCanvas_;
     std::optional<ss6::ArcadeArt> arcadeArt_;
     std::optional<ss6::ArcadeTallyTables> overlayTables_;
@@ -1013,13 +1013,24 @@ public:
             present(r,result,paused);return;
         }
         const SDL_Rect arenaPixels{0,0,frame_.width,frame_.height};
-        if(arcade&&match.arcadeTables()&&frame_.width==640) {
-            // Score, the free seat's PRESS START legend and the round tally
-            // are composed over the finished arena and HUD.
-            arcadeOverlay(match,*arcade,false);
-            check(SDL_UpdateTexture(texture,&arenaPixels,overlayPixels_.data(),640*4));
-        } else
-        check(SDL_UpdateTexture(texture,&arenaPixels,frame_.rgba.data(),frame_.width*4));
+        {
+            const uint8_t* pixels=frame_.rgba.data();
+            if(arcade&&match.arcadeTables()&&frame_.width==640) {
+                // Score, the free seat's PRESS START legend and the round tally
+                // are composed over the finished arena and HUD.
+                arcadeOverlay(match,*arcade,false);
+                pixels=overlayPixels_.data();
+            }
+            if(frame_.width==640) {
+                // Pause menu, its key-configuration / skill-list windows and the
+                // PRACTICE window are drawn last, over everything else. The
+                // overlay works on a 640x480 surface; only the arena rows are shown.
+                windowPixels_.assign(640*480*4,0);
+                std::copy_n(pixels,size_t(frame_.width)*frame_.height*4,windowPixels_.begin());
+                if(match.composeBattleOverlay(windowPixels_))pixels=windowPixels_.data();
+            }
+            check(SDL_UpdateTexture(texture,&arenaPixels,pixels,frame_.width*4));
+        }
         color(r,23,26,29);check(SDL_RenderClear(r));
         SDL_FRect stage{0,0,640,448};check(SDL_RenderTexture(r,texture,&stage,&stage));
         color(r,242,237,218);
@@ -1042,22 +1053,8 @@ bool unlockModes=false;
 std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
     std::vector<std::string> lines;
     const auto& match=session.match();
-    const auto ascii=[](const std::string& text){for(unsigned char c:text)if(c>=0x80)return false;return true;};
-    if(const auto* pause=match.pauseMenu();pause&&pause->active) {
-        // The pause window art is not ported: list its rows as text.
-        const auto& draw=match.pauseDraw();const auto& assets=*match.pauseAssets();
-        if(match.keyConfigOpen())lines.push_back("KEY CONFIGURATION (SCREEN IN DEVELOPMENT) / SELECT: CLOSE");
-        else if(match.skillListOpen())lines.push_back("SKILL LIST (SCREEN IN DEVELOPMENT) / SELECT OR CANCEL: CLOSE");
-        else {
-            for(int i=0;i<draw.rows;++i) {
-                const auto& item=draw.rows==6?assets.items[unsigned(i)]:assets.items5[unsigned(i)];
-                lines.push_back(std::string(i==draw.cursor?"> ":"  ")+(ascii(item)?item:"ITEM "+std::to_string(i)));
-            }
-            if(draw.dialog)lines.push_back(std::string(draw.dialog==1?"RETURN TO TITLE?":"CHARACTER SELECT?")+(draw.choice==0?"  [YES]  NO":"  YES  [NO]"));
-        }
-    }
-    // PRACTICE MODE: the window 2109b0, the damage box 13a280 and the REC/PLAY clock 141dd0 have no ported art.
-    for(auto& line:match.practiceOverlay())lines.push_back(std::move(line));
+    // The pause menu family and the PRACTICE window are drawn with the
+    // original art by NativeMatch::composeBattleOverlay.
     // SURVIVAL MODE: the candidate window 211e18, the message window 182600, the panel 1810f8
     // and the defeated count of the HUD header 1bb2c8 have no ported art.
     for(auto& line:match.survivalOverlay())lines.push_back(std::move(line));

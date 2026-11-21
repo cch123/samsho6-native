@@ -114,6 +114,11 @@ public:
     // Resolves this tick's submissions over a 640x480 RGBA frame (448 lines
     // are used) with the rasteriser of the art module that produced them.
     void rasteriseMenu(std::span<uint8_t> rgba) const;
+    // In-battle windows drawn with the original art over a finished 640x480
+    // battle frame: the pause menu with its key-configuration and skill-list
+    // windows, and the PRACTICE window, data display and REC / PLAY clock.
+    // Returns false when this tick has no such overlay.
+    bool composeBattleOverlay(std::span<uint8_t> rgba) const;
     // COLOR EDIT (13b160) and its three preview object requests of this tick.
     const ColorEdit* colorEdit() const;
     std::span<const EditPreviewObject> colorEditPreview() const;
@@ -247,6 +252,14 @@ private:
     bool editLeaving_=false;
     void tickSpiritsEdit(const std::array<NormalizedPadSample,2>&);
     // native_match_menus.cpp: the art and scene state of the edit, gallery and key configuration scenes.
+    // Draw lists of composeBattleOverlay, built during the tick that ran the
+    // window tasks (the original submits them from the battle thread).
+    struct BattleOverlay;
+    std::shared_ptr<BattleOverlay> overlay_;
+    BattleOverlay& battleOverlay();
+    void drawPauseOverlay();
+    void drawPracticeOverlay();
+    void practiceFrame(int step); // help window: 0 build, 1 tick (1825b8), 2 apply the window's requests
     struct MenuScenes;
     std::shared_ptr<MenuScenes> menus_;
     std::shared_ptr<EditedPalettes> palettes_;

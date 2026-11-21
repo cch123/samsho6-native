@@ -75,6 +75,7 @@ MenuCanvas::MenuCanvas(const std::filesystem::path& assets) {
     }
     for(auto& x:dialogX_)x=in.integer();
     for(auto& entry:textClut_)std::copy_n(in.take(4),4,entry.begin());
+    defaultTextClut_=textClut_;
     for(auto& entry:trig_) {entry[0]=in.real();entry[1]=in.real();}
     const auto bytes=[&](size_t n) {const auto* p=in.take(n);return std::vector<uint8_t>(p,p+n);};
     half_=bytes(32768);

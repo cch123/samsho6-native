@@ -145,6 +145,11 @@ public:
 
     // Resolves the list in ascending depth, submission order within a depth.
     void rasterise(const MenuDrawList& list,std::span<uint8_t> rgba) const;
+    // The 16-entry glyph CLUT. 112f30 rebuilds it per scene (the arcade walk-in uses black ink);
+    // without an override the menu default from menu_canvas.bin applies.
+    using TextClut=std::array<std::array<uint8_t,4>,16>;
+    void setTextClut(const TextClut& clut) {textClut_=clut;}
+    void resetTextClut() {textClut_=defaultTextClut_;}
 
     // Constants of the overlay (65ae58..65ae84) for MenuBackdrop.
     float constant(unsigned index) const {return floats_.at(index);}
@@ -173,7 +178,7 @@ private:
     std::array<float,30> floats_{};
     std::vector<std::string> strings_;
     std::array<int,2> dialogX_{};
-    std::array<std::array<uint8_t,4>,16> textClut_{};
+    std::array<std::array<uint8_t,4>,16> textClut_{},defaultTextClut_{};
     std::array<std::array<float,2>,360> trig_{};
     std::vector<uint8_t> half_,index20_,index24_;
     std::vector<uint16_t> glyphIndex_;

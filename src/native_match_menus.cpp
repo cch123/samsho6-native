@@ -7,6 +7,7 @@
 #include "pause_art.hpp"
 #endif
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 
@@ -41,6 +42,12 @@ struct NativeMatch::MenuScenes {
     std::unique_ptr<EditPaletteBank> bank;
     std::unique_ptr<ColorEdit> color;
     std::array<EditPreviewObject,3> preview{};
+    // The two fighter preview objects (13bfd0 sprite, 13c4f8 check pose) drawn with the edited colours.
+    struct PreviewBody {int character=-1,action=-1,record=-1;std::unique_ptr<PlayerObject> body;};
+    std::array<PreviewBody,2> previewBodies;
+    std::unique_ptr<ActionBank> previewBank;int previewBankCharacter=-1;
+    std::unique_ptr<NativeScene> previewScene;int previewSceneCharacter=-1;
+    ObjectDrawQueue previewQueue;
     // GALLERY
     std::unique_ptr<GalleryData> galleryData;
     std::unique_ptr<GalleryArt> galleryArt;
@@ -173,13 +180,70 @@ int NativeMatch::galleryCursor() const {
 const KeyConfigWindow* NativeMatch::optionKeyConfig() const {
     return menus_&&menus_->scene==MenuScene::KeyConfig?&menus_->keys:nullptr;
 }
+void NativeMatch::paintColorEditPreview(std::span<uint8_t> rgba) const {
+    // 13f8a8 sets the camera 122e98(320, 150, -400) / 122eb8(-160, -200). The objects are ordinary
+    // fighter bodies of resource slot 1 (13bed0 loads the fighter there), restarted by 11d908 when
+    // the action changes and animated every visit; +20 is the palette key (fighter*5+colour) | 10000,
+    // whose colours 115d40 reads from the edit block of the save image the editor writes into.
+    // Object 0 (11d668(object, character, 400, 0, 290000), kind 8) is not drawn: it plays resource 99's
+    // action 3 from slot 0 but shows the highlighted fighter (+14 / +1c = character, character * 5);
+    // the kind-8 branch of the draw path is not ported.
+    // Validation only: validate_menu_scenes.py compares the menu raster without the objects.
+    if(std::getenv("SS6_MENU_NO_PREVIEW"))return;
+    auto& m=*menus_;
+    std::vector<AuxiliaryObject> poses;
+    const auto submit=[&](PlayerObject& body) {
+        auto pose=body.childParentWords();
+        pose[0x24/4]=body.timeline.action().id();
+        pose[0x28/4]=body.timeline.clock().step;
+        pose[0x104/4]=body.timeline.clock().flags104;
+        pose[0x8c/4]=body.color8c;
+        poses.push_back(pose);
+    };
+    for(unsigned k=0;k<2;++k) {
+        const auto& v=m.preview[k+1];
+        auto& live=m.previewBodies[k];
+        if(v.hidden||v.action<0){live={};continue;}
+        if(m.previewBankCharacter!=v.character) {
+            m.previewBank=std::make_unique<ActionBank>(assets_,true,unsigned(v.character));m.previewBankCharacter=v.character;
+            for(auto& b:m.previewBodies)b={};
+        }
+        if(!live.body||live.character!=v.character||live.action!=v.action||live.record!=v.record) {
+            live.character=v.character;live.action=v.action;live.record=v.record;
+            try {live.body=std::make_unique<PlayerObject>(*m.previewBank,unsigned(v.action));}
+            catch(const std::exception&) {live.body.reset();continue;}
+            live.body->timeline.setRecordStep(uint32_t(v.record));
+        } else live.body->animate(256);
+        auto& body=*live.body;
+        body.timeline.setPosition(v.x,v.y);
+        const auto& c=body.timeline.clock();
+        body.timeline.setObjectFlags(v.flip?(c.objectFlags|0x80000000u):(c.objectFlags&~0x80000000u),c.flags104,c.flags108);
+        body.resourceSlot0c=1;body.field20=v.paletteKey;
+        submit(body);
+    }
+    if(poses.empty())return;
+    if(!m.previewScene||m.previewSceneCharacter!=m.previewBankCharacter) {
+        m.previewScene=std::make_unique<NativeScene>(assets_,std::array<unsigned,3>{0,unsigned(std::max(m.previewBankCharacter,0)),51});
+        m.previewSceneCharacter=m.previewBankCharacter;
+    }
+    m.previewScene->bindEdited(m.colorTables.get(),system_.get());
+    m.previewScene->resetPalettes();
+    m.previewQueue.beginFrame();
+    for(const auto& o:poses)m.previewQueue.submit(o,GaugeState{});
+    m.previewQueue.sort();
+    StageCamera camera;
+    camera.projectionX=320.f;camera.projectionY=150.f;camera.depth=-400.f;camera.verticalOffset=-200.f;
+    std::array<uint16_t,1024> tones{};
+    m.previewScene->paint(m.previewQueue,{camera,{},-2,0},EffectPalettes{},tones,rgba,{});
+}
 void NativeMatch::rasteriseMenu(std::span<uint8_t> rgba) const {
     if(rgba.size()!=640*480*4)throw std::invalid_argument("Expected a 640x480 RGBA frame");
     for(size_t i=0;i<rgba.size();i+=4){rgba[i]=rgba[i+1]=rgba[i+2]=0;rgba[i+3]=255;}
     if(!menuCanvas_)return;
     switch(menuScene()) {
     case MenuScene::Option:menuCanvas_->rasterise(menuList_,rgba);break;
-    case MenuScene::SpiritsEdit:case MenuScene::ColorEdit:menus_->editArt->rasterise(menuList_,rgba);break;
+    case MenuScene::SpiritsEdit:menus_->editArt->rasterise(menuList_,rgba);break;
+    case MenuScene::ColorEdit:menus_->editArt->rasterise(menuList_,rgba);paintColorEditPreview(rgba);break;
     case MenuScene::EndingSelect:
         if(menus_->endingPlaying){menus_->endingPlayer->paint(rgba);break;}
         menus_->galleryArt->rasterise(menuList_,rgba);break;

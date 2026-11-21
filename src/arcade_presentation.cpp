@@ -333,6 +333,8 @@ void ArcadePresentation::enter(ArcadeSession& session,ArcadeScene scene,uint32_t
     }
     case S::WalkIn:
         walkIn_.emplace();walkIn_->enter(run,*mapArt_);
+        // 1c47c0: 112f30(0, 0xffffff), black balloon text with a white edge.
+        session.fade.textColour=0;session.fade.textShadow=0xffffff;
         setCamera(walkIn_->camera);
         break;
     case S::Dialogue:
@@ -633,10 +635,14 @@ void ArcadePresentation::paint(const ArcadeSession& session,std::span<uint8_t> r
     case S::Map:case S::WalkIn: {
         mapArt_->setFade(fade.vertexFade(),fade.level,fade.colour);
         canvas_.setFade(fade.vertexFade(),fade.level,fade.colour);
+        // The balloon glyphs use the CLUT 112f30 built from the text registers (116774 ramp).
+        MenuCanvas::TextClut clut;for(unsigned i=0;i<16;++i)clut[i]=fade.glyph(i);
+        canvas_.setTextClut(clut);
         const auto parts=split(list_,objectDepth);
         mapArt_->rasterise(canvas_,parts[0],rgba);
         composeObjects(rgba,objects_.submitted,fighters);
         mapArt_->rasterise(canvas_,parts[1],rgba);
+        canvas_.resetTextClut();
         break;
     }
     case S::Dialogue:case S::PreFinal: {

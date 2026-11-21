@@ -35,6 +35,10 @@ public:
     std::vector<ArcadeSceneEntry> arcadeLog() const;
     void tick(const std::array<NormalizedPadSample,2>&);
     void restart();
+    // Pin the stage of a directly started fight (0..11). Stages 10 and 11
+    // are not offered by the VS selector.
+    void fixedStage(int stage) {stage_=stage;restart();}
+    void stageItems(bool enabled) {items_=enabled;restart();}
     using TickObserver=std::function<void(const NativeMatch&)>;
     void onTick(TickObserver observer) {observer_=std::move(observer);}
     // Sound requests of the ARCADE presentation scenes on this tick.
@@ -47,6 +51,8 @@ private:
     std::array<unsigned,2> spirits_;
     VersusEntry entry_;
     std::array<bool,2> cpuSeats_{};
+    int stage_=0;
+    bool items_=false;
     void configureControllers(NativeMatch&) const;
     MatchRules versusRules() const;
     std::unique_ptr<ArcadeSession> arcade_;

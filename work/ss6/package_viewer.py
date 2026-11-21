@@ -10,7 +10,7 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  'permission_air_rectangles.bin','permission_target_ranges.bin','permission_attack_ranges.bin','permission_systems.bin','permission_limits.bin','permission_gate_limits.bin','permission_cancel_conditions.bin',
                  'entry_attack.bin','entry_special.bin','entry_damage.bin','entry_conditions.bin','entry_special_exceptions.bin',
                  'callback_attack_handlers.bin','callback_special_parameters.bin','callback_character_parameters.bin','callback_constants.bin',
-                 'weapon_positions.bin','script_rows.bin','action_locks.bin','projectile_descriptors.bin','victim_rows.bin','depth_rules.bin','victim_facing_pairs.bin','victim_hold_pairs.bin','fighter_stubs.bin','form_actions.bin','angle_trig.bin','weapon_constants.bin','weapon_lock.bin','aid_51.bin','act_51.bin','jdg_51.bin','pil_51.bin','idx_51.bin','map_51.bin','chr_51.bin','sound_selection.bin','combat_sound_bank.bin','bgm01_l.vb','bgm01_r.vb','bgm02_l.vb','bgm02_r.vb','bgm05_l.vb','bgm05_r.vb','bgm06_l.vb','bgm06_r.vb','bgm24_l.vb','bgm24_r.vb','stage_event.bin','stage_item_schedule.bin','opening_tasks.bin','ending_tasks.bin','ending_choices.bin',
+                 'weapon_positions.bin','script_rows.bin','action_locks.bin','projectile_descriptors.bin','victim_rows.bin','depth_rules.bin','victim_facing_pairs.bin','victim_hold_pairs.bin','fighter_stubs.bin','form_actions.bin','angle_trig.bin','weapon_constants.bin','weapon_lock.bin','aid_51.bin','act_51.bin','jdg_51.bin','pil_51.bin','idx_51.bin','map_51.bin','chr_51.bin','sound_selection.bin','combat_sound_bank.bin','bgm01_l.vb','bgm01_r.vb','bgm02_l.vb','bgm02_r.vb','bgm05_l.vb','bgm05_r.vb','bgm06_l.vb','bgm06_r.vb',*[f'bgm{track:02}_{side}.vb' for track in range(7,17) for side in 'lr'],'bgm24_l.vb','bgm24_r.vb','stage_event.bin','stage_item_schedule.bin','opening_tasks.bin','ending_tasks.bin','ending_choices.bin',
                  'contact_effects.bin','effect03.tex','effect04.tex','effect05.tex','effect09.tex','04tenso.bin','effect06.tex','effect07.tex','effect08.tex','world_effects.bin','effect_descriptors.bin','02Guard.bin','03etc.bin','effect02.tex','01HitFlash.bin','Display.bin','Display2.bin','Display3.bin','effect_pal_data.bin',
                  'obj1_16.tex','obj2_16.tex','effect01.tex','moji1.tex','moji2.tex','moji3.tex','moji_e.tex','hanabi1.tex','hanabi2.tex',
                  'ougi1.tex','ougi2.tex','sakura.tex','versus_quotes_00.bin','versus_result_layout.bin',
@@ -23,7 +23,6 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  *[f'bup_{i:02}.{ext}' for i in sorted({*GRID,48}-{53}) for ext in ('tex','pal')],
                  *[f'vs_voice_{i:02}.bin' for i in (*range(1,43),*range(44,49))],
                  *[f'vs_sounds_{i:02}.bin' for i in (*(c for c in SELECTABLE if c),51,52)],
-                 *[f'bg{arena:02}_{page}.{ext}' for arena in (0,1) for ext,pages in (('tex',(1,2,3,4)),('pal',(1,3))) for page in pages],
                  'save_default.bin','console_option.bin','spirits_edit.bin','edit_widgets.bin','arcade_tally.bin','arcade_run.bin','arcade_map.bin','practice_art.bin','arcade_art.bin','pause_menu.bin','practice_mode.bin','skill_list.bin','menu_canvas.bin','PS2_menu_bg00_00.tex','PS2_menu_bg00_00.pal','character_select_mode_art.bin','menu_widgets.bin','console_gallery.bin','survival_run.bin','color_edit.bin','console_versus_art.bin','combat_stage.bin','combat_stage_01.bin',
                  # Menu scenes: edit and gallery art tables, the 55 gallery pictures and the arena
                  # streams the sound test can request. pause_art.bin exists once its extractor has run.
@@ -40,7 +39,11 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  *[f'{stem}_99a.bin' for stem in ('aid','act','jdg','pil','idx','map','chr')],
                  *sorted(p.name for pattern in ('map_icon_*.tex','map_icon_*.pal','demo_[0-9]*.tex','demo_[0-9]*.pal',
                                                 'win_*.tex','win_*.pal','ed_bg*.tex','ed_bg*.pal')
-                         for p in (ROOT/'work/ss6/extracted/resources').glob(pattern))]:
+                         for p in (ROOT/'work/ss6/extracted/resources').glob(pattern)),
+                 # Every texture page of the twelve battle stages and both CLUT files each one loads.
+                 *sorted(f.name for arena in range(12) for f in (ROOT/'work/ss6/extracted/resources').glob(f'bg{arena:02}_[1-5].tex')),
+                 *[f'bg{arena:02}_{page}.pal' for arena in range(12) for page in (1,2 if arena in (3,9,11) else 3)],
+                 'console_versus_art.bin','combat_stage.bin',*[f'combat_stage_{arena:02}.bin' for arena in range(1,12)]]:
  shutil.copy2(ROOT/'work/ss6/extracted/resources'/resource,ROOT/'outputs/ss6-feasibility/native-viewer/assets'/resource)
 target=ROOT/'outputs/ss6-feasibility/native-viewer/ss6-viewer'
 shutil.copy2(ROOT/'README.txt',target.parent/'README.txt')

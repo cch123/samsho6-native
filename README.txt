@@ -217,7 +217,7 @@ R 重新比赛，Space 暂停，N 单步，H 显示判定框，Esc 退出。
 
 battle.command 进入 versus。两个玩家共享原版规则的输入采样、角色状态机、动作时钟、碰撞与回合调度。
 实战窗口绘制日版场地 0 的天空、建筑、马车、人物和地面。两人拉开时镜头缩远，跳起时镜头抬高，不同距离的景物各自投影。七个活动景物有独立的动画时钟。裁判会跟随交手位置、举旗并在刀被打碎后抛回新刀。KO 慢放、赛后菜单和 CONTINUE 再战均保留日版的推进或冻结时机。在 select.command 中可改选场地 1。雪村的房屋、树木、积雪地面和十处活动景物随实战时钟、镜头及调色效果更新。再战或换场后回到雪村，景物从上次离开时继续。
-场地 0、1 的原版绘制对照分别见 combat-stage-validation.json 和 combat_stage01_validation.json。雪村的实战窗口见 combat-stage01-duel.png，双方拾取、投出 11 号道具并命中或被挡的实战记录见 combat-stage01-session-validation.json。combat_stage_state_validation.json 记录从正常对战到 KO、菜单、再战的原程序时钟对照。combat-stage00-jump.png 和 combat-stage00-center.png 是试玩窗口截图。
+场地 0、1 的原版绘制对照分别见 combat-stage-validation.json 和 combat_stage01_validation.json。场地 2 至 11 的景物任务也已移植，逐访问对照原盘任务的完整提交带和抽样像素，见 combat_stageNN_validation.json 与 docs/combat-stages.txt。./battle.command --stage N 可直接指定场地 0 至 11；10、11 不在选人界面里，没有道具表，使用原盘 BGM15、BGM16。加 --items 1 可在直接开战时开启道具。雪村的实战窗口见 combat-stage01-duel.png，双方拾取、投出 11 号道具并命中或被挡的实战记录见 combat-stage01-session-validation.json。combat_stage_state_validation.json 记录从正常对战到 KO、菜单、再战的原程序时钟对照。combat-stage00-jump.png 和 combat-stage00-center.png 是试玩窗口截图。
 身位、判定框与当时的动作数据决定伤害、受击停顿、退行、格挡、倒地和空中受击。
 普通重斩的命中、格挡和交刀会从游戏资源生成各自的特效。双人画面使用实际角色图块、调色板与原队列顺序。
 霸王丸持刀时，轻、中、重斩各有站近、站远、蹲近、蹲远、原地跳、斜跳和跑斩。踢有站踢、前踢、蹲踢、前下踢、跳踢和跑踢。

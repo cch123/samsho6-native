@@ -67,6 +67,20 @@ void CombatStageState::visit(const StageCamera& published,uint32_t delta,bool ba
     // 50e04c suppresses every stage-zero strip. The seven picture clocks
     // still advance on this visit, even when no scenery reaches the GPU.
     suppressGeometry=backdropPreviouslyDrawn;
+    if(stage>=1&&!random)throw std::logic_error("Stages after 0 require the shared game random generator");
+    switch(stage) {
+    case 2:stage02.visit(delta,*random);return;
+    case 3:stage03.visit(delta,*random);return;
+    case 4:stage04.visit(delta,*random);return;
+    case 5:stage05.visit(delta,*random);return;
+    case 6:stage06.visit(delta,*random);return;
+    case 7:stage07.visit(delta,*random);return;
+    case 8:stage08.visit(delta,*random);return;
+    case 9:stage09.visit(delta,*random);return;
+    case 10:stage10.visit(delta,*random);return;
+    case 11:stage11.visit(delta,*random);return;
+    default:break;
+    }
     if(stage==1) {
         if(!random)throw std::logic_error("Stage 1 requires the shared game random generator");
         for(unsigned n=0;n<layers01.size();++n)advance01(layers01[n],timing01[n],delta,*random);
@@ -92,6 +106,16 @@ void CombatStageState::inheritRematch(const CombatStageState& previous) {
     layers=previous.layers;
     // 5152a8 is a separate once flag. Switching away leaves stage 1 in RAM.
     layers01=previous.layers01;
+    stage02.reload(previous.stage02);
+    stage03.reload(previous.stage03);
+    stage04.reload(previous.stage04);
+    stage05.reload(previous.stage05);
+    stage06.reload(previous.stage06);
+    stage07.reload(previous.stage07);
+    stage08.reload(previous.stage08);
+    stage09.reload(previous.stage09);
+    stage10.reload(previous.stage10);
+    stage11.reload(previous.stage11);
     visible=false;
     suppressGeometry=false;
 }

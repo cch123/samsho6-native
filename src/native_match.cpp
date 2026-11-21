@@ -114,6 +114,10 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         else if(b.survival())roundTime=99; // 13fc08: clock option 2
         else if(roundTime==-1)roundTime=rules_.gameTime==0?60:rules_.gameTime==1?90:0;
     }
+    // Stage 11's constructor (1b3e20) draws fourteen library random numbers.
+    // The loader calls 1a4a98 at 139700, directly after the stage is chosen
+    // and before the draws of 1ba940, the referee 1b4138 and 1b5090.
+    if(b.matchEnd.metadataStage04==11)combatStages_[11].stage11.initialize(b.random);
     // Factory settings 111410 use 60 for VS. A zero supplied explicitly
     // means unlimited. The fixed-match profile retains its unlimited default.
     if(roundTime==-1)roundTime=mode==VersusMode::Console?60:0;

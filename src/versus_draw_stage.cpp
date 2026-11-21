@@ -39,7 +39,7 @@ void VersusDrawStage::paint(unsigned tick,std::span<uint8_t> dest) const {
     // including both of the stage banks used by all four texture surfaces.
     for(auto id:frame) {
         const auto& s=strips_[id];
-        raster_.paint(dest,s.slot,s.color,s.vertices,raster_.grayPalette());
+        raster_.paint(dest,s.slot,s.color,1,s.vertices,raster_.grayPalette());
     }
 }
 }

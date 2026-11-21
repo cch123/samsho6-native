@@ -1,6 +1,7 @@
 #include "local_versus.hpp"
 #include "fighter_roster.hpp"
 #include "arcade_presentation.hpp"
+#include "console_versus_session.hpp"
 #include <istream>
 #include <utility>
 #include <stdexcept>
@@ -378,10 +379,10 @@ void LocalVersus::restart() {
     practice_.reset();practiceRow_=-1;
     survival_.reset();survivalReload_=0;survivalOver_=false;
     arcade_.reset();arcadeNotice_.clear();arcadeSelecting_=false;
-    match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
+    match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_,std::nullopt,stage_?pinnedStageBase+stage_:0);
     match_->adoptSystem(system_);
     if(entry_==VersusEntry::Arcade){startArcade(0,0,0,int(spirits_[0]));matchNumber_=1;return;}
-    if(entry_==VersusEntry::Fight)configureControllers(*match_);
+    if(entry_==VersusEntry::Fight){configureControllers(*match_);if(items_)match_->setStageItems(true);}
     if(entry_==VersusEntry::CharacterSelect)match_->openCharacterSelect(true);
     if(entry_==VersusEntry::Title)match_->openTitle(false);
     matchNumber_=1;

@@ -216,6 +216,8 @@ int main(int argc,char** argv) {
                              <<' '<<a->random.librarySeed<<' '<<a->random.gameSeed<<' '<<p.character<<' '<<r.players[r.humanSeat()^1].character
                              <<' '<<a->battleOver<<' '<<r.intruderFight<<' '<<r.dialoguePostFight<<' '<<picture
                              <<' '<<(pres&&!pres->paintError.empty()?1:0);
+                    // Diagnostic text for a scene frame that could not be composed.
+                    if(pres&&!pres->paintError.empty())std::cerr<<"paint error at frame "<<pres->frame<<": "<<pres->paintError<<'\n';
                     // The character select of the run (CONTINUE / challenger) and its face-off.
                     const auto& select=match.characterSelect();
                     std::cout<<' '<<bool(select)<<' '<<(match.faceoff()?1+int(match.faceoff()->complete):0);

@@ -9,6 +9,10 @@ class NativeMatch;
 class NativeScene {
 public:
     using EffectPainter=std::function<void(const EffectDraw&)>;
+    // Called before each battle draw with its depth key, and finally with
+    // infinity: lets the caller paint stage strips that lie in front of the
+    // fighters' plane in depth order with the character and effect draws.
+    std::function<void(float)> depthHook;
     static constexpr int width=640,height=448;
     explicit NativeScene(const std::filesystem::path& assets,std::array<unsigned,3> resources={0,0,51});
     // The RGBA destination already contains the stage. Effects paint into

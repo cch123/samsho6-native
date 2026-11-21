@@ -534,7 +534,12 @@ void ArcadePresentation::stageBackground(int stage,std::span<uint8_t> rgba) {
     }
     if(stageArtId_!=unsigned(stage)){stageArt_=std::make_unique<CombatStage>(assets_,unsigned(stage));stageArtId_=unsigned(stage);}
     CombatStageState state;state.stage=unsigned(stage);
-    state.visit(StageCamera{},256);
+    // A still backdrop from a fresh stage state. Stages after 0 draw the game
+    // generator while they animate; a scratch generator keeps the session's
+    // stream for the fights unchanged. The original runs the stage task during
+    // the scene (1a4a98), so those draws are not reproduced here.
+    GameRandom scratch;
+    state.visit(StageCamera{},256,false,&scratch);
     std::vector<uint8_t> arena(640*448*4,0);
     std::array<uint16_t,1024> tones{};
     stageArt_->paint(state,tones,arena);

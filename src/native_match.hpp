@@ -51,6 +51,8 @@ public:
     void tick(const std::array<NormalizedPadSample,2>& pads);
     // Configure a native decision maker before the first battle tick. Each seat has its own AI level.
     void enableCpu(unsigned seat,int level=4);
+    // 4c3828, the selector's 「アイテムあり」 for a directly started fight.
+    void setStageItems(bool enabled) {battle_.stageItemsOption4c3828=enabled;}
     void openTitle(bool returningFromVersus);
     const auto& title() const {return title_;}
     bool titlePromptVisible() const {return promptClock_<60;}

@@ -8,8 +8,10 @@
 #include "combat_stage.hpp"
 #include "native_scene.hpp"
 #include "player_object.hpp"
+#include "sound_selection.hpp"
 #include "vs_curtain.hpp"
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -33,6 +35,9 @@ public:
     void bind(unsigned seat,int character) {characters.at(seat)=character;}
     void clear() {objects_.clear();failures.clear();}
     std::vector<std::string> failures;            // objects whose ACT is outside the admitted subset
+    // 120d10's ACT sound command of an object, before the 1e8298 gate: seat
+    // (object+c), character (object+14), the command and the object's clock.
+    std::function<void(int,int,unsigned,int16_t,const ActionClock&)> onSound;
     int create(int tag,int seat,int action,int x,int flags,int colour) override;          // map / walk-in
     void create(int object,int seat,int action,int x,int y,uint32_t flags,int colour) override; // talk scenes
     bool finished(int object) override;
@@ -117,7 +122,9 @@ public:
     ArcadeEdgePulse edgePulse;                 // 584ff8 / 584ffc, never reset
     bool alternateText() const;                // byte 43d052
 private:
-    void sound(ArcadeSceneSound::Kind kind,int a=0,int b=0) {sounds.push_back({kind,a,b});}
+    void sound(ArcadeSceneSound::Kind kind,int a=0,int b=0,int c=0) {sounds.push_back({kind,a,b,c});}
+    // 1e8298(seat, command, character) of an ACT record: the Sound / Voice it selects.
+    void objectSound(ArcadeSession& session,int seat,int16_t command,int character,const ActionClock* clock);
     void talkEvents(ArcadeSession& session,const std::vector<ArcadeTalkRecord>& events);
     void endingEvents(ArcadeSession& session,const std::vector<EndingEvent>& events);
     void resultEvents(const ArcadeResultEvents& e);
@@ -156,6 +163,11 @@ private:
     ArcadeNameEntry nameBefore_;               // the entry as 1ca248 draws it (before the tick)
     // Fighter objects and their renderer.
     ArcadeSceneObjects objects_;
+    // 1e83c0's selection state for the scene objects' commands. The original
+    // shares 585224 / 58524c with the battle; ArcadeSession keeps the battle's
+    // SoundSelection in the match, so the scenes keep their own history.
+    std::unique_ptr<SoundSelection> soundSelection_;
+    ArcadeSession* session_=nullptr;           // set while a scene runs (object sound callbacks)
     int resultObject_=-1,loserObject_=-1;
     std::unique_ptr<NativeScene> scene_;
     std::array<unsigned,3> sceneResources_{~0u,~0u,~0u};

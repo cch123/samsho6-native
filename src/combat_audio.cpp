@@ -1,5 +1,6 @@
 #include "combat_audio.hpp"
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <numbers>
 #include <stdexcept>
@@ -221,13 +222,20 @@ int CombatAudio::Channel::next() {
 }
 void CombatAudio::render(std::span<int16_t> output) {
     if(output.size()%2)throw std::invalid_argument("Stereo output needs complete sample pairs");
+    peaks_={};
     for(size_t i=0;i<output.size();i+=2) {
         int mix=0;
-        for(size_t j=2;j<channels_.size();++j)mix+=channels_[j].next();
+        for(size_t j=2;j<channels_.size();++j) {
+            const int v=channels_[j].next();
+            mix+=v;peaks_[j]=std::max(peaks_[j],std::abs(v));
+        }
         // EE 213948 sets both master registers on core 1 to 0x3fff. The
         // hardware clamps the summed voices before the final gain.
-        for(unsigned side=0;side<2;++side)
-            output[i+side]=int16_t(applyVolume(std::clamp(mix+channels_[side].next(),-32768,32767),0x7ffe));
+        for(unsigned side=0;side<2;++side) {
+            const int v=channels_[side].next();
+            peaks_[side]=std::max(peaks_[side],std::abs(v));
+            output[i+side]=int16_t(applyVolume(std::clamp(mix+v,-32768,32767),0x7ffe));
+        }
     }
 }
 }

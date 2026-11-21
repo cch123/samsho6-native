@@ -1,4 +1,5 @@
 #include "arcade_session.hpp"
+#include <algorithm>
 #include "arcade_presentation.hpp"
 #include "arcade_ending.hpp"
 #include "arcade_results.hpp"
@@ -69,6 +70,7 @@ void ArcadeSession::matchEnded(int winner,int stage,int endingChoice,int bonus,u
     run.transition={};
     run.matchEnd(bonus);
     if(!presentation){follow(held);return;}
+    dropDeliveredSounds();
     // 145628 -> 1252f0(2, 0, 139778, next): the fade-out runs over the last fight frame.
     held_=held;
     if(run.transition.next!=ArcadeScene::None){battleOver=true;arrive(held,false);}
@@ -85,9 +87,16 @@ void ArcadeSession::arrive(uint32_t held,bool faded) {
     enterScene(t.next,held,t.kind,t.speed);
 }
 void ArcadeSession::leaveScene() {
+    using K=ArcadeSceneSound;
     if(presentation&&ArcadePresentation::presents(scene))presentation->leave(*this);
-    else if(scene==ArcadeScene::Continue)continueScene.leave(run);
-    else if(scene==ArcadeScene::GameOver&&!leftToTitle)ArcadeGameOver::leave(run,false); // 138a48
+    else if(scene==ArcadeScene::Continue) {
+        continueScene.leave(run);
+        if(presentation)presentation->sounds.push_back({K::MusicStop});                 // 137c68: 1e7ad0
+    }
+    else if(scene==ArcadeScene::GameOver&&!leftToTitle) {
+        ArcadeGameOver::leave(run,false); // 138a48
+        if(presentation){presentation->sounds.push_back({K::MusicStop});presentation->sounds.push_back({K::EffectsStop});}
+    }
     if(presentation&&(scene==ArcadeScene::Continue||scene==ArcadeScene::GameOver))presentation->current=ArcadeScene::None;
 }
 void ArcadeSession::enterScene(ArcadeScene next,uint32_t held,int kind,int speed) {
@@ -113,6 +122,9 @@ void ArcadeSession::enterScene(ArcadeScene next,uint32_t held,int kind,int speed
         if(presentation) {
             presentation->log.push_back({next,kind,speed,presentation->frame,{}});
             if(next==ArcadeScene::Continue||next==ArcadeScene::GameOver)presentation->enterLoser(*this,next);
+            // 1376d0: 1e7c00(0x1a, 0); 138340 (every branch reaches 138474): 1e7c00(0x1b, 0).
+            if(next==ArcadeScene::Continue)presentation->sounds.push_back({ArcadeSceneSound::Music,0x1a,0});
+            if(next==ArcadeScene::GameOver)presentation->sounds.push_back({ArcadeSceneSound::Music,0x1b,0});
         }
         return;
     }
@@ -209,7 +221,18 @@ void ArcadeSession::frameEnd() {
     // 116588: the ending engine integrates the level inside its own frame.
     if(!(scene==ArcadeScene::Ending&&presentation->current==ArcadeScene::Ending))fade.endFrame();
 }
+void ArcadeSession::dropDeliveredSounds() {
+    if(!presentation)return;
+    auto& list=presentation->sounds;
+    list.erase(list.begin(),list.begin()+long(std::min(soundsDelivered_,list.size())));
+    soundsDelivered_=0;
+}
 void ArcadeSession::tickTransition() {
+    // Called by LocalVersus during a fight's fade-out (delivered afterwards),
+    // during a fight's fade-in (not delivered) and from tickScene.
+    const bool delivering=scene==ArcadeScene::Battle&&battleOver;
+    if(delivering)dropDeliveredSounds();
+    struct Mark {ArcadeSession& s;bool on;~Mark(){if(on&&s.presentation)s.soundsDelivered_=s.presentation->sounds.size();}} mark{*this,delivering};
     auto& t=*transitionTask_;
     const auto step=t.visit(fade,false);
     if(presentation&&t.request.kind==4) {
@@ -242,7 +265,8 @@ void ArcadeSession::tickScene(std::array<uint32_t,2> pressed,uint32_t held) {
         else if(scene==ArcadeScene::GameOver)tickGameOver(pressed);
         return;
     }
-    presentation->sounds.clear();
+    dropDeliveredSounds();
+    struct Mark {ArcadeSession& s;~Mark(){if(s.presentation)s.soundsDelivered_=s.presentation->sounds.size();}} mark{*this};
     // 118298 and 118148 run in the pad update before every scene task.
     run.idleRandom();
     run.transition={};
@@ -309,6 +333,7 @@ void ArcadeSession::tickGameOver(std::array<uint32_t,2> pressed) {
         // 1387b8 runs 138a48 itself and calls 1e5d88 directly (no 1252f0).
         presentation->current=ArcadeScene::None;
         run.transition={};
+        presentation->sounds.push_back({ArcadeSceneSound::MusicStop});presentation->sounds.push_back({ArcadeSceneSound::EffectsStop});
         enterScene(ArcadeScene::UnlockNotice,held_,0,0);
     }
     // Ranking: the white fade 1252f0(1, 1, 138a48, 1e8850) is the transition task's.

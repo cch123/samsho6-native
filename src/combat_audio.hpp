@@ -33,6 +33,10 @@ public:
     void reset();
     void tick();
     const CombatMusic& music() const {return music_;}
+    // Inspection for validators: the sample a physical voice reads and the
+    // largest absolute output it produced in the last render() call.
+    const CombatSoundSample* channelSample(unsigned i) const {return channels_.at(i).sample;}
+    int channelPeak(unsigned i) const {return peaks_.at(i);}
     void render(std::span<int16_t> interleavedStereo);
     static constexpr int sampleRate=48000;
 
@@ -57,6 +61,7 @@ private:
     unsigned common_=50;
     CombatMusic music_;
     std::array<Channel,22> channels_{};
+    std::array<int,22> peaks_{};
     std::array<Request,4> queue_{};
     unsigned nextEffect_=14,write_=0,read_=0,transfer_=0;
     int playEffect(const CombatSoundSample*,int volumeCode);

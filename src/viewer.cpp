@@ -1,3 +1,4 @@
+#include "audio_routing.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include "action_runtime.hpp"
@@ -1137,20 +1138,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
     if(recording || interactive) {
         mixer.emplace(assets);
         session.onTick([&](const ss6::NativeMatch& match) {
-            for(const auto& event:match.soundEvents()) {
-                switch(event.kind) {
-                case ss6::BattleSoundKind::BindPlayers:mixer->bindPlayers({unsigned(event.bank),unsigned(event.tone)});break;
-                case ss6::BattleSoundKind::Sample:mixer->play(event.bank,event.tone);break;
-                case ss6::BattleSoundKind::Voice:mixer->playVoice(event.bank,event.tone);break;
-                case ss6::BattleSoundKind::ResidentJingle:mixer->playResidentJingle(event.tone,event.bank);break;
-                case ss6::BattleSoundKind::Stop:mixer->stop(event.tone);break;
-                case ss6::BattleSoundKind::StopGroup:mixer->stopGroup(event.tone);break;
-                case ss6::BattleSoundKind::MusicPreload:mixer->preloadMusic(event.bank,event.tone);break;
-                case ss6::BattleSoundKind::MusicStart:mixer->startMusic(event.tone);break;
-                case ss6::BattleSoundKind::MusicStop:mixer->stopMusic();break;
-                case ss6::BattleSoundKind::MusicPlay:mixer->playMusic(0,event.tone,event.bank);break;
-                }
-            }
+            ss6::routeBattleSounds(*mixer,match.soundEvents());
             mixer->tick();
             std::array<int16_t,2*800> pcm;
             mixer->render(pcm);
@@ -1159,13 +1147,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
         });
     }
     if(mixer)session.onSceneSounds([&](const std::vector<ss6::ArcadeSceneSound>& sounds) {
-        // The arcade scenes' own music (1e7c00 ids 11..1b), the scene voice bank 31
-        // and their sound banks are not packaged; only the resident menu sounds
-        // (1e7b70 group -1) and the music stop reach the mixer.
-        for(const auto& e:sounds) {
-            if(e.kind==ss6::ArcadeSceneSound::MusicStop)mixer->stopMusic();
-            else if(e.kind==ss6::ArcadeSceneSound::Sound&&e.a==-1&&e.b>=0)mixer->play(-1,e.b);
-        }
+        ss6::routeSceneSounds(*mixer,session.system(),sounds);
         // A scene frame does not tick the match, so the mixer advances here.
         mixer->tick();
         std::array<int16_t,2*800> pcm;

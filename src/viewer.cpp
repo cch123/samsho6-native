@@ -748,6 +748,7 @@ struct VersusControls {
 };
 class VersusScreen {
     std::optional<ss6::CombatStage> stage_;
+    ss6::CombatStage::Foreground stageForeground_;
     unsigned renderedStage_=~0u;
     std::optional<ss6::NativeScene> scene_;
     std::array<unsigned,3> sceneSlots_{~0u,~0u,51};
@@ -868,12 +869,13 @@ public:
             // 113aa8 suppresses normal draw submissions; 113b28 replaces
             // the entire game image at presentation, including its HUD.
             std::fill(frame_.rgba.begin(),frame_.rgba.end(),255);
-        } else nextDepth=stageArt(match).paint(match.combatStage(),match.battle().gauges.paletteTones,frame_.rgba);
+        } else nextDepth=stageArt(match).paint(match.combatStage(),match.battle().gauges.paletteTones,frame_.rgba,&stageForeground_);
         if(!stageDump.empty())writeRgba(stageDump,frame_);
         auto effect=[&](const ss6::EffectDraw& d){textures_.paint(frame_,d,match.battle().camera,true);};
         const std::array<unsigned,3> slots{match.lineup()[0].character,match.lineup()[1].character,51};
         if(slots!=sceneSlots_){scene_.emplace(assets_,slots);sceneSlots_=slots;}
         if(includeHudPortraits)match.buildPresentationDraws(presentationDraws_);
+        scene_->depthHook=[&](float depth){if(!match.mikiriWhiteFrame())stageArt(match).paintForeground(stageForeground_,depth,frame_.rgba);};
         scene_->paint(match,frame_.rgba,effect,nextDepth,includeHudPortraits?&presentationDraws_:nullptr);
         if(!match.mikiriWhiteFrame())for(const auto& d:match.effectDraws())effect(d);
         return frame_;
@@ -962,9 +964,10 @@ public:
 int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snapshot,const fs::path& dump,
               const fs::path& stageDump,
               unsigned updates,unsigned smoke,bool boxes,int roundTime,ss6::VersusMode mode,const fs::path& audioOut={},std::array<unsigned,2> spirits={},ss6::VersusEntry entry=ss6::VersusEntry::Fight,
-              std::array<bool,2> cpuSeats={},int stage=0) {
+              std::array<bool,2> cpuSeats={},int stage=0,bool items=false) {
     ss6::LocalVersus session(assets,roundTime,mode,spirits,entry,cpuSeats);
     if(stage)session.fixedStage(stage);
+    if(items)session.stageItems(true);
     auto screen=std::make_unique<VersusScreen>(assets);
     const bool interactive=snapshot.empty() && dump.empty() && stageDump.empty() && audioOut.empty();
     std::optional<ss6::CombatAudio> mixer;
@@ -1089,6 +1092,7 @@ int main(int argc, char** argv) {
     try {
         fs::path assets = fs::absolute(argv[0]).parent_path() / "assets", dump, snapshot,trialScript,matchReplay,stageDump,audioOut;
         int fixedStage=0;
+        bool stageItems=false;
         unsigned index = 0, updates = 0, smokeUpdates = 0, actionId=0;
         int roundTime=-1;
         std::array<unsigned,2> spirits{};
@@ -1111,6 +1115,7 @@ int main(int argc, char** argv) {
             }
             else if (arg == "--audio-out") audioOut=argv[++i];
             else if (arg == "--dump-stage") stageDump=argv[++i];
+            else if (arg == "--items") stageItems=std::stoul(argv[++i])!=0;
             else if (arg == "--stage") {
                 fixedStage=std::stoi(argv[++i]);
                 if(fixedStage<0||fixedStage>=int(ss6::CombatStageState::stageCount)||!ss6::CombatStageState::supports(unsigned(fixedStage)))
@@ -1154,7 +1159,7 @@ int main(int argc, char** argv) {
         if(!stageDump.empty()&&(!versus||!trialScript.empty()))throw std::runtime_error("--dump-stage requires a versus match");
         if(!audioOut.empty()&&(!versus||!trialScript.empty()))throw std::runtime_error("--audio-out requires a versus match");
         if((cpuSeats[0]||cpuSeats[1])&&(!versus||!trialScript.empty()))throw std::runtime_error("--cpu requires a versus match");
-        if(versus&&trialScript.empty())return runVersus(assets,matchReplay,snapshot,dump,stageDump,updates,smokeUpdates,boxes,roundTime,versusMode,audioOut,spirits,entry,cpuSeats,fixedStage);
+        if(versus&&trialScript.empty())return runVersus(assets,matchReplay,snapshot,dump,stageDump,updates,smokeUpdates,boxes,roundTime,versusMode,audioOut,spirits,entry,cpuSeats,fixedStage,stageItems);
         if(!matchReplay.empty())throw std::runtime_error("--match-replay requires versus mode");
         CharacterSample sample(assets);
         if(trial||(versus&&!trialScript.empty()))return runTrial(assets,sample,snapshot,dump,updates,smokeUpdates,defensePreset,boxes,scripted,targetX,dumpMirror,trialScript,koPreview,actionId);

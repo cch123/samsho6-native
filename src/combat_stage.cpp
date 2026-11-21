@@ -99,12 +99,23 @@ std::vector<CombatStageStrip> CombatStage::geometry(const CombatStageState& stat
     return std::move(renderer.strips);
 }
 
-unsigned CombatStage::paint(const CombatStageState& state,std::span<const uint16_t,1024> tones,std::span<uint8_t> rgba) const {
+unsigned CombatStage::paint(const CombatStageState& state,std::span<const uint16_t,1024> tones,std::span<uint8_t> rgba,
+                            Foreground* foreground) const {
     StageRaster::clear(rgba);
     const auto palette=raster_.palette(tones);
     unsigned nextDepth=100;
-    for(const auto& strip:geometry(state,&nextDepth))
-        raster_.paint(rgba,strip.slot,strip.color,strip.mode,strip.vertices,palette);
+    if(foreground){foreground->strips.clear();foreground->palette=palette;foreground->next=0;}
+    for(auto& strip:geometry(state,&nextDepth)) {
+        if(foreground&&strip.z>=10000000.f)foreground->strips.push_back(std::move(strip));
+        else raster_.paint(rgba,strip.slot,strip.color,strip.mode,strip.vertices,palette);
+    }
     return nextDepth;
+}
+
+void CombatStage::paintForeground(Foreground& foreground,float depth,std::span<uint8_t> rgba) const {
+    while(foreground.next<foreground.strips.size()&&foreground.strips[foreground.next].z<=depth) {
+        const auto& strip=foreground.strips[foreground.next++];
+        raster_.paint(rgba,strip.slot,strip.color,strip.mode,strip.vertices,foreground.palette);
+    }
 }
 }

@@ -11,8 +11,10 @@ constexpr size_t halfBuffer=0x8000;
 constexpr unsigned pitch=0x761;
 // The disc has separate L/R files of equal length. Retain the exact EOF
 // for the final CD transfer, including streams ending partway through a half.
-constexpr std::array<size_t,10> stageBytes{
-    1212416,2793472,1474560,1605632,1499136,1417216,1417216,1605632,1556480,1671168
+// Tracks 5..16: 13abb0 requests stage + 5 for all twelve stages. 15 and 16
+// come from the BGM2 directory of the default soundtrack.
+constexpr std::array<size_t,12> stageBytes{
+    1212416,2793472,1474560,1605632,1499136,1417216,1417216,1605632,1556480,1671168,1474560,1679360
 };
 
 CombatSoundSample loadSide(const std::filesystem::path& path,size_t expected) {

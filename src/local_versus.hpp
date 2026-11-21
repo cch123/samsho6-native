@@ -21,6 +21,7 @@ public:
     // Pin the stage of a directly started fight (0..11). Stages 10 and 11
     // are not offered by the VS selector.
     void fixedStage(int stage) {stage_=stage;restart();}
+    void stageItems(bool enabled) {items_=enabled;restart();}
     using TickObserver=std::function<void(const NativeMatch&)>;
     void onTick(TickObserver observer) {observer_=std::move(observer);}
 private:
@@ -31,6 +32,7 @@ private:
     VersusEntry entry_;
     std::array<bool,2> cpuSeats_{};
     int stage_=0;
+    bool items_=false;
     void configureControllers(NativeMatch&) const;
     unsigned matchNumber_=1;
     std::unique_ptr<NativeMatch> match_;

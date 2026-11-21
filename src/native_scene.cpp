@@ -1,4 +1,5 @@
 #include "native_scene.hpp"
+#include <limits>
 #include "native_match.hpp"
 #include <algorithm>
 #include <bit>
@@ -127,6 +128,7 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
     // fighters. Their GS depth places them behind the frontmost floor items.
     size_t notice=0;
     const auto paintNoticesThrough=[&](float depth){
+        if(depthHook)depthHook(depth);
         while(notice<notices.size()&&notices[notice].depth+float(nextDepth-100)<=depth)
             noticeArt_.paint(notices[notice++],rgba);
     };
@@ -150,5 +152,6 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
         ++row;
     }
     while(notice<notices.size())noticeArt_.paint(notices[notice++],rgba);
+    if(depthHook)depthHook(std::numeric_limits<float>::infinity());
 }
 }

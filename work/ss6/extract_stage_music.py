@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the Japanese title, selection, ten VS stages and victory music as separate original SPU channels."""
+"""Extract the Japanese title, selection, twelve stages and victory music as separate original SPU channels."""
 import argparse
 from hashlib import sha256
 from pathlib import Path
@@ -31,6 +31,10 @@ CHANNELS = {
     '/BGM1/BGM13_R.VB': 'f95dc8e722fe3e7c35e940bd0fd97cbb0f2d3b5b6d91b047035a058b3f53d561',
     '/BGM1/BGM14_L.VB': '863418c24968d306f56518b5119f179af57bbf8ce186fd774f46e7e85483299f',
     '/BGM1/BGM14_R.VB': '52f48a5924feba28ecda2d51d6f9d27f94f770e3a8230d49de156f65aa733e01',
+    '/BGM2/BGM15_L.VB': 'b2bcdf14b3510587e41527d22838d6df118088415c6489a6d0617cd28b1bcbce',
+    '/BGM2/BGM15_R.VB': 'fc2a29729d638da7921d6f997c5c0691b24fa0ecadcf02943e85dcce0dd7c119',
+    '/BGM2/BGM16_L.VB': 'fd7bf33893bfd0f5ae6c80863dddffb82eaf338d237d00b4e62a38d5baff64aa',
+    '/BGM2/BGM16_R.VB': 'b19ac6e8b14a21602524e5249d4800a8eed51f02ee3b7c8adf7d08118de74872',
     '/BGM2/BGM24_L.VB': 'a5782f8a85792955d8a4602560e14bf4b4e11c9c0b135188e9e7d3d48cbaedd6',
     '/BGM2/BGM24_R.VB': '5e340c8b11ee2947d83c5627dcc794bb4e5f0a00e71cd6300da5b654db6905c8',
 }

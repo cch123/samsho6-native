@@ -95,7 +95,8 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         if(rematchFrom)combatStages_[arena].inheritRematch(rematchFrom->combatStages_[arena]);
     }
     // Stage 11's constructor (1b3e20) draws fourteen library random numbers.
-    // Its position among the other load-time draws has not been compared.
+    // The loader calls 1a4a98 at 139700, directly after the stage is chosen
+    // and before the draws of 1ba940, the referee 1b4138 and 1b5090.
     if(b.matchEnd.metadataStage04==11)combatStages_[11].stage11.initialize(b.random);
     // Factory settings 111410 use 60 for VS. A zero supplied explicitly
     // means unlimited. The fixed-match profile retains its unlimited default.
@@ -1359,9 +1360,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
     // latches on capture, so its next visit prepares the stage stream again
     // while the victim is held. The finishing callback releases that stream.
     if(!b.audio.musicPreloaded123a178) {
-        // Tracks 5..14 belong to the ten VS stages. The music of stages 10
-        // and 11 has not been established; they stay silent.
-        if(b.matchEnd.metadataStage04<10)sounds_.preloadMusic(0,int(b.matchEnd.metadataStage04)+5);
+        sounds_.preloadMusic(0,int(b.matchEnd.metadataStage04)+5);
         b.audio.musicPreloaded123a178=true;
     }
     // Priority 50 publishes the delta for the next dispatch even after the

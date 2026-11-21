@@ -337,5 +337,21 @@ hidden. A step above 0x2400 selects empty pictures 3..9 (nothing drawn; verified
 past 9 the task would read neighbouring object fields (not modeled, needs 46a908 > 0x5400
 or repeated steps > 0x2400). No strip is in front of the fighters' plane.
 
+Integration (viewer and match)
+- Foreground: CombatStage::paint hands strips whose key is >= 10000000 (Z <= 0) to the caller;
+  NativeScene::depthHook paints them in depth order between the character and effect draws.
+  Only stage 3 submits such strips (link 0 of chains 0 and 3).
+- Music (OBSERVED): 13abb0 requests track stage + 5 through 2140b8 for every stage. Tracks 5..14
+  are /BGM1; 15 and 16 (stages 10 and 11) are /BGM2/BGM15, BGM16. Their loop behaviour was not
+  compared separately; they use the same request as the other stage tracks.
+- Stage 11 constructor draws (OBSERVED call order): the loader calls 1a4a98 at 139700 directly
+  after the stage is chosen and before 1ba940, the referee 1b4138 and 1b5090, so the fourteen
+  library draws follow the stage selection draw.
+- Stage items: the schedule table has rows for all twelve stages (10 and 11 have none); the
+  thrown-item, delivery and schedule validators already cover item kinds 7..18 and all stages.
+  CPU-versus-CPU fights with items ran on stages 2..9 without an unported path.
+- --stage N and --items 1 start a fight on a pinned stage with items; stages 10 and 11 are not
+  in the VS selector.
+
 Depth MODEL: strips are painted in stable order of their first vertex's key (painter's
 algorithm). A strip with per-vertex keys is not depth-interpolated per pixel.

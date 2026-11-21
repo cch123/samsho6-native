@@ -1,0 +1,743 @@
+OPTION MODE and persistent system/save data (SLPS-25559)
+=======================================================
+
+Static reverse engineering of work/ss6/extracted/SLPS_255.59. No Probe run was
+used; every statement is tagged
+  OBSERVED  read directly from instructions/data at the cited address
+  INFERRED  interpretation of observed code
+  UNKNOWN   not resolved
+ELF layout used: .text 0x100000..0x32cd70, .data 0x32ce00..0x5d3744 (file
+backed, so 0x43d050.., 0x4c7510.., 0x5735c8.., 0x582b10.. have initial values in
+the ELF), .rodata 0x5d3c00..0x67bc84, .bss from 0x67bd80.
+
+Glossary
+  CRC      cyclic redundancy check
+  SJIS     Shift-JIS text encoding (all Japanese strings below)
+  pad      118128(seat) -> pointer; +4 = pressed-edge word, +8 = auto-repeat word
+  "live"   the block the game reads (g_GameOption at 0x43d058 etc.)
+  "work"   the scene-local editable copy
+
+Pad bits used by every option page (OBSERVED masks; button names INFERRED)
+  edge & 0x20a  confirm        edge & 0x404  cancel
+  0x10 up   0x20 down   0x40 left   0x80 right   (docs/input-processing.txt)
+  edge & 0x100000 / 0x400000   page previous / next (INFERRED L1/R1; the legend
+                               string is "ページ送り")
+Sound requests are all 1e7b70(-1, id): id 0x20 cursor/value change, id 0x25
+cancel/leave, id 0 confirm.
+
+
+1. Entry, exit, tasks
+---------------------
+
+Mode menu item 8 (1cd5fc, OBSERVED):
+    1252f0(1, 0, 0x127d70, 0x1cfa10)     // next scene = option top
+    [0x582afc] = 1
+    1ccfb8(0x11, 0x12, seat)             // mode word 0x11 (P1) / 0x12 (P2)
+    [0x4c38a8] = 0
+    1cfda0()                             // [0x582c38] = 0 (top cursor)
+
+Scenes (all: 112670(priority 0x14, handler, 0x10, tag); 118320(destructor);
+1ce478() chrome init; cursor/help-text reset; most also 112f30(0xffffff,
+0x404040)):
+
+  scene            entry     task handler  tag     destructor
+  OPTION top       1cfa10    1cfa98        0x1781  1cfc70  (112a70(0x1781))
+  GAME OPTION      1d00b8    1d01b8        0x1782  1d07e8  (112a70(0x1782))
+  KEY CONFIG       13cdb0    13ce08 (*)    0x14b6  13cdc8
+  SOUND SETTING    1dba30    1dbb00        0x178d  1dbe70
+  SAVE/LOAD        1d30b0    1d3140        0x1786  1d3420
+
+  (*) 13cdb0 -> 13cd50: memset(0x12721c0, 0, 0x8000) and
+      1126f0(0x28, 0x13ce08, 0x12721c0, 0x2000, 0x20, 0x14b6): a coroutine task
+      with its own stack, priority 0x28. Destructor 13cdc8 frees tags
+      0x14b6..0x1519 (11e3a0 + 112a70 each).
+  1dbe70 and 1d3420 additionally call 213180() when 2137f8()
+  ([0x59d014]) == 1 (INFERRED: restart the sound stream after a setting/load
+  change).
+  GAME OPTION entry additionally tail-calls 1e7b40() (213be8(2) when
+  [0x345188] != 0; INFERRED sound-driver command).
+
+Scene graph
+
+    mode menu (item 8)
+          |
+          v
+    +-------------+ confirm 0 +-------------+
+    | OPTION top  |---------->| GAME OPTION |--cancel/EXIT--+
+    | 1cfa10      | confirm 1 +-------------+               |
+    |             |---------->| KEY CONFIG  |--close--------+
+    |             | confirm 2 +-------------+               |
+    |             |---------->| SOUND SET.  |--cancel/EXIT--+
+    |             | confirm 3 +-------------+               |
+    |             |---------->| SAVE/LOAD   |--cancel/EXIT--+
+    |             |<------------------------------------------+
+    +-------------+   (every sub-scene: 1252f0(1,0,own destructor,0x1cfa10))
+          | confirm 4 (EXIT) or cancel
+          v
+    1cfc88: 124d50(); 1252f0(1,0,0x1cfc70,0x127940)   -> TITLE scene
+            state=2 -> next visit 10f158() (auto-save if enabled) -> state=3
+
+Exit to title (1cfc88, OBSERVED): 124d50() clears g_GameData (memset 0xa8 at
+0x4c3808, then +0x9c = +8 = +0xc = -1), so the mode word returns to 0; scene
+0x127940 is the title scene already ported (ConsoleVersusMenu::Title).
+The top cursor [0x582c38] is NOT reset when returning from a sub-scene (only
+1cfda0 from the mode menu clears it).
+
+
+2. Shared menu chrome (also used by mode menu, gallery, network pages)
+---------------------------------------------------------------------
+
+State (all int32, .data, initial values from the ELF)
+  0x582b10  sprite record passed to 117a00 (words: 0,0,0x280,0x1c0,0,4,...);
+            +0x14 (0x582b24) = 4 is the texture slot of the background
+  0x582b28  help-text x position copy 0      0x582b2c  copy 1
+  0x582b30  help-text scroll delay (frames)
+  0x582b34  band slide-in counter 0..15
+  0x582b38  content fade counter 0..15       0x582b3c  legend fade 0..5
+  0x582b40  0 at init (selects background animation path in 1ce570)
+  0x582b44  background variant 1 or 2
+  0x582b48  int[11] band alpha {0x10,0x20,0x40,0x80,0xa0,0xc0,0xc0,0xc0,0xa0,
+            0x80,0x40}
+  0x582b78  int[11] top band y   {0x10..0x15, 0x39..0x3d}
+  0x582ba8  int[11] top band h   {1,1,1,1,1,0x24,1,1,1,1,1}
+  0x656be0  int[11] middle band y {0x4e..0x53, 0x17a..0x17e}
+  0x656c10  int[11] middle band h {1,1,1,1,1,0x127,1,1,1,1,1}
+  0x582bd8  int[11] bottom band y {0x18a..0x18f, 0x1b8..0x1bc}
+  0x582c08  int[11] bottom band h {1,1,1,1,1,0x29,1,1,1,1,1}
+
+1ce478 chrome init (OBSERVED order)
+  1142d8([0x582b24]=4, "PS2_menu_bg00_00.pvr")      // texture
+  1163c0("PS2_menu_bg00_00.pvp", &buf); 116478(0x200, 0x100, buf)  // palette
+  10add8(4, 0x20)
+  [0x582b34] = [0x582b38] = [0x582b3c] = 0; 1e1620(); [0x582b40] = 0
+  v = 316b90()                    // C-library rand: ONE draw of the shared
+                                  // library RNG per page entry
+  [0x582b44] = ((v & 0x7fff) >> 14) + 1            // 1 or 2
+  variant 1: 1e2358(); variant 2: 1e23a0(); then 1e2408()
+  The art is the same file packaged natively as menu_bg00_00.tex
+  (work/ss6/package_viewer.py).
+
+1ce570 background draw: 117a00(&0x582b10, 0x20, -1) at (0, 0, z=-49.0), then
+  1e1a20() when [0x582b40]==0, then by variant 1: 1e1ff0()+1e1c40(); variant 2:
+  1e1ff0()+1e1e18().
+  UNKNOWN: internals of the animated layer 1e1620/1e1a20/1e1c40/1e1e18/1e1ff0/
+  1e2358/1e23a0/1e2408 (belongs to the mode-menu chrome slice).
+
+1ce660(showPage, page, total) frame + counters (OBSERVED)
+  c = [0x582b34]
+  for i in 0..10: 1cf808(x = c*0x280/15 - 0x280, alpha = band[i]*c/15, i)
+  for i in 0..10: 1cf858(x = 0x1e,              alpha = band[i]*c/15, i)
+  for i in 0..10: 1cf8a8(x = 0x280 - c*0x280/15, alpha = band[i]*c/15, i)
+     1cf808/1cf858/1cf8a8 = 1145c0(x, y[i], w, h[i], alpha<<24) with z=-50.0;
+     w = 0x280 (top, bottom) or 0x244 (middle). INFERRED: 1145c0 is a flat
+     rectangle (x,y,w,h,ARGB colour, z in f12); colour 0 = black.
+  1ced08(0, 0x15e)       // button legend, alpha = [0x582b3c]*0x33
+  if showPage == 1: 1cf2a8(0, 0x27, page, total)    // "<page+1> / <total>"
+  if c < 15: [0x582b34]++            // and return
+  else: if [0x582b38] < 15: ++ ; if [0x582b3c] < 5: ++
+  (1ce878 is the same without the legend.)
+
+  1cf750 inputReady(): [0x582b38] >= 15 && [0x582b3c] >= 5
+  1cf738 contentAlpha(): [0x582b38] * 17
+  => input is locked for 15 + 15 frames after every page entry (the legend
+     reaches 5 during the second 15).
+
+Legend 1ced08(x, y) (OBSERVED): four sprites 113f98(0x2e, x + {0x154,0x154,
+  0x190,0x190}[k] + 22*k, y, z=-330.0, rect 0x4c7510 + 0x18*k) (direction
+  glyphs, table 0x656ac0), then 1cf130: text "選択" (0x656b08.. via 10a460) at
+  x+0x185 and "決定" at x+0x1ed; cancel legend variants 1cee68/1cefc8 use
+  tables 0x656ad8/0x656af0 and "キャンセル". Page indicator 1cf2a8 draws
+  sprites rect 0x4c75a0/0x4c75d0 at x+0x19a / x+0x1be, "ページ送り" at x+0x1dd,
+  "%d" page+1 at x+0x24b (x+0x241 when >= 10), "/" at x+0x256, "%d" total at
+  x+0x264. Font scale for these goes through 114d88(-330.0) stored to
+  [0x358a8c] and restored afterwards.
+  Sprite rectangles (int x,y,w,h,0,6; sheet id 0x2e) at 0x4c7510 + 0x18*n:
+    0 (42,76,18,18) 1 (99,76,18,18) 2 (61,76,18,18) 3 (80,76,18,18)
+    4 (468,107,43,19) 5 (426,107,41,19) 6 (42,95,24,16) 7 (67,95,24,16)
+    8 (92,95,24,16) 9 (117,95,24,16) 10 (164,76,22,22) 11 (336,76,50,22)
+  Title banners (same sheet) at 0x4c7660 + 0x18*n:
+    0 (1,158,182,28) OPTION      1 (1,187,182,28) GAME OPTION
+    2 (1,216,278,28)  3 (1,245,216,28)  4 (1,274,182,28) SAVE/LOAD
+    5 (1,303,86,28)   6 (1,332,215,28)  7 (1,390,249,28)
+    (n=0,1,4 OBSERVED from 1cfdb0 / 1d0e68 / 1d3550; the others UNKNOWN which
+    page uses them; SOUND SETTING's banner is drawn by 1dc470, not read.)
+  Banner draw: [0x3db900] = alpha<<24 | 0xffffff, [0x3db8fc] = 1,
+  113f98(0x2e, 16.0, 28.0, z=-350.0, rect), then [0x3db900] restored.
+
+Text primitives (signatures INFERRED from call sites)
+  1135e8(str, x, y, argb)   ASCII menu font; '\n' advances y by 0x10
+  10a460(str, x, y, r, g, b, ?, alpha)  SJIS font (help text, legends)
+  1cf8f8(str, x, y, frame)  edit highlight: active only while (frame % 64) >= 25;
+        17c260 + 17dd88 box at (x-20, y-1) size 12x16(+ (strlen*14+27)/2 width
+        extension on a second 17dd88 call). Exact primitive UNKNOWN.
+
+Help text (bottom line, y = 0x198)
+  tables of {char* text; int scroll} per page:
+    0x582c40[5] top, 0x582d10[15] GAME OPTION, 0x582df8[4] SAVE/LOAD,
+    0x583000[6] SOUND SETTING (decoded in section 4..7)
+  On every cursor change: len = 318358(text) (strlen); 1cebb0(len):
+    [0x582b28] = 0x10; [0x582b2c] = (len>>1)*0x14; [0x582b30] = 0x78
+  Draw (1cff40 / 1d1d00 / 1d37d8 / 1dcab8):
+    x0 = 1ceb10(scroll, len, 0); if x0 < 0x280 draw text at (x0, 0x198)
+    if scroll == 1: x1 = 1ceb10(1, len, 1); if x1 < 0x280 draw again at x1
+  1ceb10(mode, len, i): if mode == 1 { if (--[0x582b30]) <= 0 { h = len/2;
+    x[i] -= 2; if x[i] < -20*h: x[i] = 20*h; [0x582b30] = 0 } } return x[i]
+    (the delay counter is shared and decremented by both calls per frame; text
+    with scroll flag 0 stays at x = 0x10).
+
+
+3. OPTION top page (handler 1cfa98)
+-----------------------------------
+
+State: [0x582c38] cursor 0..4; [0x582c3c] state 0 browse, 1 leaving to a
+sub-scene, 2 leaving to title (auto-save pending), 3 leaving to title.
+Entry 1cfa88: state = 0.
+
+Per update (OBSERVED order)
+  if state == 2: 10f158(); state = 3
+  if state == 3: 1145c0(0, 0, 0x280, 0x1c0, 0xffffffff) z=-400.0
+  for seat in 0, 1:
+      in = 0
+      if inputReady() and state == 0: in = 1d0060(seat)
+          // 1d0060: edge&0x404 -> 8; edge&0x20a -> 4; repeat&0x10 -> 1;
+          //         repeat&0x20 -> 2
+      if in & 1:      cursor = (cursor + 4) % 5; reload help; sound 0x20
+      elif in & 2:    cursor = (cursor + 1) % 5; reload help; sound 0x20
+      elif in & 0x18: 1cfc88() (exit to title);  sound 0x25
+      elif in & 4:    1cfcf0() (dispatch);       sound 0
+  1ce570(); 1ce660(0,0,0); a = contentAlpha()
+  1cfdb0(a)                     // banner rect 0x4c7660
+  1cfe60(cursor, a)             // items
+  1cff40(cursor, a)             // help text
+
+Items (pointer table 0x656d98; 1135e8 at x = 0x44, y = 0x58 + 0x18*i; colour
+a<<24 | 0xffffff, selected item a<<24 | 0xff0000):
+  0 "GAME OPTION"        help "ゲームに関する設定を変更することができます"
+  1 "KEY CONFIGURATION"  help "各種ボタン設定を変更できます"
+  2 "SOUND SETTING"      help "ゲーム中のサウンド再生方法を設定できます"
+  3 "SAVE/LOAD"          help "セーブデータの読み込み、保存を設定できます"
+  4 "EXIT"               help "タイトル画面に戻ります"
+Dispatch 1cfcf0 (jump table 0x656c58): 0..3 -> 1252f0(1, 0, 0x1cfc70, next)
+with next = 0x1d00b8 / 0x13cdb0 / 0x1dba30 / 0x1d30b0, state = 1; 4 -> 1cfc88.
+1cfc88 also draws the white full-screen rectangle (z=-400.0) on the confirm
+frame.
+
+
+4. GAME OPTION (handler 1d01b8)
+-------------------------------
+
+State
+  [0x582c68] cursor 0..14        [0x582c6c] state: 0 browse, 1 edit, 2 commit,
+                                 4 leaving
+  [0x582c70] highlight frame counter (reset on most actions, ++ every update)
+  0x582c78   work copy of g_GameOption (0x98 bytes)
+  0x133f9f8  page 0/1;  +4 slide frame counter;  +8 slide state (0 slide from
+             "previous", 1 slide from "next", 2 idle)
+Entry 1d0130: cursor = 0; state = 0; work = live (0x98 bytes); page = 0;
+             slide state = 2; slide counter = 0; frame = 0.
+
+Pages: page 0 shows items 0..6, page 1 shows items 7..12; items 13 "DEFAULT
+SETTING" and 14 "EXIT" are on both pages (drawn after the page rows).
+
+  idx label            work byte  values / display                 default
+  0   GAME LEVEL       +4         1..8, "%d"                       4
+  1   GAME TIME        +5         0 "60", 1 "90", 2 "INFINITY"     0
+  2   GAME MODE        +6         0 "ORIGINAL", 1 "ARCADE"         0
+  3   CPU MATCH POINT  +7         0..14, label table 0x657478      0 ("2:2")
+  4   VS MATCH POINT   +8         1..5, "%d"                       2
+  5   DAMAGE LEVEL     +9         0..200 step 10, "%d"             100
+  6   BRIGHT           +0xc (s32) 0x38..0x100 step 2, shown as     0x100
+                                  "%d" of (v*100 - 5600)/200       ("100")
+  7   SPIRITS 1P       +0x10      0 "NORMAL",1 "MAX",2 "INFINITY"  0
+  8   MIKIRI 1P        +0x11      0..200 step 2, "%d%s" (v>>1,"%") [0x50d91c]=32
+  9   KYOUCHI 1P       +0x12      0..200 step 2, "%d%%"            [0x50d90c]=20
+  10  SPIRITS 2P       +0x13      as 7                             0
+  11  MIKIRI 2P        +0x14      as 8                             32 ("16%")
+  12  KYOUCHI 2P       +0x15      as 9                             20 ("10%")
+  13  DEFAULT SETTING
+  14  EXIT
+  CPU MATCH POINT labels (index 0..14): "2:2","2:3","2:4","2:5","3:3","3:4",
+  "3:5","4:4","4:5","5:5","1:1","1:2","1:3","1:4","1:5" (player:CPU wins).
+  BRIGHT is edited directly in the LIVE word 0x43d064 (so the screen brightness
+  previews immediately); all other items edit the work copy.
+  Help texts 0x582d10[i] (scroll flag): 0(1) "ゲームの難易度を変更できます　数字が
+  大きいほど高難易度になります", 1(0) "ゲーム中の制限時間を変更できます", 2(1) "ゲーム
+  モードの変更を行います　ORIGINALは家庭用調整版、ARCADEはアーケード版サムライ
+  スピリッツ天下一剣客伝と同じ動作になります", 3(0) "対CPU戦の試合本数を変更でき
+  ます", 4(0) "対人戦の試合本数を変更できます", 5(0) "ダメージ量の変更が可能です",
+  6(0) "画面の輝度を変更できます", 7(0) "1P側のスピリッツゲージ初期状態を変更でき
+  ます", 8(1) "1P側のミキリゲージ初期値を変更できます　この設定は対応スピリッツのみ
+  反映されます", 9(1) "1P側の無のゲージ初期値を…", 10(0)/11(1)/12(1) the 2P
+  equivalents, 13(0) "各種設定を初期値に戻します", 14(0) "オプションモードに戻ります".
+  (Scrolling strings carry trailing full-width spaces; extract the exact bytes
+  from the pointers at 0x582d10 + 8*i.)
+
+Input word 1d2238(seat) (OBSERVED)
+  edge&0x404 -> 0x400 (cancel)       edge&0x20a -> 0x100 (confirm)
+  repeat up    -> 0x2000 | 0x01 | 0x10
+  repeat down  -> 0x4000 | 0x02 | 0x20
+  repeat left  -> 0x04 | 0x80
+  repeat right -> 0x08 | 0x40
+  edge&0x100000 -> 0x800             edge&0x400000 -> 0x1000
+
+Per update, for seat in 0,1 (OBSERVED order; "sound n" = 1e7b70(-1,n))
+  in = 0
+  if inputReady() and state != 4 and slideState == 2: in = 1d2238(seat)
+  if in & 0x100:
+      if state == 0: state = 1; frame = 0
+      elif state == 1: state = 2
+      sound 0
+  if state != 1:                               // browse (also runs in state 2)
+      if in & 0x400:  1d0800() (leave); sound 0x25; frame = 0
+      elif in & 0x2000: cursor = (cursor + 14) % 15
+            if page == 0 and cursor == 12: cursor = 6
+            if page != 0 and cursor == 6:  cursor = 14
+            reload help; sound 0x20; frame = 0
+      elif in & 0x4000: cursor = (cursor + 1) % 15
+            if page == 0 and cursor == 7:  cursor = 13
+            if page != 0 and cursor == 0:  cursor = 7
+            reload help; sound 0x20; frame = 0
+      elif in & 0x800 or in & 0x1000:
+            page = (page + 1) % 2
+            slideState = 0 (bit 0x800) or 1 (bit 0x1000)
+            cursor = page == 0 ? 0 : 7; reload help
+            1cf7c8() ([0x582b3c] = 0, legend fades in again)
+            slideCounter = 0; sound 0x20; frame = 0
+  if in & 0x8000: 1d0800(); sound 0x25         // bit never produced by 1d2238
+  if state == 1:
+      cursor 0..7, 10 (jump table 0x656db0 -> 1d02d4):
+          if in & 0x400: live.bright = work.bright; work = live; state = 0;
+                         sound 0x25; frame = 0          // discard edits
+          elif in & 6:   1d0ad8() decrement; sound 0x20 // down or left
+          elif in & 9:   1d0920() increment; sound 0x20 // up or right
+      cursor 8, 9, 11, 12 (-> 1d0578):
+          if in & 0x400: same discard
+          elif in & 0x50: 1d0c98() +2;   sound 0x20     // up or right
+          elif in & 0xa0: 1d0d80() -2;   sound 0x20     // down or left
+      then (any cursor): if cursor == 13: 1d0840(page); sound 0
+                         if cursor == 14: 1d0800();     sound 0
+  if state == 2:                                        // commit
+      work.bright = live.bright; live = work (0x98 bytes); state = 0;
+      sound 0; frame = 0
+after both seats: draw (below); frame++
+
+  Value arithmetic (increment / decrement, OBSERVED)
+    +4:  (v & 7) + 1          / ((v + 6) & 7) + 1
+    +5:  (v + 1) % 3          / (v + 2) % 3
+    +6:  v ^ 1                / v ^ 1
+    +7:  (v + 1) % 15         / (v + 14) % 15
+    +8:  (v % 5) + 1          / ((v + 3) % 5) + 1
+    +9:  (v + 10) % 210       / (v + 200) % 210
+    +0xc (live): v += 2, if v > 0x100: v = 0x38   /  v -= 2, if v < 0x38: v = 0x100
+    +0x10, +0x13: (v + 1) % 3 / (v + 2) % 3
+    +0x11, +0x12, +0x14, +0x15: (v + 2) % 202 / (v + 200) % 202
+  DEFAULT SETTING 1d0840(page): live[0..3] = 0 always, then
+    page 0: work.{+0xc = 0x100, +4 = 4, +5 = 0, +8 = 2, +9 = 100, +6 = 0, +7 = 0}
+    page 1: work.{+0x10 = 0, +0x11 = [0x50d91c], +0x12 = [0x50d90c], +0x13 = 0,
+                  +0x14 = [0x50d91c], +0x15 = [0x50d90c]}
+    live = work (0x98 bytes); state = 0     (only the visible page is reset)
+  Leave 1d0800: 1252f0(1, 0, 0x1d07e8, 0x1cfa10); state = 4. NOTE: leaving with
+    cancel from browse does not undo anything: every commit already wrote live.
+
+State machine
+
+      +--------+ confirm  +------+ confirm +--------+
+      | browse |--------->| edit |-------->| commit |--(same visit: live=work)--+
+      | (0)    |<---------| (1)  |         | (2)    |                           |
+      +--------+  cancel  +------+         +--------+                           |
+        ^  | cancel / EXIT(14)   | cursor 13: reset page, -> browse             |
+        |  v                     | cursor 14: leave                             |
+        | leaving (4) -> option top                                             |
+        +-----------------------------------------------------------------------+
+
+Draw (OBSERVED)
+  1ce570(); a = contentAlpha()
+  slideState == 2: 1ce660(1, page, 2); 1d0f18(cursor, state, page, a, frame)
+  else: slideState = 1d1e20(slideCounter, 0, x0, x1, 0, slideState, page, 2,
+        frame) with (x0,x1) = (0x280,-0x280) for slideState 0 and (-0x280,0x280)
+        for 1; slideCounter++ (1d1e20 returns 2 once the counter reaches 15).
+        It redraws the bands (1cf808/1cf8a8 with full alpha), both pages'
+        rows at an eased x offset 1d21a0(t=counter/15, ...) + 0x44, and the
+        middle band via 1cea80. INFERRED: 1d21a0 is a cubic Bezier
+        u^3*p0 + 3u^2 t*p1 + 3u t^2*p2 + t^3*p3 (constants 1.0, 3.0 at
+        0x657534/0x657538; four COP1 multiply-add opcodes are not decoded by
+        analyze_elf.py). Validate with Probe before porting the slide.
+  1d0e68(a)   banner rect 0x4c7678 at (16, 28, z=-350)
+  1d1d00(cursor, a)  help text
+  1d0f18: label i at (0x44, 0x58 + 0x18*row) colour a<<24 | c[i], c[i] =
+    0xffffff, and c[cursor] = 0xff0000 unless state == 1; value drawer table
+    0x657200[i](cursor, state, x=0x44, y, a, frame) prints at x + 0x12c = 0x170;
+    while state == 1 and cursor == i the value is drawn with the 1cf8f8
+    highlight and colour 0xff0000. "DEFAULT SETTING" and "EXIT" follow at the
+    next two row positions (page 0: rows 7,8; page 1: rows 6,7).
+
+
+5. SOUND SETTING (handler 1dbb00)
+---------------------------------
+
+State: [0x582ff0] cursor 0..5; [0x582ff4] state 0 browse / 1 edit / 2 commit /
+4 leaving; [0x582ff8] frame; 0x133fa38 work copy (7 bytes) of g_SystemSetting
+(0x43d050). Entry 1dbaa8: cursor = 0, work = live, state = 0, frame = 0.
+
+  idx label            byte   values                    default  help (0x583000)
+  0   SOUND OUTPUT     +3     0 "STEREO", 1 "MONAURAL"  0   "出力をモノラル再生、
+                                                           ステレオ再生から選択できます"
+  1   BGM VOLUME       +4     0..100 step 1, "%d%s"     100 "ＢＧＭの音量が変更できます"
+  2   BGM              +6     0 "ORIGINAL", 1 "ARRANGE" 0   "オリジナルＢＧＭとアレンジ
+                                                           ＢＧＭの切り替えが選択できます"
+  3   VOICE            +5     0 "JAPAN", 1 "ENGLISH"    0   "ナレーションを日本語ボイス、
+                                                           英語ボイスから選択できます"
+  4   DEFAULT SETTING                                       "各種設定を初期値に戻します"
+  5   EXIT                                                  "オプションモードに戻ります"
+  (label/value strings at 0x658f88..0x659040; value order within each pair is
+  INFERRED from string order - the value-pointer tables in 1dc520 were not
+  decoded. Debug strings name the block g_SystemSetting / g_SoundSettingData.)
+
+Input word 1dcbd8: cancel 0x200, confirm 0x100, repeat up 0x400|0x10, repeat
+down 0x800|0x20, repeat right 0x40, repeat left 0x80, edge up 1, edge down 2,
+edge right 4, edge left 8.
+Flow (same skeleton as GAME OPTION):
+  confirm: state 0 -> 1 (frame = 0), 1 -> 2; sound 0
+  browse: cancel -> 1dbea8 (1252f0(1,0,0x1dbe70,0x1cfa10), state 4), sound 0x25;
+          0x400 -> cursor = (cursor+5)%6; 0x800 -> (cursor+1)%6; sound 0x20
+  edit, cursor 0/2/3: cancel -> 1dc2b0() revert, state 0, sound 0x25;
+          in&5 or in&0xa -> toggle work byte, sound 0x20
+  edit, cursor 1: cancel -> revert; in&0x50 -> (v+1)%101; in&0xa0 -> (v+100)%101
+  edit, cursor 4: 1dbee8() defaults, sound 0;  cursor 5: 1dbea8(), sound 0
+  commit (state 2): 1dc0e0(); state = 0; frame = 0; sound 0
+  1dc0e0 commit of the selected item only:
+     0: live+3 = work+3; 213c08(value)    (tail call 213878(cmd, value):
+                                          INFERRED mono/stereo driver command)
+     1: live+4 = work+4; [0x5a9e78] = (int)(v * 0.32f * 512.0f)   (0x658e08/0c)
+     2: live+6 = work+6        3: live+5 = work+5 (debug "g_SystemSetting.voice")
+  1dc2b0 revert copies the selected live byte back to work (item 1 also
+     rewrites [0x5a9e78] from the live volume with the same 0.32*512 factor).
+  1dbee8 defaults: work = {0,0,0,0,100,0,0}; [0x5a9e78] = 0x3fff; live = work;
+     state = 0.
+  NOTE (OBSERVED inconsistency): the load path 1b8bc0 recomputes
+  [0x5a9e78] = (int)(volume * 0.25f * 512.0f) (0x6546a8/ac) = 12800 at 100.
+
+
+6. KEY CONFIGURATION (task 13ce08)
+----------------------------------
+
+OBSERVED: this page does not use the chrome of section 2. Coroutine 13ce08
+builds the shared window framework (1822a0/182318/182648 window object,
+212110 key-config widget ctor, 17f428/17f468 slide controller with x from
+0x2d0 or -0x230 depending on 178f90()), then loops
+  17c210(); 1825b8(win); 2121c8(widget) update;
+  closing: 17f400() done -> 17ea48(): nonzero -> 1252f0(1, 0, 0x13cdc8,
+           0x1cfa10) (back to option top), zero -> 1da7e8(1) (pause-menu
+           caller path);
+  182600(win); 212478(widget) draw; 112a28(0) yield.
+The same widget (212110/2121c8/212478) is the in-battle pause menu's
+"KEY CONFIGURATION" (string table 0x658b40..).
+
+Persistent data: 0x4eaac0, 2 players x 8 words (0x20 bytes each) = the eight
+button masks read by 177310 (docs/input-processing.txt). Preset initialiser
+178e50(player, preset) also stores preset to byte 0x12d26b0 + player:
+  preset 0 (factory, 178d38): {0x400, 0x200, 0x2, 0x4, 0x400000, 0x800000,
+                               0x100000, 0x200000}
+  preset 1: {0x4, 0x2, 0x400, 0x200, 0x20000, 0, 0, 0}
+  preset 2: {0x400, 0x200, 0x100, 0x4, 0x1, 0, 0, 0}
+177140 returns 1 when both players have slots 0..4 == {0x400,0x200,2,4,
+0x400000}. Assignment 178d50(player, slot, mask): mask == 0 stores 0; otherwise
+any other slot of that player already holding `mask` receives the old value of
+`slot` (swap), then slot = mask. In the widget (2122bc..) rows 0..7 are the
+eight slots; edge & 0xc0 (left/right) on a row calls 178d50(player, row, 0)
+(clear); row 8/9 handling and the capture of a pressed button were not read.
+UNKNOWN: slot -> action names shown in the widget, row layout, coordinates,
+sounds, the preset selector UI (callers of presets 1/2): this needs a separate
+pass over 0x212110..0x212800.
+
+
+7. SAVE/LOAD page (handler 1d3140) and the save image
+-----------------------------------------------------
+
+7.1 Save image (g_SaveData, 0x5735c8, size 0x65a8)
+  +0x0000  s32 auto-save flag (0 OFF, 1 ON)      default 0 (memset)
+  +0x0004  filled by 115498(); 0x6180 bytes; contents UNKNOWN (not this slice:
+           INFERRED spirits-edit / colour-edit / gallery data)
+  +0x6184  7 bytes  <-> g_SystemSetting 0x43d050      default 1183f8
+  +0x618c  0x98     <-> g_GameOption    0x43d058      default 1113e8
+  +0x6224  0x118    <-> ranking         0x43d0f0      default 1c51b0
+  +0x633c  8 x 0x10 <-> 0x4d7068 (8 records)          default 152658/152898
+  +0x63bc  2 x 8 words <-> key masks 0x4eaac0         default 177118
+  +0x63fc  0x1a8 bytes zero (UNKNOWN use)
+  +0x65a4  u8 = 1 (INFERRED version/valid marker; no other reader found)
+
+  10f000 InitSaveData (main initialiser; callers 10e20c, 10e654, 10e76c,
+  10e918 = boot memory-card screen; 10e618 prints "InitSubSaveData" first):
+     memset(image, 0, 0x65a8); 115498(); 1113e8(image+0x618c); 1b8c40();
+     1c51b0(image+0x6224); 1183f8(image+0x6184); memset(image+0x63fc,0,0x1a8);
+     152658(); 177118(); image[0x65a4] = 1
+  1b8b88 unpack image -> live: 1b8bc0 (system setting + volume word),
+     1b8c40 (game option), 1b8c98 (ranking), 1771b8 (keys), 1526a8 (0x4d7068)
+  1b8cf0 pack live -> image: 1b8d28, 1b8d68, 1b8dc0, 177208, 152700
+  (callers of pack: 10f18c auto-save, 10f978 manual save, 1d34d0, 1d3514.)
+
+7.2 Memory-card file (only what a native file needs)
+  Path "/BISLPS-25559/BISLPS-25559" on MEMORY CARD slot 1 (0x3bd140; the "S"
+  and "KDDI" variants at 0x3bd160/0x3bd198 are network data, out of scope).
+  File buffer 0x6800 bytes (0xdf1040 / 0xef1040 staging buffers, zero filled):
+  bytes 0..0x65a7 = the save image, remainder zero, u16 little-endian checksum
+  at 0x67fe.
+  Checksum 10dcc0(buf, len) OBSERVED: v = 0; for each byte b: v ^= b << 8;
+  8 times { v <<= 1; if (v & 0x10000) v ^= 0x1021 }; result v & 0xffff
+  (CRC-16 with polynomial 0x1021, initial value 0, MSB first, no reflection).
+  Writer 10ddd8/10dd60: store 0x1234 at 0x67fe, compute over all 0x6800 bytes,
+  store the result at 0x67fe. Verifier 10dd98/10dd18: save stored value, put
+  0x1234 back, recompute, restore; file valid iff stored == computed. On
+  mismatch the loader reports the "data is corrupted" message and zeroes the
+  staging buffer; on success it copies 0x65a8 bytes to 0x5735c8 (10ee44).
+  There is no separate version field in the check besides image[0x65a4].
+  "McLoadEnd : check_crc_ex err" (1b6e64) belongs to the separate "NT" network
+  save loader, not to this file. UNKNOWN: icon.sys contents, directory
+  creation, free-space check (100 KB message) - not needed for a native file.
+
+7.3 Page
+  State: [0x582de8] cursor 0..3; [0x582dec] state 0/1/2/4; [0x582df0] work
+  auto-save flag; [0x582df4] frame. Entry 1d3110: work = image.autoSave;
+  cursor = state = frame = 0.
+  Items (0x6578f0; x 0x44, y 0x58 + 0x18*i; value of item 2 at (0x170, 0x88)
+  from {"OFF","ON"}[work]):
+    0 "SAVE"       help(1) ""PlayStation 2"専用メモリーカード(8MB)へデータの記録を行います"
+    1 "LOAD"       help(1) "…メモリーカード(8MB)からデータの読み込みを行います"
+    2 "AUTO SAVE"  help(0) "オートセーブの設定を行います"
+    3 "EXIT"       help(0) "オプションモードに戻ります"
+  Input 1d38f8: cancel 0x20, confirm 0x10, repeat up 0x40, repeat down 0x80,
+  edge up 1, edge down 2, edge right 4, edge left 8.
+  Per update per seat (OBSERVED order):
+    in = (inputReady() and state != 4) ? 1d38f8(seat) : 0
+    if in & 0x10: sound 0;
+        if cursor == 2: state 0 -> 1, 1 -> 2
+        else 1d3498():
+            0: 1b8cf0(); 10f958()                 // pack, blocking save UI
+            1: 1b8cf0(); 10f088(); 1b8b88(); work = image.autoSave
+                    // 10f088: copy image to 0xef1040, 10eb08() blocking load
+                    // UI; if it returns 0 copy the buffer back (so a failed or
+                    // refused load leaves the image unchanged), then unpack
+            3: 1d3458()                           // leave
+    if state == 0:
+        in & 0x40: cursor = (cursor+3)%4, reload help, sound 0x20
+        elif in & 0x80: cursor = (cursor+1)%4, ...
+        elif in & 0x20: 1d3458(); sound 0x25
+    if in & 0x100: 1d3458(); sound 0x25           // bit never produced
+    if state == 1:
+        in & 0x20: state = 0; work = image.autoSave; sound 0x25
+        elif in & 5 or in & 0xa: work ^= 1; sound 0x20
+    if state == 2: state = 0; image.autoSave = work; sound 0
+  1d3458: 1252f0(1, 0, 0x1d3420, 0x1cfa10); state = 4.
+  Draw: 1ce570(); 1ce660(0,0,0); 1d3550(a) banner rect 0x4c76c0;
+  1d3600(cursor, state, a, frame); 1d37d8(cursor, a); frame++.
+
+7.4 Blocking card dialogs (user-visible level)
+  10f958 manual save and 10eb08 load run their own render loop (107208,
+  1ce628 background, 109d00, 104e38 frame flip, 10c568 message box, 10cbb8
+  button poll with masks 0x830 confirm / 0xc0 cancel) and return to the page.
+  Prompts are the SJIS strings 0x5db410..0x5dbe00, e.g.
+    load confirm  0x5dbcc8 "…データをロードします。ロードをしますか？" (はい/いいえ
+                  0x5db530/0x5db550, cursor moved by pad 0x2000/0x8000, sound
+                  0x20; confirm sound 0; cancel sound 0x25)
+    loading       0x5db9f0, success 0x5dbb50, corrupted 0x5dbad0, no card
+                  0x5dbb98, no data 0x5dbbf8
+  The exact dialog state numbers ([0x3bd920], values 2..9) were not traced:
+  UNKNOWN; a native port can replace both functions by synchronous file I/O
+  plus one confirmation and one result message.
+
+7.5 Auto-save 10f158
+  if image.autoSave != 0: 1b8cf0(); blocking save sequence (no confirmation).
+  Callers (OBSERVED): 1cfacc (leaving OPTION top to the title), 13b044 and
+  13bb9c (each next to a scene switch to 0x127940; INFERRED the exits of the
+  spirits-edit 0x13ad40 and colour-edit 0x13b160 scenes), 1389d4 and 1e6088
+  (contexts not read; 1389d4 follows a 1e6180() != 1 test, INFERRED the
+  non-network return-to-title path of a result scene). No auto-save is issued when a sub-page
+  commits a value; options persist only through these triggers or manual SAVE.
+
+
+8. System data field map
+------------------------
+
+8.1 g_SystemSetting 0x43d050 (7 bytes; default 1183f8: all 0 except +4 = 100)
+  +0,+1  UNKNOWN (no reader found by the scan)
+  +2     u8; written 0 at 1a0b90/1a1704; read at 126d70, 182b78, 182e20,
+         1a3084.., 1bb358..1bbd94, 1c0988, 1c6230, 1ccdb4.., 1e88c4. UNKNOWN
+         meaning (INFERRED a display/demo flag); not edited by OPTION MODE.
+  +3     sound output 0 stereo / 1 monaural (reader 1009f8 at boot -> 213c08)
+  +4     BGM volume 0..100 -> [0x5a9e78]
+  +5     narration voice 0 Japanese / 1 English (readers 213088..2135a0,
+         13ec40)
+  +6     BGM set 0 original / 1 arranged (readers 214020, 214078, 2140d0,
+         13eb24)
+
+8.2 g_GameOption 0x43d058 (0x98 bytes; defaults 111410 + 14f4a0 + 111458)
+  off   abs       w  default  meaning / readers
+  +0x00 43d058    1  0   UNKNOWN flag; reader 111758 (returns byte == 1, no
+                         callers found); cleared by DEFAULT SETTING
+  +0x01 43d059    1  0   UNKNOWN; reader 124fa0 (nonzero selects a table entry
+                         at 0x5dfb30 + 4*v); cleared by DEFAULT SETTING
+  +0x02 43d05a    1  0   UNKNOWN; cleared by DEFAULT SETTING
+  +0x03 43d05b    1  0   UNKNOWN; reader 1c4690 (sub-mode 5/6 only: 0x78 or
+                         0x96); cleared by DEFAULT SETTING
+                         (INFERRED +0..+3 are network-lobby match settings)
+  +0x04 43d05c    1  4   GAME LEVEL 1..8. Readers: 15bf34 (CPU AI, clamped to
+                         <= 7 as an index), 15d5f4 (AI: level < 7 adds a
+                         d100 chance (2-x)*10 at 6, further cases at 5 and 4).
+  +0x05 43d05d    1  0   GAME TIME. Reader 13fbe4 (battle setup):
+                           battle[0x13c] = {0 -> 0, 1 -> 1, 2 -> 3}; then
+                           survival (1393a0) -> 2; else if mode word
+                           [0x4c3808] == 0 or practice (139388) -> 3; else if
+                           139430() -> 0.
+                         Reader 1c8020: value 2 suppresses the clock
+                         (result -1). 111740 (60 or 90 by this byte) has no
+                         callers. battle[0x13c] is the four-valued time option
+                         already implemented natively (versus-clock validator).
+  +0x06 43d05e    1  0   GAME MODE 0 ORIGINAL / 1 ARCADE. Reader 13a858
+                         (== 1), callers 15510c, 165268, 168550, 16d470,
+                         1709e4, 1725bc, 1ee7cc, 1eebf4, 1ef510, 1ef9ec,
+                         1fe9a4, 20797c, 207fb0, 208dc8. Also forced to 0 by
+                         1d9238/1d92a0/1d934c (network lobby presets).
+                         This resolves the "byte 43d05e" unknown in
+                         docs/projectile-engine.txt and the native comments
+                         "13a858 is 0 under console VS".
+  +0x07 43d05f    1  0   CPU MATCH POINT index 0..14. Reader 111558 via 111508
+                         (seat = 0 for mode word 1 or 4, 1 for 2 or 5):
+                           profile[seat].+0x20   = human wins needed
+                             (jump table 0x5dd058: idx 0-3 -> 2, 4-6 -> 3,
+                              7-8 -> 4, 9 -> 5, 10-14 -> 1)
+                           profile[seat^1].+0x20 = CPU wins needed
+                             (jump table 0x5dd094: {2,3,4,5,3,4,5,4,5,5,
+                              1,2,3,4,5})
+                         with profile = 0x456890 + 0x30*seat. Callers of
+                         111508: mode menu ARCADE 1cd38c, 137a3c, 11d218.
+  +0x08 43d060    1  2   VS MATCH POINT 1..5. Reader 1116d8: both
+                         [0x456890+0x20] and [0x456890+0x50] = value. Callers:
+                         mode menu VS 1cd3ec, 1181f4, 118284.
+                         (1116f8 practice writes 0, 111710 survival 1, 111728
+                         writes 2: callers 1458dc, 1cd5ec, 1d29f8, network.)
+                         Battle setup 13fb2c..13fd78 then sets the per-player
+                         wins-needed word battleRound[player].+0x280: 1 for
+                         practice/survival, 2 when 139430() (network), else the
+                         profile word (+0x28 of the record at [0x4d3d04] -
+                         INFERRED to be the same profile +0x20 after copy).
+  +0x09 43d061    1  100 DAMAGE LEVEL percent. Reader 14f2b8(x): 139430() ?
+                         x : (x*v + 99)/100. Callers 14a924, 1655a8.
+  +0x0c 43d064    4  0x100 BRIGHT 0x38..0x100. Readers in the renderer:
+                         1055cc, 105844, 108178, 108624, 108970, 108d70,
+                         108efc (INFERRED 8.8 colour multiplier). Also written
+                         by 1ccc48 (restore from [0x579760]) and 1e7358 (0x100).
+  +0x10 43d068    1  0   SPIRITS 1P 0 normal / 1 max / 2 infinity
+  +0x11 43d069    1  32  MIKIRI 1P initial gauge (0..200)
+  +0x12 43d06a    1  20  KYOUCHI ("mu") 1P initial gauge (0..200)
+  +0x13 43d06b    1  0   SPIRITS 2P
+  +0x14 43d06c    1  32  MIKIRI 2P
+  +0x15 43d06d    1  20  KYOUCHI 2P
+                         Readers (a0 = player index, 1 selects the 2P byte):
+                           14f310 mikiri: 139430() ? [0x50d91c] : byte
+                                  (callers 11eef4, 14eec0, 1a4840, 1a4984)
+                           14f360 kyouchi: 139430() ? [0x50d90c] : byte
+                                  (caller 14ec5c)
+                           14f3b0 spirits == 1 / 14f428 spirits == 2:
+                                  practice (139388) -> 139d78(player) == 1 / 2;
+                                  else 139430() -> false; else byte compare
+                                  (callers 14ecdc; 14ad3c, 14ecec)
+                         Defaults come from 0x50d858 + 0xc4 (=32) and + 0xb4
+                         (=20) in .data.
+  +0x16..+0x46    49 x u8 per-fighter flags, default 0 except indices 40, 41,
+                         42, 44, 45, 46, 47, 48 (= +0x3e,+0x3f,+0x40,+0x42..
+                         +0x46) = 1. Readers 128e74 (+0x40), 12a4dc/12dc3c/
+                         1a148c.. (+0x46), 1e3920.. (network). INFERRED
+                         "fighter locked/hidden" flags for the eight hidden
+                         fighters. See the character-select slice.
+  +0x47..+0x77    49 x u8, default 0 (base 0x43d09f used by the mode menu
+                         code); +0x77 read at 1a0b70, 1a2e58. INFERRED
+                         per-fighter arcade-clear flags (ending gallery).
+  +0x78..+0x7c    5 x u8, default 1. UNKNOWN (no reader found by the scan).
+  +0x7d           u8 default 1. UNKNOWN.
+  +0x7e 43d0d6    u8 default 0: unlock byte read by the mode menu builder
+                         (1ccf30: value 1 selects 7, otherwise 5, as an
+                         argument of 1ccf78; also 1cd014..) and
+                         character select (docs: spirits 6/7/8 option bytes
+                         43d0d6..d8); written by 12fa0c/12fbf4, 1d9228...
+  +0x7f 43d0d7    u8 default 0   (same family; readers 13d298, 20e964, 1e3814)
+  +0x80 43d0d8    u8 default 0   (same family; reader 13d524)
+  +0x81..+0x89    9 x u8 default 0 (network: 1e6218..); UNKNOWN
+  +0x8a..+0x8c    3 x u8 default 0 (network 1e370c, 1e37b0, 1e3894)
+  +0x90 43d0e8    s32 default 0; 139890: += 13a870() whenever mode word != 0
+                         (13a870 = [0x123a16c]/60, or 181468() in survival).
+                         INFERRED accumulated play time in seconds.
+  +0x94 43d0ec    u8 default 0 (readers 129ec8, 12a540, 12d514, 12de94,
+                         20ebe0; docs/development-plan.txt: alternative move
+                         mode written only when 43d0ec == 1)
+  +0x95 43d0ed    u8 (readers 130390, 1333b4.., 13ae2c); not set by 111458
+                         (zero from memset).
+  +0x96,+0x97     padding (block size 0x98).
+
+8.3 Ranking 0x43d0f0 (0x118 bytes; default 1c51b0)
+  5 records x 8 bytes: {s32 value = 5 - i; u8 +4 = i; u8 +5 = 5}
+  20 records x 12 bytes from +0x28: {s32 score = 200000 - 10000*i; u8 +4 = i;
+     char name[4] at +5 from pointer table 0x582458[i] (3187f8 = strncpy 4);
+     u8 +9 = 5}
+  (partly ported in src/console_attract_ranking.cpp.)
+
+8.4 Mode predicates used by the readers
+  139280(k): byte [0x123a0c0] = k; set by the mode menu: 0 arcade/VS/other,
+             1 practice, 2 survival.
+  139388(): k == 1.   1393a0(): k == 2.
+  139408(): sub-mode [0x4c38a8] is 5 or 6 (network).
+  139430(): 1393a0() || 139388() || 139408()  -> "option overrides disabled":
+            damage level, initial gauges and spirits state use factory values.
+
+
+9. What the native port currently hardcodes
+-------------------------------------------
+
+  option                native state today                     original source
+  GAME LEVEL            frame.difficulty = 4                   43d05c, 15bf34,
+                        (src/cpu_match_control.cpp:38)         15d5f4
+  GAME TIME             console VS factory 60                  43d05d -> 13fbe4
+  VS / CPU MATCH POINT  two wins                               43d060 / 43d05f
+                                                               -> profile +0x20
+  DAMAGE LEVEL          100 % (script_engine.cpp:144)          43d061, 14f2b8
+  GAME MODE             ORIGINAL assumed at every 13a858 site  43d05e
+                        (ground_state.cpp:364,
+                        script_fighter.cpp:754/954,
+                        native_match.cpp:606,
+                        projectile_engine.cpp:124,
+                        victim_script.cpp:778/1358,
+                        script_engine.cpp:260,
+                        pursuit_attack.cpp:23)
+  SPIRITS/MIKIRI/KYOUCHI factory (battle_gauges.hpp:14)        43d068..43d06d
+  BRIGHT                none                                   43d064
+  sound output/volume/  none                                   43d053..43d056,
+  BGM set/voice                                                5a9e78
+  key masks             SDL mapping outside 4eaac0             4eaac0, 178d50
+  item setting (stage items): NOT an OPTION MODE field. No item entry exists in
+  any option table above; it is selected elsewhere (console VS menu / select
+  flow) - UNKNOWN here.
+
+
+10. UNKNOWN / not read, and suggested Probe checks
+--------------------------------------------------
+
+  1. Key-config widget 212110..212800 (rows, labels, capture, sounds, preset
+     UI). Probe: run 2121c8 with a stubbed 118128 pad and watch 0x4eaac0.
+  2. Animated background 1e1620..1e2408 and the exact meaning of 0x582b40.
+  3. Page-slide easing 1d21a0 (four undecoded COP1 madd/msub words at
+     1d2218..1d2228) and the full row geometry of 1d1e20. Probe: call
+     1d21a0(t, 0, x, x, x, 15) for t = 0..15 and record the returns.
+  4. SOUND SETTING draw 1dc470/1dc520 (banner rectangle, value pointer tables,
+     coordinates) and 1dcab8; value-string order for items 0, 2, 3.
+  5. 1cf8f8 highlight primitive (17c260/17dd88) geometry and colours; ARGB
+     channel order of the 1135e8 colour (0xff0000 = selected).
+  6. Card dialog state machine in 10e2xx..10f9xx / 10eb08 / 10f958 and the
+     auto-save progress screen in 10f158 (frame counts, messages).
+  7. Save image +0x0004..+0x6183 (115498), +0x633c records (152898), +0x63fc.
+  8. g_GameOption +0x00..+0x03, +0x78..+0x7d, +0x81..+0x8c, +0x95 semantics.
+  9. Auto-save callers 1389d4 / 1e6088 contexts.
+ 10. Whether 1e7b40 at GAME OPTION entry changes audible state.
+ Validation idea for the pages: an Oracle like validate_console_versus_menu.py
+ that stubs 118128, 1e7b70, 1252f0, 112670 and the draw callees, runs
+ 1cfa98 / 1d01b8 / 1dbb00 / 1d3140 once per frame with scripted pad words, and
+ compares cursor/state/work/live bytes plus the ordered sound and scene-switch
+ calls against the native implementation.

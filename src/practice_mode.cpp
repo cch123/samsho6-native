@@ -537,6 +537,17 @@ int practiceItemDelivery(const PracticeState& practice,GameRandom& random) {
     const int kind=practice.itemKind();
     return kind==0x13?random.bounded(0x13):kind;
 }
+void practiceGetUp(int32_t& getUpType,uint32_t& flags248,int controlKind,const PracticeState& practice,
+                   const PracticeSystem& dummy,GameRandom& random) {
+    if(!practice.practice()||controlKind!=1||(flags248&0x20000000))return;
+    const int code=practice.behaviour(dummy);
+    if(code!=0x24&&code!=0x25) {
+        int type=practice.ukemi();
+        if(type==3){const int roll=random.bounded(100);type=roll<0x22?3:roll<0x43?2:1;}
+        if(type==1||type==2)getUpType=type;
+    }
+    flags248|=0x20000000;
+}
 void PracticeDamage::add(int32_t damage) {
     if(frameFlag){frameFlag=0;last=0;}   // first hit of this outer frame
     if(newCombo){newCombo=0;total=0;}

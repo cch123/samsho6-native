@@ -249,6 +249,12 @@ int practiceTimeMode(const PracticeState& practice,int timeOption,bool linkSubmo
 // 145068: item kind for the delivery scheduler or -1 (no delivery); RANDOM draws 112300(0x13).
 int practiceItemDelivery(const PracticeState& practice,GameRandom& random);
 
+// 172158: CPU UKEMI TYPE decides the dummy's get-up type actor+0xa4c once per knock-down
+// (actor+0x248 bit 0x20000000 marks the decision). HUMAN and REPLAY dummies only set the mark.
+// RANDOM draws 112300(100): below 0x22 no ukemi, below 0x43 type 2, otherwise type 1.
+void practiceGetUp(int32_t& getUpType,uint32_t& flags248,int controlKind,const PracticeState& practice,
+                   const PracticeSystem& dummy,GameRandom& random);
+
 // Damage counters 123a0f0..123a0fc and the per-frame flag 123a17c.
 struct PracticeDamage {
     int32_t newCombo=1,maxDamage=0,total=0,last=0;

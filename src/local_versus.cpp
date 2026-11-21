@@ -96,6 +96,17 @@ void LocalVersus::startArcadeFight() {
 }
 void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
     auto& run=arcade_->run;
+    if(arcadeSelecting_) {
+        match_->tick(pads);
+        if(observer_)observer_(*match_);
+        const auto pick=match_->soloSelection();
+        if(!pick)return;
+        arcadeSelecting_=false;
+        arcade_->random=match_->battle().random;
+        arcade_->selected(pick->character,pick->colour&0xffff,pick->spirit,physicalPad(pads[run.humanSeat()].held));
+        if(arcade_->scene==ArcadeScene::Battle)startArcadeFight();
+        return;
+    }
     const std::array<uint32_t,2> pressed{physicalPad(pads[0].pressed),physicalPad(pads[1].pressed)};
     const uint32_t held=physicalPad(pads[run.humanSeat()].held);
     switch(arcade_->scene) {
@@ -122,10 +133,12 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
     default:break;
     }
     if(arcade_->scene==ArcadeScene::CharacterSelect) {
-        // CONTINUE returns to the character select (128008). Until the
-        // single-seat select is wired the same fighter continues.
-        const auto& human=run.players[run.humanSeat()];
-        arcade_->selected(human.character,human.colour,human.spirit,held);
+        // CONTINUE returns to the single-seat character select (128008).
+        auto select=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_);
+        select->openSoloSelect(run.humanSeat());
+        match_=std::move(select);
+        arcadeSelecting_=true;
+        return;
     }
     if(arcade_->scene==ArcadeScene::Battle)startArcadeFight();
     if(arcade_ && (arcade_->leftToTitle||arcade_->scene==ArcadeScene::None)) {
@@ -138,7 +151,7 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
     }
 }
 void LocalVersus::restart() {
-    arcade_.reset();arcadeNotice_.clear();
+    arcade_.reset();arcadeNotice_.clear();arcadeSelecting_=false;
     match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
     if(entry_==VersusEntry::Arcade){startArcade(0,0,0,int(spirits_[0]));matchNumber_=1;return;}
     if(entry_==VersusEntry::Fight)configureControllers(*match_);
@@ -148,6 +161,10 @@ void LocalVersus::restart() {
 }
 void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
     if(arcade_){tickArcade(pads);return;}
+    if(const auto pick=match_->soloSelection()) {
+        startArcade(pick->seat,pick->character,pick->colour&0xffff,pick->spirit);
+        return;
+    }
     try {match_->tick(pads);}
     catch(const UnportedFighterState& move) {
         if(mode_!=VersusMode::Console)throw;

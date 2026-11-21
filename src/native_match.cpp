@@ -1181,6 +1181,15 @@ void NativeMatch::tickOption(const std::array<NormalizedPadSample,2>& pads) {
     else enterOption(pendingOption_==OptionScene::KeyConfig?OptionScene::Top:pendingOption_);
     pendingOption_=OptionScene::None;
 }
+void NativeMatch::openSoloSelect(unsigned seat) {
+    // 1cd348: ARCADE sets mode word 1/2 and sub-mode 1 before scene 128008.
+    battle_.gameMode=int(seat)+1;battle_.matchEnd.submodeA0=1;
+    openCharacterSelect(true);
+    characterSelect_->configure(int(seat)+1);
+    characterSelect_->random=battle_.random;
+    soloSelection_.reset();
+    selectAudioPending_=false;enterSelectAudio();
+}
 void NativeMatch::returnToModeMenu() {
     // 124d50 clears GameData before the title scene 127940; the mode menu
     // reopens on the row that started the mode (582af8 is not reset).
@@ -1341,6 +1350,14 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             spiritsEdit_.emplace(*system_,*spiritsAssets_,*editWidgets_,battle_.random);
             return;
         }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Arcade) {
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            title_.reset();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            openSoloSelect(seat);
+            return;
+        }
         if(titleFadeTick_==15) {
             menu.beginSet(title_->confirmingSeat);
             title_.reset();
@@ -1393,6 +1410,16 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             characterSelect_->tick(ui);
             for(auto event:characterSelect_->audio)sounds_.sample(event.bank,event.tone);
             battle_.random=characterSelect_->random;
+        }
+        if(characterSelect_->complete&&!characterSelect_->twoSided()) {
+            // 12f100 leaves through 1252f0(1,1,...); the session picks the next scene.
+            if(++selectFade_==36) {
+                const unsigned seat=unsigned(characterSelect_->soleSeat());
+                const auto& pick=characterSelect_->seats[seat];
+                soloSelection_=SoloSelection{seat,pick.selected,pick.palette,pick.spirit};
+                sounds_.stopMusic();sounds_.stopGroup(2);
+            }
+            return;
         }
         if(characterSelect_->complete&&++selectFade_==36) {
             const auto picks=selectedLineup();

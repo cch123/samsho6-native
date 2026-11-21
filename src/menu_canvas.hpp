@@ -26,7 +26,7 @@ struct MenuDrawRecord {
     MenuFont font=MenuFont::None;
     uint8_t slot=0;        // 1 obj0_16, 4 PS2_menu_bg00_00, 0x2e ps2_common_icon
     uint8_t blend=1;       // 3db8fc as passed to 1149d0
-    bool raw=false;        // latch 348b10: queue tag 2ff2 instead of 1ff2
+    bool additive=false;   // latch 348b10: queue tag 2ff2, GS ALPHA preset 348bc0 (Cd + Cs)
     uint16_t glyph=0;      // Goth20/Goth24 record number
     uint32_t colour=0;     // final queue colour word (fade, GS halving and BRIGHT applied)
     float z=0;             // queue depth; larger is nearer
@@ -47,7 +47,7 @@ struct MenuDrawList {
     std::vector<MenuDrawRecord> records;
     uint32_t colour=0xffffffff; // 3db900, AARRGGBB
     int blend=1;                // 3db8fc
-    bool raw=false;             // 348b10
+    bool additive=false;        // 348b10
     int depth=100;              // 3db8f4, tie breaker added by 114d88
     int glyphs=0;               // 345180, cache cursor of 10a710/10a1c0
     int textDepth=0;            // 348a8c
@@ -106,7 +106,8 @@ public:
     // 113f98: colour and blend come from the list globals.
     void sprite(MenuDrawList& list,int slot,float x,float y,float z,float w,float h,
                 float u,float v,float uw,float vh) const;
-    // 117de8 (flags 100 hides, 200 selects blend 0; colour 0 latches raw colour).
+    // 117de8 (flags 100 hides, 200 selects blend 0). Colour 0 keeps 3db900
+    // and latches the additive preset for this sprite (1142b8/1142c8).
     void sprite(MenuDrawList& list,const MenuSheetRect& rect,int slot,unsigned flags,uint32_t colour,
                 bool mirror,float x,float y,float z,float w,float h) const;
     // 117a00.

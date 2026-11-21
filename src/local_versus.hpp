@@ -38,6 +38,7 @@ private:
     MatchRules versusRules() const;
     std::unique_ptr<ArcadeSession> arcade_;
     std::string arcadeNotice_;
+    bool arcadeSelecting_=false; // CONTINUE reopened the character select
     void startArcade(unsigned seat,int character,int colour,int spirit);
     void startArcadeFight();
     void tickArcade(const std::array<NormalizedPadSample,2>&);

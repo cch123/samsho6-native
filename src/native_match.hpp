@@ -85,6 +85,11 @@ public:
     // Arcade: GameData+90 and the state-9 tally task (1c7f08).
     int32_t arcadeScore() const {return arcadeScore_;}
     const ArcadeTally& arcadeTally() const {return tally_;}
+    // Set once the single-seat select (mode word 1/2) has left through
+    // 12f100: the seat and its character, colour and spirit.
+    struct SoloSelection {unsigned seat=0;int character=0,colour=0,spirit=0;};
+    const std::optional<SoloSelection>& soloSelection() const {return soloSelection_;}
+    void openSoloSelect(unsigned seat);
     const ArcadeTallyTables* arcadeTables() const {return tallyTables_.get();}
     bool titlePromptVisible() const {return promptClock_<60;}
     void openCharacterSelect(bool boot=false);
@@ -129,6 +134,7 @@ private:
     std::optional<SpiritsEdit> spiritsEdit_;
     unsigned editSeat_=0;
     std::unique_ptr<ArcadeTallyTables> tallyTables_;
+    std::optional<SoloSelection> soloSelection_;
     ArcadeTally tally_;
     int32_t arcadeScore_=0,arcadeFinishBonus_=0;
     std::array<uint32_t,2> menuPressed_{};

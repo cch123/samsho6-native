@@ -1,4 +1,5 @@
 #include "menu_canvas.hpp"
+#include "scalar_float.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -42,6 +43,12 @@ struct Reader {
     unsigned half() {const auto* p=take(2);return p[0]|p[1]<<8;}
 };
 int trunc(float value) {return int(value);}  // cvt.w.s
+// EE single-precision arithmetic (results round toward zero), one operation each.
+ScalarFloat scalar(float v) {return ScalarFloat{std::bit_cast<uint32_t>(v)};}
+float add(float a,float b) {return std::bit_cast<float>(scalar(a).add(scalar(b)).bits);}
+float sub(float a,float b) {return std::bit_cast<float>(scalar(a).sub(scalar(b)).bits);}
+float mul(float a,float b) {return std::bit_cast<float>(scalar(a).mul(scalar(b)).bits);}
+float div(float a,float b) {return std::bit_cast<float>(scalar(a).div(scalar(b)).bits);}
 void mix(uint8_t* dst,int r,int g,int b,int alpha) {
     const int source[3]={r,g,b};
     for(int c=0;c<3;++c)dst[c]=uint8_t(std::clamp(dst[c]+(((source[c]-dst[c])*alpha)>>7),0,255));
@@ -165,9 +172,7 @@ uint32_t MenuCanvas::quadColour(uint32_t colour,int blend) const {
 }
 
 float MenuCanvas::depth(MenuDrawList& list,float z) const {
-    const float scaled=z*100.0f;
-    const float base=10000000.0f-scaled;
-    return base+float(list.depth++);
+    return add(sub(10000000.0f,mul(z,100.0f)),float(list.depth++));
 }
 
 namespace {
@@ -201,7 +206,7 @@ void MenuCanvas::triangle(MenuDrawList& list,float x0,float y0,float x1,float y1
 void MenuCanvas::quad(MenuDrawList& list,int slot,uint32_t colour,int blend,float z,float x,float y,float w,float h,
                       float u,float v,float uw,float vh) const {
     MenuDrawRecord r;
-    r.kind=MenuPrimitive::Quad;r.slot=uint8_t(slot);r.blend=uint8_t(blend);r.raw=list.raw;
+    r.kind=MenuPrimitive::Quad;r.slot=uint8_t(slot);r.blend=uint8_t(blend);r.additive=list.additive;
     r.colour=quadColour(colour,blend);r.z=z;
     r.x=x;r.y=y;r.w=w;r.h=h;r.u=u;r.v=v;r.uw=uw;r.vh=vh;
     list.records.push_back(r);
@@ -209,7 +214,7 @@ void MenuCanvas::quad(MenuDrawList& list,int slot,uint32_t colour,int blend,floa
 
 void MenuCanvas::sprite(MenuDrawList& list,int slot,float x,float y,float z,float w,float h,
                         float u,float v,float uw,float vh) const {
-    if(culled(x,x+w,y,y+h))return;
+    if(culled(x,add(x,w),y,add(y,h)))return;
     // Slot 0x28 bypasses the fade modulation.
     const uint32_t colour=slot==0x28?list.colour:fade(list.colour);
     quad(list,slot,colour,list.blend,depth(list,z),x,y,w,h,u,v,uw,vh);
@@ -219,48 +224,49 @@ void MenuCanvas::sprite(MenuDrawList& list,const MenuSheetRect& rect,int slot,un
                         bool mirror,float x,float y,float z,float w,float h) const {
     if(slot<=0||(flags&0x100))return;
     list.blend=(flags&0x200)?0:1;
-    if(colour)list.colour=colour;else list.raw=true;
-    if(mirror)sprite(list,slot,x+w,y,z,-w,h,float(rect.u),float(rect.v),float(rect.w),float(rect.h));
+    if(colour)list.colour=colour;else list.additive=true;
+    if(mirror)sprite(list,slot,add(x,w),y,z,-w,h,float(rect.u),float(rect.v),float(rect.w),float(rect.h));
     else sprite(list,slot,x,y,z,w,h,float(rect.u),float(rect.v),float(rect.w),float(rect.h));
-    if(!colour)list.raw=false;
+    if(!colour)list.additive=false;
 }
 
 void MenuCanvas::picture(MenuDrawList& list,const MenuSheetRect& rect,int slot,unsigned,uint32_t colour,
                          float x,float y,float z) const {
     if(slot<=0)return;
     list.blend=1;
-    if(colour)list.colour=colour;else list.raw=true;
+    if(colour)list.colour=colour;else list.additive=true;
     sprite(list,slot,x,y,z,float(rect.w),float(rect.h),float(rect.u),float(rect.v),float(rect.w),float(rect.h));
-    if(!colour)list.raw=false;
+    if(!colour)list.additive=false;
 }
 
 void MenuCanvas::rotated(MenuDrawList& list,int slot,int degrees,float x,float y,float z,float w,float h,
                          float u,float v,float uw,float vh,float scale) const {
-    if(culled(x,x+w,y,y+h))return;
+    if(culled(x,add(x,w),y,add(y,h)))return;
     const uint32_t colour=slot==0x28?list.colour:fade(list.colour);
     const float half=floats_[Half],inset=floats_[TexelInset];
-    const float su=u*scale;
-    const float hh=h*half;
+    const float su=mul(u,scale);
+    const float hh=mul(h,half);
     const float depthValue=depth(list,z);
-    const float hw=w*half;
-    const float sv=v*scale;
-    const float cy=y+hh;
-    const float suw=(uw-inset)*scale;
-    const float svh=(vh-inset)*scale;
-    const float cx=x+hw;
+    const float hw=mul(w,half);
+    const float sv=mul(v,scale);
+    const float cy=add(y,hh);
+    const float suw=mul(sub(uw,inset),scale);
+    const float svh=mul(sub(vh,inset),scale);
+    const float cx=add(x,hw);
     const auto [cosine,sine]=trig(degrees);
-    const float a=hh*cosine,b=hw*sine;
-    const float nhw=(-w)*half,nhh=(-h)*half;
-    const float c=hh*sine;
-    const float d=nhw*sine,e=nhh*cosine,f=nhw*cosine,g=nhh*sine;
-    const float hwc=hw*cosine;
+    const float a=mul(hh,cosine),b=mul(hw,sine);
+    const float nhw=mul(-w,half),nhh=mul(-h,half);
+    const float c=mul(hh,sine);
+    const float d=mul(nhw,sine),e=mul(nhh,cosine),f=mul(nhw,cosine),g=mul(nhh,sine);
+    const float hwc=mul(hw,cosine);
     MenuDrawRecord r;
-    r.kind=MenuPrimitive::Rotated;r.slot=uint8_t(slot);r.blend=uint8_t(list.blend);r.raw=list.raw;
+    r.kind=MenuPrimitive::Rotated;r.slot=uint8_t(slot);r.blend=uint8_t(list.blend);r.additive=list.additive;
     r.colour=quadColour(colour,list.blend);r.z=depthValue;
-    r.corner={(f-g)+cx,(d+e)+cy,(f-c)+cx,(d+a)+cy,(hwc-g)+cx,(b+e)+cy,(hwc-c)+cx,(b+a)+cy};
+    r.corner={add(sub(f,g),cx),add(add(d,e),cy),add(sub(f,c),cx),add(add(d,a),cy),
+              add(sub(hwc,g),cx),add(add(b,e),cy),add(sub(hwc,c),cx),add(add(b,a),cy)};
     // The queue stores texel units: 1085e0 multiplies the scaled UV by 512.
     const float size=slot==4||slot==5?1024.0f:512.0f;
-    r.u=su*size;r.v=sv*size;r.uw=(su+suw)*size-r.u;r.vh=(sv+svh)*size-r.v;
+    r.u=mul(su,size);r.v=mul(sv,size);r.uw=sub(mul(add(su,suw),size),r.u);r.vh=sub(mul(add(sv,svh),size),r.v);
     r.x=x;r.y=y;r.w=w;r.h=h;
     list.records.push_back(r);
 }
@@ -275,9 +281,9 @@ void MenuCanvas::ascii(MenuDrawList& list,std::string_view text,int x,int y,uint
             // 113690: 30 cells per row at pitch 17 from (2,2), drawn 15x15
             // at the fixed depth 3d3aac without a tie-break increment.
             const int cell=int(ch)-0x20;
-            const float z=10000000.0f-list.asciiDepth*100.0f;
+            const float z=sub(10000000.0f,mul(list.asciiDepth,100.0f));
             MenuDrawRecord r;
-            r.kind=MenuPrimitive::Quad;r.slot=1;r.blend=1;r.raw=list.raw;
+            r.kind=MenuPrimitive::Quad;r.slot=1;r.blend=1;r.additive=list.additive;
             r.colour=quadColour(fade(colour),1);r.z=z;
             r.x=float(x);r.y=float(y);r.w=r.h=15;r.u=float(2+17*(cell%30));r.v=float(2+17*(cell/30));r.uw=r.vh=15;
             list.records.push_back(r);
@@ -345,21 +351,22 @@ void MenuCanvas::marker(MenuDrawList& list,std::string_view text,int x,int y,int
     const float insetY=floats_[MarkerInsetY],wide=floats_[MarkerInsetWide],narrow=floats_[MarkerInsetNarrow];
     // 17c228: each element sits one cursor step in front of the previous.
     const auto next=[&] {
-        const float z=(list.cursorBase-floats_[CursorFar])-list.cursor;
-        list.cursor=list.cursor+floats_[CursorStep];
+        const float z=sub(sub(list.cursorBase,floats_[CursorFar]),list.cursor);
+        list.cursor=add(list.cursor,floats_[CursorStep]);
         return z;
     };
     // 17dd88 with the three colours of the frame record forced to white:
     // an outer triangle and an inset one, pointing left and then right.
+    const float middle=add(fy,mul(h,mid)),bottom=add(fy,h);
     float z=next();
-    triangle(list,fx,fy+h*mid,fx+w,fy,fx+w,fy+h,z,0xffffffff);
+    triangle(list,fx,middle,add(fx,w),fy,add(fx,w),bottom,z,0xffffffff);
     z=next();
-    triangle(list,fx+wide,fy+h*mid,(fx+w)-narrow,fy+insetY,(fx+w)-narrow,(fy+h)-insetY,z,0xffffffff);
-    fx=fx+float(unsigned(text.size())*14u+27u);
+    triangle(list,add(fx,wide),middle,sub(add(fx,w),narrow),add(fy,insetY),sub(add(fx,w),narrow),sub(bottom,insetY),z,0xffffffff);
+    fx=add(fx,float(unsigned(text.size())*14u+27u));
     z=next();
-    triangle(list,fx,fy,fx+w,fy+h*mid,fx,fy+h,z,0xffffffff);
+    triangle(list,fx,fy,add(fx,w),middle,fx,bottom,z,0xffffffff);
     z=next();
-    triangle(list,fx+narrow,fy+insetY,(fx+w)-wide,fy+h*mid,fx+narrow,(fy+h)-insetY,z,0xffffffff);
+    triangle(list,add(fx,narrow),add(fy,insetY),sub(add(fx,w),wide),middle,add(fx,narrow),sub(bottom,insetY),z,0xffffffff);
 }
 
 void MenuCanvas::dialog(MenuDrawList& list,int cursor,int kind,bool neoGeoLand) const {
@@ -520,13 +527,13 @@ void MenuBackdrop::respawnDrifting(const MenuCanvas& canvas,Sprite& s,GameRandom
     s.x0=float((draw15(random)*0x280)>>15);
     const int right=(draw15(random)*0x32)>>15;
     const int left=(draw15(random)*-0x32)>>15;
-    s.y1=canvas.constant(DriftBottom);s.x1=s.x0+float(right+left);
+    s.y1=canvas.constant(DriftBottom);s.x1=add(s.x0,float(right+left));
     commonRespawn(s,random,0xa0,0xc8);
 }
 void MenuBackdrop::submit(const MenuCanvas& canvas,MenuDrawList& list,Sprite& s,float z,float scale) const {
     const float t=float(s.tick),d=float(s.duration);
-    s.x=s.x0+((s.x1-s.x0)*t)/d;
-    s.y=s.y0+((s.y1-s.y0)*t)/d;
+    s.x=add(s.x0,div(mul(sub(s.x1,s.x0),t),d));
+    s.y=add(s.y0,div(mul(sub(s.y1,s.y0),t),d));
     const auto& rect=canvas.petals()[size_t(s.frame)];
     canvas.rotated(list,0x2e,s.angle,s.x,s.y,z,s.w,s.h,float(rect.u),float(rect.v),float(rect.w),float(rect.h),scale);
 }
@@ -597,8 +604,11 @@ void MenuCanvas::rasterise(const MenuDrawList& list,std::span<uint8_t> rgba) con
         for(int c=0;c<4;++c)mod[c]=int((q.colour>>(8*c))&255);
         const auto textured=[&](uint8_t* dst,const std::array<uint8_t,4>& texel) {
             int source[4];
-            for(int c=0;c<4;++c)source[c]=q.raw?texel[size_t(c)]:std::min(255,texel[size_t(c)]*mod[c]/128);
-            mix(dst,source[0],source[1],source[2],source[3]);
+            for(int c=0;c<4;++c)source[c]=std::min(255,texel[size_t(c)]*mod[c]/128);
+            // ALPHA preset 348bc0 (A=Cd, B=0, C=FIX 80, D=Cs) adds the
+            // modulated source; the ordinary preset blends by source alpha.
+            if(q.additive)for(int c=0;c<3;++c)dst[c]=uint8_t(std::min(255,dst[c]+source[c]));
+            else mix(dst,source[0],source[1],source[2],source[3]);
         };
         switch(q.kind) {
         case MenuPrimitive::Flat: {

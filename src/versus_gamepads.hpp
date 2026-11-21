@@ -22,6 +22,7 @@ inline uint32_t versusButton(SDL_GamepadButton button) {
     case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return PadSystem;
     case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return PadLightMedium;
     case SDL_GAMEPAD_BUTTON_START: return PadStart;
+    case SDL_GAMEPAD_BUTTON_BACK: return PadSelect;
     default: return 0;
     }
 }

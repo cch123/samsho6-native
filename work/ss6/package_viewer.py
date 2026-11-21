@@ -23,6 +23,23 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  *[f'bup_{i:02}.{ext}' for i in sorted({*GRID,48}-{53}) for ext in ('tex','pal')],
                  *[f'vs_voice_{i:02}.bin' for i in range(1,49)],
                  *[f'vs_sounds_{i:02}.bin' for i in (*(c for c in PACKAGED if c),51,52)],
+                 'save_default.bin','console_option.bin','spirits_edit.bin','edit_widgets.bin','arcade_tally.bin','arcade_run.bin','arcade_map.bin','practice_art.bin','arcade_art.bin','pause_menu.bin','practice_mode.bin','skill_list.bin','menu_canvas.bin','PS2_menu_bg00_00.tex','PS2_menu_bg00_00.pal','character_select_mode_art.bin','menu_widgets.bin','console_gallery.bin','survival_run.bin','color_edit.bin','console_versus_art.bin','combat_stage.bin','combat_stage_01.bin',
+                 # Menu scenes: edit and gallery art tables, the 55 gallery pictures and the arena
+                 # streams the sound test can request. pause_art.bin exists once its extractor has run.
+                 'edit_art.bin','gallery_art.bin',*(['pause_art.bin'] if (ROOT/'work/ss6/extracted/resources/pause_art.bin').exists() else []),
+                 *[f'gl_{i:02}.{ext}' for i in range(55) for ext in ('tex','pal')],
+                 *[f'bgm{i:02}_{side}.vb' for i in range(7,15) for side in 'lr'],
+                 # ARCADE presentation scenes (docs/mode-arcade-map/talk/results/ending/ranking.txt):
+                 # tables, map / balloon / caption sheets, demo portraits, win portraits, ending
+                 # pictures, the ending object resource 99a and the ranking sheets.
+                 'arcade_talk.bin','arcade_results.bin','arcade_ending.bin','arcade_ranking.bin',
+                 'map_main.tex','map_main.pal','map_cloud.tex','moji4.tex','moji5.tex','hukidasi.tex','hukidasi2.tex',
+                 'demo_mga.tex','demo_mga.pal','menu_bg01_00.tex','menu_bg01_00.pal','font_otherscene2_16.tex',
+                 'rank_obj.tex','cloud_l.tex','cloud_r.tex','face.tex',
+                 *[f'{stem}_99a.bin' for stem in ('aid','act','jdg','pil','idx','map','chr')],
+                 *sorted(p.name for pattern in ('map_icon_*.tex','map_icon_*.pal','demo_[0-9]*.tex','demo_[0-9]*.pal',
+                                                'win_*.tex','win_*.pal','ed_bg*.tex','ed_bg*.pal')
+                         for p in (ROOT/'work/ss6/extracted/resources').glob(pattern)),
                  # Every texture page of the twelve battle stages and both CLUT files each one loads.
                  *sorted(f.name for arena in range(12) for f in (ROOT/'work/ss6/extracted/resources').glob(f'bg{arena:02}_[1-5].tex')),
                  *[f'bg{arena:02}_{page}.pal' for arena in range(12) for page in (1,2 if arena in (3,9,11) else 3)],

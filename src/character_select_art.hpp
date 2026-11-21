@@ -30,6 +30,11 @@ private:
     std::vector<std::vector<unsigned>> lists_;
     std::map<std::array<unsigned,4>,unsigned> pages_;
     std::array<unsigned,31> headers_{};
+    // character_select_mode_art.bin (optional until packaged): the page families whose
+    // 12a418 lists depend on the mode word, and 128be8's stopped-countdown glyph pair.
+    static constexpr unsigned modeFamily=16;
+    int stoppedHeader_=-1;
+    const std::vector<unsigned>& countdown(const CharacterSelect&) const;
     std::map<unsigned,Atlas> fixed_;
     mutable std::map<int,Atlas> portraits_;
     Atlas loadAtlas(const std::string&,int width,bool embedded) const;

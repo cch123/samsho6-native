@@ -1,0 +1,780 @@
+PRACTICE MODE (SLPS-25559) -- static specification
+====================================================
+
+Scope: mode-menu item 2 (PRACTICE), its character select differences, the in-battle
+practice menu, every battle-side branch on the practice predicate or on the practice
+settings, dummy recording/replay, and the exit paths.  Source: static reading of
+work/ss6/extracted/SLPS_255.59 (no Probe run was used).  All addresses are hexadecimal
+EE virtual addresses.  Labels:
+  OBSERVED  = read directly from instructions/data at the cited address.
+  INFERRED  = interpretation of observed code; not proven by execution.
+  UNKNOWN   = not read / not resolved.
+Pad words come from 118128(port): +4 = pressed edges, +8 = edges with auto-repeat.
+Pad bit masks are quoted raw; the only names used are the ones already established in
+src/character_select.cpp (0x10 up, 0x20 down, 0x40 left, 0x80 right, 8 = Start).
+
+Glossary
+  AI     = the CPU controller structure at actor+8 (AI+0xc0 == actor+0xc8 "controlModeC8").
+  SJIS   = Shift-JIS text encoding.
+  HUD    = head-up display.
+  actor  = per-fighter structure, 140090(seat) = [4d3d08] + 0xf2c*seat.
+  cfg    = per-seat fighter configuration, 456890 + 0x30*seat.
+  g      = game data block 4c3808 (g+0 mode word, g+0x10 seat word, g+0x18, g+0xa0 sub-mode).
+
+
+1. ENTRY / EXIT OVERVIEW
+------------------------
+
+ mode menu 1ccfd0, item 2
+        |
+        v
+ 1cd428: 1252f0(1,0,127d70,128008)  -> character select scene 128008 (mode 9/10)
+        |                                    ^
+        v                                    | CHARACTER SELECT (confirm YES)
+ battle scene 139660 (same entry as VS)      |  1252f0(2,0,139778,128008)
+   17f5a0 practice window init               |
+   coroutine 138f48 per frame:               |
+     140270 battle frame (unless paused)     |
+     13a030 / 13a280 key + damage display    |
+     17f790 practice window state machine ---+--> RETURN TO TITLE (confirm YES)
+                                                  1252f0(2,0,139778,127940)
+
+OBSERVED menu confirm, 1cd428..1cd490 (seat = s2, the seat that pressed confirm):
+  1252f0(1, 0, 0x127d70, 0x128008)      scene switch: destructor 127d70, next scene 128008
+  [582afc] = 1
+  g+0x10 = seat ^ 1
+  1ccfb8(9, 10, seat)                   mode word g+0 = 9 (seat 0) or 10 (seat 1)
+  1116f8()                              cfg[0]+0x20 = 0, cfg[1]+0x20 (456890+0x50) = 0
+                                        (VS item 1 instead copies byte 43d060 into both,
+                                        1116d8; SURVIVAL writes 1, 111710)
+  139280(1)                             battle-type byte [123a0c0] = 1
+  210368()                              practice settings reset to defaults (section 3)
+  g+0xa0 = 3                            sub-mode word 4c38a8 = 3
+Note g+0x14 is NOT written by the practice item (VS writes both +0x10 and +0x14).
+
+Battle-type byte [123a0c0] (OBSERVED 139280 setter; readers 139388, 1393a0):
+  0 = ordinary (ARCADE 1cd380, VS 1cd3f4, others), 1 = practice, 2 = survival.
+  139388() = ([123a0c0] == 1)   "practice predicate"
+  1393a0() = ([123a0c0] == 2)   "survival predicate"
+  139408() = (g+0xa0 == 5 || g+0xa0 == 6)
+  139430() = survival || practice || 139408()
+  1393b8() = practice && [123a0d8] != 0     replay active
+  1393e0() = practice && [123a0dc] != 0     recording active
+  139368(v): [123a0d8] = v      139378(v): [123a0dc] = v
+  139488() = seat of the practising human, corrected for the recording swap:
+             mode 9 -> ([123a0dc] != 0);  mode 10 -> ([123a0dc] == 0);  else 178f90()
+  1394e0() = seat of the dummy: mode 9 -> ([123a0dc] == 0); mode 10 -> ([123a0dc] != 0);
+             else (178f90()+1) % 2
+  178f90() = local player seat: 1 for mode words 2,5,8,10,12,16,18; mode 3 -> 1da838();
+             modes 13/14 -> [12d35c4]; otherwise 0.   Mode 9 -> 0, mode 10 -> 1.
+  211c00() = 140090(mode == 10 ? 0 : 1) = the dummy's actor (ignores the recording swap).
+
+
+2. CHARACTER SELECT IN PRACTICE (scene 128008, mode 9/10)
+---------------------------------------------------------
+
+The ported VS select (src/character_select.cpp) is the mode 3/6 path.  Mode words
+{3, 6, 9, 10} share the same "two-sided" code path; the other modes (1/2 arcade,
+0xb/0xc survival) take the single-sided branches.  OBSERVED sites that group 3/6/9/10:
+  128eec (seat task creation: both seat tasks exist), 129110/12f800 (scene teardown:
+  tags 0xbba / 0xbbb freed without the 11e3a0 object pass), 1300b8, 130dec, 131314,
+  133634 (spirit/stage page: both columns drawn), 12f85c (only mode 6 is rewritten to 3).
+So in practice BOTH fighters, BOTH spirits, the item option and the stage are chosen on
+the same pages and with the same phases/timers as VS.  The differences are input routing:
+
+2.1 Character page, 12db80(seat, phase, ...) OBSERVED 12dbc8..12dc34, 12ee10..12ee5c
+  if phase != 2: return
+  mode 9:
+     if seat == 1 && cfg[0]+0x10 == 0: return 0      // dummy cursor frozen until P1 commits
+     if cfg[0]+0x10 == 1:                             // P1 has committed
+         if (--[4c8294]) > 0: return 0                // shared delay, initial value 10
+     pad = 118128(0)                                  // port 0 drives whichever seat is active
+  mode 10: mirrored (seat == 0 waits for cfg[1]+0x10 (4568d0) != 0; delay; pad = 118128(1))
+  other modes: pad = 118128(seat)
+  [4c8294] is set to 10 at scene entry (1280c8) and is only decremented here.
+  INFERRED: the practising player picks the own fighter first, then (after 10 visits)
+  the same pad moves the opponent cursor; the committed seat no longer has phase 2 so it
+  is unaffected.  cfg+0x10 is the "character committed" word (it is one of the words
+  zeroed by the CHARACTER SELECT exit, 180164/18016c).
+  UNKNOWN: whether P2's mirrored horizontal movement (VS: "P2 mirrors P1") still applies
+  while port 0 drives seat 1 -- the direction code after 12dc70 was not re-read for this.
+
+2.2 Spirit page, 134e48 input handler (per seat s0; spirit record 4c8d18 + 0x34*seat,
+    +0x2c = progress), OBSERVED 134ea0..134ffc, 13503c..1350f0:
+  phase 2 (spirit cursor), mode 9:
+     seat 1 only acts when seat 0's progress is 1 or 2; additionally when seat 0's
+     progress == 1 and cfg[0]+8 (456898) == 6 it stays blocked; pad = 118128(0)
+  phase 2, mode 10: mirrored (seat 0 waits for seat 1's progress [+0x60]; cfg[1]+8
+     (4568c8) == 6 blocks); pad = 118128(1)
+  the second phase-2-like state at 135030 (phase value compared against t7, the
+     sub-selection) has the same gating, with the block condition "[t3+8] == phase".
+  phase 0xd (item option) 135168 and phase 0x14 (stage) 13524c:
+     pad = 118128(0) in mode 9, 118128(1) in mode 10, else 118128(seat).
+  Confirm mask 0x607, left 0x40, right 0x80 as in VS.
+  UNKNOWN: the meaning of cfg+8 == 6 (a spirit id with a secondary selection is the
+  likely reading; the secondary selection states were not traced).
+
+2.3 Drawing: 12bca4 / 12bdf8 select a different X constant for mode 10 (0x2bc instead of
+  0x1fe) and mode 9 (branch 12be08) for one panel; exact element UNKNOWN (not traced).
+
+2.4 Result -> battle configuration, 1398c0 mode 9/10 branch (139b84..139be0) OBSERVED:
+  stage  = 139be8(): r = GameRandom 112300(10); if g+0xa0 is 2 or 3 { s = 12f878()
+           (= [4c8d80], the stage chosen on the select page); if s != 10 r = s }
+           -> battleCfg+4 and g+4.            (10 = RANDOM cursor, as in VS)
+  battleCfg+8  (seat 0 control kind) = (mode == 10) ? 1 : 0      INFERRED: 1 = CPU kind
+                                                                 (becomes actor+0xa20)
+  battleCfg+0xc (seat 1 control kind) = (mode == 9) ? 1 : 0
+  battleCfg+0x20 = [45689c] (cfg[0]+0xc), battleCfg+0x24 = [4568cc] (cfg[1]+0xc)
+  then the common tail 1399ec copies cfg[i]+0 -> +0x10, cfg[i]+4 -> +0x18,
+  cfg[i]+0x20 -> +0x28 for both seats.
+  The RNG call 112300(10) is consumed even when the selected stage overrides it.
+
+
+3. PRACTICE SETTINGS STORAGE
+----------------------------
+
+Four 12-word arrays (.bss) and one byte list:
+  A   13738a0[12]  working first-level value per menu row
+  A'  13738d0[12]  committed copy of A        (battle code reads A' only)
+  B   1373900[12]  working second-level values
+  B'  1373930[12]  committed copy of B        (battle code reads B' only)
+  L   1373960[<=32] bytes: ACTION index -> skill-list record index (built by 21169c)
+
+210368 defaults (OBSERVED): A[0..11] = 0, A' = A; B[0..11] = 0, B[10] = B[11] = 99, B' = B.
+210550 commit: A' = A, B' = B.  2105c0 (reverse copy) has no caller.
+210438 (window init at every battle scene entry): if B[0] == 9 { B[0] = B'[0] = 0 };
+  B[5] = B'[5] = 0 (always).  The other settings persist across battles and across
+  CHARACTER SELECT; they are only reset by 210368 from the mode menu.
+
+Meaning (menu row -> array slot):
+  A[2]  CPU TYPE        0 STAND 1 CROUCH 2 JUMP V 3 JUMP F 4 JUMP B 5 ACTION 6 CPU
+                        7 HUMAN 8 REPLAY                        (9 values, table 59cda0)
+  A[3]  CPU UKEMI TYPE  0 OFF 1 SHORT 2 LONG 3 RANDOM           (table 59cec8)
+  A[4]  GAUGE SETTING   cursor 0..5 selecting which gauge value to edit (table 59ceb0)
+  A[5]  ITEM            0 OFF 1 POISON 2 BOMB 3 OZEN 4 NABE 5 ROCK 6 CHUKA NABE 7 BONE
+                        8 PUMPKIN 9 MALLET 10 KNIFE 11 DOKI 12 BRICK 13 RANDOM (table 59cf00)
+  A[6]  DATA DISPLAY    0 OFF 1 ON                              (table 59ced8)
+  B[0]  STAND option    0 NORMAL 1 COUNTER 2 GUARD 3 1HIT GUARD 4 LIGHT 5 MIDDLE 6 STRONG
+                        7 KICK1 8 KICK2 [9 HYPER SLASH or COMBO SLASH]   (table 59cdc8;
+                        slot 9 pointer 59cdec is patched at run time, see 4.4)
+  B[1]  CROUCH option   0..8 same nine names (table 59cdf0)
+  B[2]  JUMP V option   0 NORMAL 1 LIGHT 2 MIDDLE 3 STRONG 4 KICK   (table 59ce18)
+  B[3]  JUMP F option   same five
+  B[4]  JUMP B option   same five
+  B[5]  ACTION index    0..count-1 into L; menu label "SPECIAL nn" (table 59ce30, 32 names)
+  B[6]  1P SPIRIT GAUGE 0 NORMAL 1 MAX 2 INFINITY   (window names 59cee0; summary 59cef0
+  B[7]  2P SPIRIT GAUGE                              "NRM","MAX","INF")
+  B[8]  1P MIKIRI/KYOUTI 0..100 (percent)
+  B[9]  2P MIKIRI/KYOUTI 0..100
+  B[10] 1P LIFE         0..99, displayed and used as value+1 (1..100 percent)
+  B[11] 2P LIFE         0..99
+2117a0(row, A[row]) maps to the B slot: row 2: A 0..5 -> 0..5, A 6..8 -> -1 (no option);
+  row 4: A 0,1,2,3,4,5 -> 6,7,8,9,10,11; any other row -> -1.
+
+Accessors used by battle code (all read the committed arrays):
+  211058()      dummy behaviour code (jump table 664df0 on A'[2]):
+                  0 STAND  -> B'[0]; if B'[0] == 9: 14fb08(dummy actor+0x10c) ? 10 : 9
+                  1 CROUCH -> 11 + B'[1]       2 JUMP V -> 20 + B'[2]
+                  3 JUMP F -> 25 + B'[3]       4 JUMP B -> 30 + B'[4]
+                  5 ACTION -> 0x26 + L[B'[5]]  6 CPU -> 0x23   7 HUMAN -> 0x24
+                  8 REPLAY -> 0x25             (A'[2] >= 9 -> -1)
+  211150()      A'[3]                                  ukemi type
+  211160()      A'[5] == 0 ? -1 : A'[5] + 6            item kind
+  211178(seat)  B'[6 + seat]                           spirit gauge setting
+  211198(seat)  B'[8 + seat]                           mikiri/kyouti percent
+  2111b8(seat)  B'[10 + seat] + 1                      life percent
+  2111d8()      A'[6] != 0                             data display
+Wrappers that add the predicate (non-practice value in brackets):
+  139c88() [0x23]: code = 211058(); if 1393e0() (recording) { if 0x26 <= code < 0x46
+                   code = 0; if code == 9 || code == 10 code = 0 }
+  139ce8() [3]   -> 211150        139d20() [-1] -> 211160      139d78(seat) [-1] -> 211178
+  139dc0(seat) [-1] -> 211198 (no caller)       139e08(seat) [-1] -> 2111b8
+  139d58() always returns -1 (it calls 139388 and discards the result); consequently
+  139660 never overrides battleCfg+4 from it.
+
+Behaviour code table (value stored in AI+0xc0 / actor+0xc8):
+   0 stand neutral      11 crouch neutral      20 jump V, no attack   0x23 ordinary CPU
+   1 stand COUNTER      12 crouch COUNTER      21..24 jump V + L/M/S/K 0x24 HUMAN
+   2 stand GUARD        13 crouch GUARD        25..29 jump F (same)    0x25 REPLAY
+   3 stand 1HIT GUARD   14 crouch 1HIT GUARD   30..34 jump B (same)    0x26+n ACTION n
+   4..8 stand L/M/S/K1/K2   15..19 crouch L/M/S/K1/K2
+   9 HYPER SLASH, 10 COMBO SLASH
+
+
+4. PRACTICE WINDOW (pause/settings menu)
+----------------------------------------
+
+4.1 Objects (all .bss, initialised by 17f5a0 at every battle scene entry 1396a0)
+  12d3858  battle pointer (140030())
+  12d385c  state (0..8)          initial 1  => the battle starts with the menu OPEN
+  12d3860  state seen by the last entry handler, initial -1
+  12d3864  dim overlay alpha (0..0xa0)
+  12d3868  behaviour code captured at the last start, initial -1
+  12d386c  pending confirm kind (7 or 8), initial -1
+  12d3870  help/description window (1822a0 init; +0x60 = text sub-object 12d38d0)
+  12d39d8  main menu object M (210438 init)        slide animation at M+0x1c = 12d39f4
+  12d3a70  key-configuration window (212110 init)  animation at 12d3a7c
+  12d3af0  skill list (20e570 init; 20e738(list, 4ceef8, 2))   animation 12d3b0c
+  12d4360  skill sub-list (20e570 init)            animation 12d437c
+  12d4bd0  skill detail window (2100b0 init)       animation 12d4bec
+  12d4c48  YES/NO confirm dialog (212820 init)     animation 12d4c64
+  Also in 17f5a0: 1392e8() (pause request), 139550() (damage counters reset: [123a0f4] =
+  [123a0f8] = [123a0fc] = 0, [123a0f0] = 1), 139368(0), 139378(0).
+
+  Slide animation record (17f3a0..17f4b0): +0 x, +4 y, +8 frames left, +0xc duration,
+  +0x10/+0x14 start, +0x18/+0x1c target, +0x20 "at closed position" flag,
+  +0x24/+0x28 closed position, +0x2c/+0x30 open position.
+    17f428(a, closedX, closedY, openX, openY, duration): store, snap to closed, +0x20 = 1
+    17f468(a) open: target = open position, frames = duration, +0x20 = 0
+    17f4b0(a) close: target = closed position, +0x20 = 1
+    17f330(a) step: if frames > 0 { --frames; x = (start*frames + target*(dur-frames))/dur
+              (integer division, same for y); if frames > 0 return 2 }
+              return (+0x20 == 0) ? 1 : 0          // 1 = open and idle, 0 = closed and idle
+    17f400(a) = frames < 1
+  Main menu animation: closed (-0x26c, 0x4c) when 178f90() == 0, (0x294, 0x4c) when 1;
+  open (0x14, 0x4c); duration 0x10.  (OBSERVED 17f618..17f638)
+  Key config: closed (0x2d0 or -0x230 by seat, 0x5e), open (0x50, 0x5e), 0x10.
+  Skill list: closed (-0x180, 0x50) seat 0 / (0x34c, 0x50) seat 1; open (0x10 / 0x1bc, 0x50).
+  Sub-list:   closed (-0x180, 0x98) / (0x360, 0x98); open (0x10 / 0x1d0, 0x98).
+
+4.2 Selector widget (20dff8 init, 20e028 range, 20e0a0 flag bit, 20e0d0 set value,
+    20e128 input).  Record: +0 flags, +4 disabled-bitmap pointer (flag 0x800), +8 min,
+    +0xc max (exclusive), +0x10 step, +0x14 value, +0x18 page multiplier.
+  20dff8: value = 0, flags = 5, then 20e028(sel, 0, 1, 1, 0).
+  20e028(sel, lo, hi, step, page): if lo == hi hi += 1; swap if hi < lo; +8 = lo,
+     +0xc = hi, +0x10 = step ? step : 1, +0x18 = (page < hi) ? page : 0; re-clamp value.
+  Flag bits: 1 vertical (0x10 = -step, 0x20 = +step), 2 horizontal (0x40 = -step,
+     0x80 = +step; tested first), 4 wrap, 8 invert, 0x10 confirm disabled, 0x20 cancel
+     disabled, 0x80 no move sound, 0x300 no confirm sound, 0x500 no cancel sound,
+     0x20000 Start is not a confirm, 0x40000 movement disabled.
+  20e128(sel, port) OBSERVED 20e128..20e47c, uses pressed = pad+4, repeat = pad+8:
+     confirm = (pressed & 8 and flag 0x20000 clear) || (pressed & 0x202)
+     cancel  = !confirm && (pressed & 0x404)
+     confirm: flag 0x10 -> return 6; value disabled in bitmap -> sound 1e7b70(-1,0x24),
+              return 6; else sound 1e7b70(-1, 0), return 4
+     cancel:  flag 0x20 -> return 6; else sound 1e7b70(-1, 0x24), return 5
+     move:    new = value + delta; above max-1 -> wrap ? min : max-1; below min ->
+              wrap ? max-1 : min; if changed: sound 1e7b70(-1, 0x20), return 1
+     page (only when not moved and page > 0): repeat & 0x100000 -> value =
+              max(0, value - step*page), return 2 if changed; repeat & 0x400000 ->
+              value = min(max-1, value + step*page), return 3 if changed;
+              repeat & 0x200000 -> value = 0; repeat & 0x800000 -> value = max-1
+              (both play sound 0x20; return 1 if changed); otherwise return 0.
+  Return codes: 0 none, 1 moved, 2 page down, 3 page up, 4 confirm, 5 cancel, 6 refused.
+
+4.3 Main menu object M (12d39d8)
+  +0xc visible rows (12), +0x10 scroll, +0x14 active, +0x18 focused, +0x1c animation,
+  +0x50 row selector (range 0..11, flags vertical|wrap; +0x64 = cursor row),
+  +0x6c frame counter byte (blink), +0x70 level (0 rows, 1 value, 2 second value),
+  +0x74 level handled last frame (initial -1), +0x78 value selector (horizontal|wrap;
+  +0x8c = its value), +0x94 help text object.
+  Rows (table 59cd70): 0 PRACTICE START, 1 CPU RECORDING, 2 CPU TYPE, 3 CPU UKEMI TYPE,
+  4 GAUGE SETTING, 5 ITEM, 6 DATA DISPLAY, 7 SKILL LIST, 8 KEY CONFIGURATION,
+  9 WINDOW OFF, 10 CHARACTER SELECT, 11 RETURN TO TITLE.
+
+  210630(M, port) per frame, returns an event code:
+    r = 17f330(M+0x1c); row = M.cursor
+    if r != 1 { if r == 0 { M.active = 0; M.focused = 0 }  return 0 }
+    if !M.active || !M.focused return 0
+    if M.level != M.prevLevel:
+        210550()                                   // commit A, B
+        level 1: 211418(M, row)   level 2: 211550(M, row, A[row])
+        2111e8(M)                                  // refresh help text
+        M.prevLevel = M.level; ++M.counter; return 0
+    level 0:
+        k = 20e128(M+0x50, port); scroll = 17f528(k, row, visible, scroll, count);
+        scroll = 17f560(cursor, visible, scroll, count); row = cursor
+        k == 4: row 0 -> event 1; 1 -> 2; 7 -> 4; 8 -> 5; 9 -> 6; 10 -> 7; 11 -> 8;
+                rows 2..6 -> M.level = 1 (no event)
+        k == 5: event 3
+        k in 1..3: 2111e8(M)
+    level 1:
+        k = 20e128(M+0x78, port); sub = 2117a0(row, A[row])
+        k == 4: M.level = (sub == -1) ? 0 : 2
+        k == 5: M.level = 0; A[row] = A'[row]      // cancel restores the committed value
+        k in 1..3: A[row] = M.valueSel.value; 2111e8(M)
+    level 2:
+        k = 20e128(M+0x78, port); sub = 2117a0(row, A[row])
+        k == 4: M.level = 211878(M) ? 1 : 0        // 211878 = (level != 0 && row == 4)
+        k == 5: M.level = 1; B[sub] = B'[sub]
+        k in 1..3: B[sub] = M.valueSel.value; 2111e8(M)
+    ++M.counter; return event
+  Commit therefore happens on every level change that follows a confirm; a cancel
+  restores the working value first and the following commit is then a no-op.
+
+  211418(M, row) value-selector range for level 1 (jump table 664e7c):
+    row 2: 0..8   row 3: 0..3   row 4: 0..5   row 5: 0..13   row 6: 0..1
+    (rows 0, 1 and >= 7 only load value); value = A[row]; step 1, page 0.
+    Row 4 uses vertical navigation (bit 1 clear, bit 0 set); all other rows horizontal.
+  211550(M, row, A[row]) range for level 2 by B slot (jump table 664eb4):
+    slot 0 (STAND): h = dummy actor + 0x10c (211c00);
+        if 14fac0(h): count 10 and pointer 59cdec = 664e98 "HYPER SLASH"
+        else if 14fb08(h): count 10 and 59cdec = 664ea8 "COMBO SLASH"
+        else count 9
+    slot 1: 9      slots 2,3,4: 5
+    slot 5 (ACTION): list id = dummy actor+0xa10, +0x32 when actor+0x23c & 0x100000;
+        n = 15f558(id) records, base = 15f4e8(id), 12-byte records, type byte at +4;
+        hasA = 14fbd8(h) != 0, hasB = 14fb58(h) != 0;
+        for i in 0..n-1: skip when type == 1 && !hasA; skip when type == 2 && !hasB;
+                         else L[count++] = i
+        range 0..count-1
+    slots 6,7: 0..2      slots 8,9: 0..100, page 10      slots 10,11: 0..99, page 10
+    value = B[slot]; horizontal + wrap.
+  14fac0 / 14fb08 / 14fbd8 / 14fb58 / 14fc30 are spirit-system capability predicates on
+  actor+0x10c (each tests the 14f4e0 system descriptor byte or the system id); their
+  per-system truth tables were not expanded here (UNKNOWN detail, static tables).
+
+  2111e8(M): help text for the current item (182268(text, id, arg) with ids 0..0xe; for
+  the ACTION option it shows the skill name 15f518(list id, L[value])+8, or the SJIS
+  string 664e18 "必殺技を出しつづけます" when the record is missing).  Presentation only.
+
+4.4 Drawing 2109b0(M) (skipped when M.active == 0), base (X, Y) = animation x/y:
+  frame box 17c718 at (X, Y) size 600.0 x 264.0 (constants 664dac, 664db0)
+  17e428(664d88 "SLEX", 1, 0) at (X+0x1e4, Y+0xe4)   (button-glyph legend string)
+  row i: y = Y + 17*i + (i < 2 ? 0xe : i < 9 ? 0x1f : 0x30); label 17e228(name, X+0x1c, y, 0)
+  first-level value text at x = X+0x100, second-level value at x = X+0x174:
+    row 2: 59cda0[A[2]]   row 3: 59cec8[A[3]]   row 5: 59cf00[A[5]]   row 6: 59ced8[A[6]]
+    row 4: sprintf "%s%3d%%%3d%%:%s%3d%%%3d%%" (664d90) with 59cef0[B[6]], B[8], B[10]+1,
+           59cef0[B[7]], B[9], B[11]+1
+    second level (CPU TYPE only): by B slot 0 -> 59cdc8, 1 -> 59cdf0, 2..4 -> 59ce18,
+           5 -> 59ce30, indexed by B[slot]
+  colour: 17db38(1,1) highlight for the cursor row (level 0) or the edited value;
+  otherwise 17db28(0xffffffff); 17db28(0xffb0b0b0) when the window is not focused or the
+  gauge sub-window is open.
+  edit arrows (17dd88) blink while (M.counter & 0x3f) >= 0x19: left arrow at
+  (X+0xec, y-1) size 12 x 16, right arrow at x + 14*strlen(value) + 0x1b (level 1);
+  level 2 uses X+0x160.
+  gauge sub-window 2118a0 (only while level != 0 and row 4): box at (X+0xae, Y+0x76)
+  size 400.0 x 128.0, six rows 17 px apart from Y+0x76+0xe, labels 59ceb0 at x+0xc,
+  values at x+0x104: rows 0,1 59cee0[B[6/7]]; rows 2,3 "%3d%%" B[8/9]; rows 4,5 "%3d%%"
+  B[10/11]+1.
+  Font, glyph metrics and Z order are those of the shared text helpers 17e228 / 17e428 /
+  17c718; they were not traced (UNKNOWN; shared with the VS pause/menu code).
+
+4.5 Window state machine 17f790 (called once per outer battle frame, even while paused)
+  port = 178f90(); pad = 118128(port)
+  every frame, in this order: 1825b8(help); e0 = 210630(M, port); e2 = 2128f8(confirm,
+  port); e1 = 2121c8(keycfg); e3 = 20ee70(list, port); e4 = 20ee70(sublist, port);
+  e5 = 210210(detail, port)
+  if state != lastState: run entry handler (table 5f20b4), then lastState = state;
+     detail.active = detail.focused = (state == 8)
+  else: run update handler (table 5f20d8); if it changed state: clear the "focused" word
+     of all six windows (12d39f0, 12d3a74, 12d3b08, 12d4378, 12d4be8, 12d4c60)
+  if state > 0: 1392e8()                       // [123a0c4] = 1: skip the next battle frame
+  for seat in 0,1: 180260(140090(seat))        // gauge enforcement, section 5.3
+  dim overlay: alpha += 8 (max 0xa0) while lastState == 8, else -= 8 (min 0);
+     if alpha > 0: 1145c0(0, 0, 0x280, 0x1c0, alpha << 24)
+  draw: if lastState != 2 { 182600(help); 2109b0(M) }; 212478(keycfg); 20ef38(list);
+     20ef38(sublist); 210298(detail); 2129d0(confirm)
+
+        +---------------------------------------------------------------+
+        |                                                               |
+        v            pad+4 & 0x80000 (window idle)                      |
+   [0 playing] --------------------------------------> [1 menu] <-------+----+
+        ^   ^                                           | | | | |       |    |
+        |   | e0=1 START / e0=2 RECORD / cancel         | | | | |       |    |
+        |   +-------------------------------------------+ | | | |       |    |
+        |                                 e0=6 WINDOW OFF | | | | any of pad+4 & 0xf006fe
+        |   cancel (e0=3 or 0x80000)         [2 hidden] <-+ | | +-------+    |
+        +------------------------------------------+        | |              |
+                                   e0=7/8 -> [3 confirm] <--+ |  NO -> 1     |
+                                               | YES          |              |
+                                               v              |              |
+                                          [4 leaving]         |              |
+                       e0=5 -> [5 key config] ---- close -----+--------------+
+                       e0=4 -> [6 skill list] <-> [7 sub-list] <-> [8 detail]
+
+  State 0 update (17fe98): if 17f400(M animation) && (pad+4 & 0x80000): state = 1.
+  State 1 and 2 update (17ff10):
+    start = record = 0
+    if 17f400(M animation):
+        if e0 == 1 start = 1
+        else if e0 == 2 record = 1
+        else if e0 == 3 || (pad+4 & 0x80000):                     // close request
+            code = 139c88()
+            if 1393e0() start = 1                                 // leaving recording
+            else { prev = [12d3868]
+                   if (prev == 0x25) != (code == 0x25) start = 1
+                   else if (prev == 0x24) != (code == 0x24) start = 1 }
+            state = 0
+        else if state == 2 && (pad+4 & 0xf006fe): state = 1
+    if start || record: 142168()        // both actors +0xa54 = +0xa58 = 0; 140650(1)
+    if start:
+        210550(); code = 139c88(); [12d3868] = code
+        139368(code == 0x25); 139378(0); 1392d0(); state = 0
+    else if record:
+        210550(); [12d3868] = 139c88(); 139378(1); 139368(0)
+        1772d0()                         // zero both 600-entry input recordings
+        1392d0(); state = 0
+    else: e0 == 4 -> state 6; e0 == 5 -> state 5; e0 == 6 -> state 2;
+          e0 == 7 or 8 -> [12d386c] = e0, state 3
+    1392d0(): [123a0cc] = 1 (reset request), [123a0d4] = 0.  The battle coroutine
+    (13921c) then runs, before the next battle frame: 11e600(); 13f9f0(0);
+    if [123a0e4] == 0 1bc1c0().  The non-practice calls 13ac08/1e7df0 are skipped in
+    practice (13922c).  13f9f0(0) is the full two-fighter re-initialisation including
+    13fd80 (positions, camera, timers) -- this is the "position reset".
+  State 3 update (180110), e2 from the YES/NO dialog (selector range 0..1, horizontal,
+    initial value 1; 2128f8 returns 4 only for confirm on value 0, confirm on value 1 is
+    reported as 5):
+    e2 == 4 && [12d386c] == 7:  1252f0(2, 0, 139778, 128008); g+0x18 = 1;
+          cfg[0]+0x10 = cfg[1]+0x10 = 0; cfg[0]+0x2c = cfg[1]+0x2c = 0; 139378(0);
+          1e7ad0(); state = 4
+    e2 == 4 otherwise (8):      1252f0(2, 0, 139778, 127940); g+0x18 = 1; 1e7ad0(); state = 4
+    e2 == 5: state = 1
+    Prompts (SJIS): 5f2070 "キャラクターを選択しなおしますか？" (kind 7),
+                    5f2098 "タイトルに戻りますか？" (kind 8); dialog caption 665240.
+  State 4: no update; the scene switch is pending.
+  State 5 update (1801c0): e1 in {4, 5} -> state 1.
+  State 6 update (1801d0): e3 == 4 -> 7; e3 == 5 -> 1; e3 in 1..3 -> 1827c0(help, 0x29,
+    list cursor [12d3b54]).
+  State 7 update (180218): e4 == 4 -> 8; e4 == 5 -> 6.
+  State 8 update (180240): e5 == 4 -> 7; e5 == 5 -> 7.
+  Entry handlers (5f20b4):
+    0 (17f874): close M, M.focused = 0, close help; if the previous state was 2 the M
+       animation is snapped to its closed position.
+    1 (17fa40): help page 4 (182318), open help and M (active = focused = 1), close
+       key config, list, sub-list, confirm.
+    2 (17fafc): M.focused = 0 (M stays positioned but 17f9b0 stops drawing it).
+    3 (17fb08): prompt by [12d386c], open confirm, its value := 1.
+    4 (17fb90): close help and M and the others.
+    5 (17fbbc): help page 0, open key config.
+    6 (17fc00): help page 5, open list, close sub-list and M, 1827c0(help, 0x29, cursor).
+    7 (17fc7c): fills the sub-list for the chosen category (20e8c0 / 20eae0 / 20ed70 with
+       the practising player's list id actor+0xa14, +0x32 for the alternate fighter),
+       opens list (unfocused) and sub-list (focused).
+    8 (17fde8): 210138(detail, list cursor, 20ea88/20ee20 selection), closes help, list
+       and sub-list.
+  UNKNOWN: internals of the key-configuration window (212110 / 2121c8 / 212478; labels
+  59cfb8 LIGHT..ITEM USE, DEFAULT SETTING, EXIT), of the skill list (20e570 / 20e738 /
+  20ee70 / 20ef38) and of the detail window (2100b0 / 210138 / 210210 / 210298), and
+  where the key configuration is stored.  They do not touch arrays A/B.
+
+4.6 Battle coroutine interaction (138f48, OBSERVED 13908c..139174), per outer frame:
+    [123a17c] = 1                                  // "new frame" for the damage counter
+    if [123a0d0]: (round stage re-request path, 1390a4)
+    13abb0(); 140120()                             // battle draw
+    hit-stop: if [123a0ec] > 0 { if [123a0e8] > 0 --[123a0e8]
+                                 else { --[123a0ec]; held = 1; [123a0c4] = 1 } }
+    if [123a0c4] || [123a0c8]:                     // paused: 140270 is NOT called
+        if held && ![123a0c8] 11f588(1) else { 11f5a0(1); paused = 1 }
+    else { 11f5a0(0); 140270(); if 141db8() ++[123a16c] }
+    [123a0c4] = 0
+    if 1393a0(): 180630(paused)                    // survival window
+    else if 139388():
+        13a030(139488())                           // key history sample (5.8)
+        if 2111d8() 13a280(0, 2)                   // key history + damage box draw
+        17f790()                                   // practice window
+    1d9b50(); 112a28(0); ++[4ca224]
+  139308() = [123a0c4] || [123a0c8]  (used by the gauge MAX rule, 5.3).
+
+
+5. BATTLE-SIDE EFFECTS
+----------------------
+Every site below is a call of 139388 or of a practice accessor.  "Dummy" = the actor
+with actor+0xa20 == 1 (control kind 1).
+
+5.1 Match structure and round flow
+  13f9f0 (13fb2c): required wins battle+0x280+0x108*seat = 1 in practice and survival
+      (2 when 139430() is otherwise true, else battleCfg+0x28+4*seat).
+  13f9f0 (13fc8c..13fcb0): time mode battle+0x13c = 3 when g+0 == 0 or practice
+      (otherwise from byte 43d05d: 0 -> 0, 1 -> 1, other -> 3; survival 2; 139430 -> 0).
+  13fd80 (13fe34..13ff8c): when g+0 == 0, practice or survival the introduction is
+      skipped: flag s7 = 1 and the "first round" argument to 149008 is 0; after the common
+      reset it calls 140998(practice ? 4 : 3) (survival 3), 140930(2, 1), 143310(battle),
+      14e928(), 1414b8(), battle+0x130 = 1, 1b5980().   INFERRED: the round controller is
+      put straight into requested state 4 (combat) with timer 2 = 1.
+  1418f8 (141900): the clock value given to the CPU (callers 15d5d4, 15f418) is the
+      constant 0x31 in practice instead of battle+0x14.
+  141860 (141884): returns 1 in practice/survival (0 when g+0 == 0; mode 3 returns
+      g+0x20 != 0); its caller 144f50 is the item-delivery scheduler gate.
+  13aaf8 (13ab48): when the round-end voice/caption helper runs in practice it writes
+      battle+0x18 = 1 (callers 143b5c, 172ad0).
+  139778 (battle destructor) has no practice branch.
+
+5.2 Life: no knock-out, automatic refill
+  151968 life commit (1519a8..1519e8): life +0xa30 -= pending +0xa38; pending = 0;
+      14cfe8(actor+0x1ac, 0x1c, 0x1e) (actor timer 28 at +0x220 := 30) whenever pending
+      was non-zero; if life <= 0: life = 0; practice -> life = 1 (the KO flag
+      actor+0x23c |= 0x80 is NOT set); otherwise 0x23c |= 0x80.
+  1494f0 actor visit (14959c..1495e4), before input sampling, practice only:
+      if actor+0x220 (timer 28) == 0:
+          ok = 1; if actor+0xa10 == 0xc ok = (body+0x24 != 0x279)
+          if ok: +0xa30 = +0xa34                    // life := maximum
+      INFERRED: life refills 30 timer ticks after the last damage commit (timer 28 is
+      advanced by the ordinary actor timer pass, so hit-stop/freeze gates apply).
+  180260 (18031c..180354), every outer frame for both actors:
+      max = (2111b8(seat) * 200 + 99) / 100;  +0xa34 = max;  if +0xa30 >= max: +0xa30 = max
+  156f08 and 157668 (contact resolution): the "pending damage >= life" branches that
+      arm the lethal-hit presentation are skipped in practice.
+  169d10 idle selection: besides rage state 1/2, the alternate idle pair is selected in
+      practice when 211178(seat) is 2 or 1 (already recorded in docs/ordinary-rules.txt);
+      the life < 0x31 and timer rules that follow are unchanged.
+
+5.3 Gauges, 180260(actor) every outer frame (also while the menu is open)
+  h = actor+0x10c; R = 14eb58(h) = h+0x14 (rage record: [0] state, [1] value, [2], [3]);
+  S = 14eb78(h) (system-mode record h+0x30 when that system has one, else 0);
+  T = 14ebd0(h) (h+0x40 when available, else 0)
+  needRage = needT = 0
+  if actor+0xa20 == 1 && 0x26 <= actor+0xc8 < 0x46:          // dummy doing an ACTION
+      rec = 15f518(list id, actor+0xc8 - 0x26)
+      rec.type (+4) == 2: needRage = 1
+      rec.type == 1: if 14fc30(h) actor+0x244 &= ~0x40 else needT = 1
+  (life rule of 5.2)
+  rage: if R[0] == 3 { R[0..3] = 0; actor+0x248 &= ~4 }
+        if R[0] != 2:
+            fill = needRage
+            if !fill { v = 211178(seat); if v == 2 fill = 1
+                                         else if v == 1 fill = 139308() }
+            if fill { R[3] = 0; R[0] = 1; R[1] = 0xb800; R[2] = 0 }
+        i.e. INFINITY refills every frame; MAX refills only on frames where the battle
+        is paused (menu open or hit-stop); NORMAL never.
+  sword gauge: 14f220(h) every frame (unconditional refill helper).
+  S: if S[0] == 4 { S[0] = 2; actor+0x248 &= ~0x10008 }
+     if S[0] != 3 { S[2] = S[3] = 0; S[1] = 211198(seat) << 9 }
+  T: if needT { actor+0x150 = 0; T[3] = 0xc800; T[0] = 0 }
+     else if T[0] == 0 { actor+0x150 = 0; T[3] = 211198(seat) << 9 }
+  Other gauge sites:
+  11e708 gauge task (11ec70..11ecc8): when h+0x14c == 1 and h+0x150 == 0, practice
+      recharges h+0x158 += h+0x154 up to 211198(seat) << 9, then h+0x14c = 0.
+  149008 round init (149048): practice && 211178(seat) == 1 -> actor+0x248 &= ~2.
+  14f3b0(seat): practice -> (211178(seat) == 1); otherwise option bytes 43d06b / 43d068.
+  14f428(seat): practice -> (211178(seat) == 2); otherwise (option byte == 2).
+      Callers: 14ec80 gauge reset (14ecdc/14ecec: either true -> 14edc0 fills rage) and
+      14ad3c (rage-related decision; true suppresses the life < 0x15 exception).
+
+5.4 Dummy control
+  Control kinds come from battleCfg (2.4): the practising seat is 0, the other seat 1.
+  158830 AI init: practice -> 15aa18 (instead of AI+0xc0 = 0x23).
+  15aa18(AI), run at the top of every CPU visit 158990:
+      code = 139c88(); 15a0e0(AI, code): if code != AI+0xc0 { if code != 0x23
+             AI+0x100 = 0x31; 1588c0(AI) (CPU reset, consumes 112300(2)); AI+0xc0 = code }
+      actor+0x240 bit 0 = (code == 1 || code == 0xc)             // COUNTER dummy
+      return 1 ("posture mode") for codes 0..3, 11..14, 20, 25, 30, and 0x25 when
+      actor+0x240 & 4 is clear; return 0 for -1, 0x23, 0x24, 0x25 with bit 4, the
+      attack codes 4..10, 15..19, 21..24, 26..29, 31..34 and the ACTION codes.
+  158990: if 15de18(AI, 1) (timer) return; if 15aa18() == 1:
+              if 151238(actor+0x15c, 0x1e): 1594c8(AI) (ukemi, 5.5) else 15ab30(AI)
+              158fa0(AI); return
+          else the ordinary CPU pipeline (ported in src/cpu_*.cpp) runs, with these
+          practice differences keyed on AI+0xc0 != 0x23:
+            158b08: the reaction passes 159b78/159750/159668 run only for 0x23
+            15a150 (callers 158f64, 15c4f8): replaces the tactic sequence (below)
+            15adf4, 15ae54, 15af08: features limited to 0x23
+            15e81c: flag (code != 0x23) fed to the execution step
+            1613e8, 15fac0, 15f7dc: code 3 (1HIT GUARD) special cases
+            1618d0: jump-attack codes 21..24, 26..29, 31..34 in the airborne handler
+            162828: codes 0..19 skip the random 0xac |= 0x10000 decision
+            1624a4: chance = (code < 0x26) ? level*5 + 15 : 100
+            1588c0 (158908): timer 1 := 0x3c for attack/ACTION codes, else cleared
+          These sites were located but not all expanded (UNKNOWN detail, see section 8).
+  15ab30 posture frame (jump table 5eb810, AI+0x80 = command word given to the actor):
+      0, 1, 0x25: AI+0x80 |= 1
+      2  (GUARD): guard = 151478(actor) || 1500a8(opponent) == 1 || 1500a8(actor) == 2
+                  || actor+0x194 in {0x60000, 0xc0000, 0xb0000};  AI+0x80 |= guard ? 0x20 : 1
+      3  (1HIT GUARD): if actor+0x220 == 0 { AI+0x80 = 0; |= 1 } else 161658(AI)
+      11, 12: |= 8          13: |= 0x10
+      14: if actor+0x220 == 0 { AI+0x80 = 0; |= 8 } else 161658(AI)
+      20: |= 0x80, |= 0x40000000      25: |= 0x100, |= 0x40000000
+      30: |= 0x40,  |= 0x40000000     other values: assert "AI:_practice"
+      Timer 28 (+0x220) is the same 30-tick window as the life refill, so 1HIT GUARD
+      guards (161658) only while that window from the previous hit is running.
+  15a150 sequence replacement (15d580 clears the 4-entry sequence S at +0x14; the opcodes
+  are the CPU sequence opcodes of src/cpu_execution.cpp):
+      codes 4..10   (15a200, table 5eb744): 0x70, 0x71, 0x72, 0x73, 0x78, 0x83, 0x84
+      codes 15..19  (15a2b8, table 5eb760): 0x74, 0x75, 0x76, 0x77, 0x79
+      codes 21..24 / 26..29 / 31..34 (15a360): d = 0 / 1 / 2; sub = code - base (0..3):
+                    S[0] = 0xa4 + sub + 4*d; S[1] = 0
+      ACTION 0x26+n (15a428): rec = 15f518(list id, n) (id = AI+0xf8, +0x32 when
+                    actor+0x23c & 0x100000); bytes rec[2] = technique, rec[3] = kind.
+                    A prefix chosen by rec[3] (jump table 5eb774, 30 kinds; emits opcodes
+                    such as 0x60, 0x63, 0x1a, 0x2c, 0x2b, 0x1b, 0xc2/0xc9, 0xc5, 0xbc,
+                    0xb5, 0x0e, 0xb8, 0xff, 0x72, 3, or sets actor bytes +0xf18/+0xf19/
+                    +0xf21 / flag +0x244 |= 0x20000000) is followed by 0xb0 + technique
+                    (technique adjusted for kinds 0x1a/0x1c/0x1d: +2 when rage state is
+                    1 or 2; by the opponent companion state +0x128 for 0x1c/0x1d;
+                    technique -1 emits 0) and a terminating 0, or 3 when the kind table
+                    set "repeat".  Characters 3, 0xb and 0x13 have extra leading entries
+                    (15a4b4..15a4ec, 15a94c..15a9d4).  The per-kind table must be
+                    transcribed from 15a540..15a948 when ACTION is ported; it is read
+                    but not tabulated here.
+                    When rec is missing (15a9d8): S[0] = code + 0x8a.
+  1494f0 sampling choice (1495e8..149610): an actor is sampled as a human when
+      +0xa20 == 0, or +0xc8 == 0x24 (HUMAN), or +0x240 & 4 (replay); otherwise the CPU
+      path 158990/158aa8 runs.  HUMAN therefore reads the dummy's own port
+      (pad port = actor+0xa24, i.e. controller 2 in mode 9).
+  1a3e60, 1a40ec damage scaling: for an attacker with +0xa20 == 1 in practice or
+      survival the factor is the float at 6529e8 / 6529f4 = 1.0 (instead of the
+      difficulty-dependent factors used elsewhere).
+  1f23f0 (character callback near 1f2380): practice && +0xa20 == 1 && +0xc8 >= 0x26 ->
+      choice = (112300(2) == 0).
+
+5.5 CPU UKEMI TYPE
+  1594c8(AI) (also called from the ordinary pipeline 158b5c): t = 139ce8();
+      if t == 0, or AI+0xac & 0x10, or !(actor+0x23c & 0x10), or 1500a8(actor) != 2: return 0
+      AI+0xac |= 0x10; 15de08(AI, 10)
+      t == 1: AI+0x84 = -1; AI+0x80 = 0x2000; 158d98(AI); return 1
+      t == 2: AI+0x84 = -1; AI+0x80 = 0x2020; 158d98(AI); return 1
+      t == 3: chance = 0x43 when 15a130(AI) (code not -1 and not 0x23); otherwise
+              (AI+0x100 < 6) ? AI+0x100*10 + 10 : 0x46
+              if 112300(100) < chance: AI+0x84 = -1; AI+0x80 = 0x2000;
+                   if 112300(2) == 0 AI+0x80 |= 0x20; 158d98(AI);
+                   if AI+0xf8 == 0x13 && 112300(5) == 0 AI+0x80 |= 0xa00; return 1
+              else 15ace8(AI); return 0
+  172158 (get-up callback, function containing 1720c0..17222c), practice dummy only
+      (+0xa20 == 1) and only once per knock-down (actor+0x248 & 0x20000000 clear):
+      code = 139c88(); if code is not 0x24/0x25:
+          t = 139ce8(); if t == 3 { r = 112300(100); t = r < 0x22 ? 3 : r < 0x43 ? 2 : 1 }
+          if t == 1 || t == 2: actor+0xa4c = t
+      actor+0x248 |= 0x20000000
+      then the common human rule: if actor+0x2ec != 0: +0xa4c = (actor+0x3c4 != 0) ? 2 : 1.
+
+5.6 Items
+  Item delivery scheduler (function containing 144f60..1450b0), practice branch 145068:
+      kind = 139d20(); if kind == -1 return (no delivery)
+      if kind == 0x13 (RANDOM): kind = 112300(0x13)
+      then the common tail: side = 112300(2); x = 148368(112300(4)); 1b5800(kind, x, side);
+      next delivery 140930(3, 112300(8)*60 + 0x168)   (survival uses the constant 0x258)
+  Item kinds from the menu: POISON 7, BOMB 8, OZEN 9, NABE 10, ROCK 11, CHUKA NABE 12,
+  BONE 13, PUMPKIN 14, MALLET 15, KNIFE 16, DOKI 17, BRICK 18.
+
+5.7 Damage counters (DATA DISPLAY)
+  14a8d0 add damage (14a8f4..14a958): pending += 14f2b8(damage); if 1394e0() == this
+      actor's seat (the dummy): 139588(damage) with the UNSCALED damage argument.
+      (14f2b8 scales by byte 43d061 percent unless 139430(); in practice no scaling.)
+  139588(d): if [123a17c] { [123a17c] = 0; [123a0fc] = 0 }       // first hit this frame
+             if [123a0f0] { [123a0f0] = 0; [123a0f8] = 0 }       // new combo
+             [123a0f8] += d; [123a0fc] += d; if [123a0f8] >= 1000 [123a0f8] = 999
+             [123a0f4] = max([123a0f4], [123a0f8])
+  149f10: in the actor state-entry path (function around 149e30..149f38), when the
+      recovering actor's opponent seat equals 139488() the combo flag [123a0f0] = 1
+      (139578).  INFERRED: the total restarts once the dummy leaves its hit state.
+  Draw 13a280 (13a3bc..13a4e0, only when the battle type is practice): box 1145c0 at
+      (0x138, 0x74) size (0xf0, 0x42); "DAMAGE       %3d" [123a0fc] at (0x140, 0x78),
+      colour 0xff808080 while [123a0f0] is set else white; "TOTAL DAMAGE %3d" [123a0f8]
+      at (0x140, 0x8c); "MAX   DAMAGE %3d" [123a0f4] at (0x140, 0xa4), colour 0xffff8080
+      when total == max and total != 0.
+
+5.8 Input (command) display
+  13a030(seat = 139488()) per outer frame: actor = 140090(seat); skipped unless
+      body+0x30 != 0 or actor+0x23c & 0x8000000.  mask from the actor's input features:
+      +0x2dc -> 0x200, +0x2e0 -> 0x400, +0x2e4 -> 0x800, +0x2e8 -> 0x1000, +0x2ec ->
+      0x2000, +0x2f0 -> 0x4000, +0x41c -> 1, +0x418 -> 2, +0x414 -> 4, +0x420 -> 8,
+      +0x388 -> 0x10, +0x410 -> 0x20, +0x424 -> 0x40, +0x428 -> 0x80, +0x42c -> 0x100.
+  13a1b0(mask): if mask == 0x10 ++[123a100]; else { if [123a100] >= 0x78 13a160()
+      (clear both rings and the index); [123a100] = 0 }
+      new = ((ringA[idx] & 0x1ff) == (mask & 0x1ff)) ? (mask & 0xfe00) : mask
+      if new != 0 { idx = (idx + 1) % 24; ringA[idx] = mask; ringB[idx] = new }
+      ringA = 123a108[24] halfwords, ringB = 123a138[24], idx = [123a104].
+      13a160 is also called at scene entry (13973c).
+  13a280 draws the 24 ringB entries, newest first, right to left starting at x = 600:
+      an entry with bit 0x4000 takes 0x2c pixels, others 0x18; glyph codes come from the
+      byte table 4ca210[bit] via 17e038; backdrop 1145c0 at y = 0x55.  Exact glyph
+      layout (y 0x57 / 0x5b, x offsets, the 0x10 "neutral" entry at 13a590) was read only
+      coarsely: UNKNOWN detail.
+
+5.9 REC / PLAY clock, 141dd0 (tail call of 140120's draw at 14020c)
+  if 1393b8(): n = actor[1]+0x2c0 (address [4d3d08] + 0x11ec); text 5e9bc0 "PLAY %02d:%03d"
+  else if 1393e0(): n = actor[0]+0x2c0; text 5e9bd0 "REC %02d:%03d"
+  else nothing.  left = 600 - n; a = max(0, left / 60); b = max(0, (left % 60) * 1000 / 60);
+  colour 0xffff8080; drawn with 17e228 at (0x70, 0x78).
+  Both branches index fixed actor slots (1 for PLAY, 0 for REC) regardless of mode 9/10.
+
+
+6. RECORDING / REPLAY OF DUMMY INPUT
+------------------------------------
+Storage (already described in docs/input-processing.txt and docs/input-lifecycle.txt):
+  12d2978[600] halfwords = held words, 12d2e28[600] halfwords = edge words, shared by
+  both actors; index = actor+0x2c0; sampler 179530 argument t3 = index or -1, t2 = playback.
+Flags: actor+0x240 bit 1 (value 2) = record, bit 2 (4) = replay, bit 3 (8) = read the
+  other port; bit 0 = COUNTER dummy (5.4).
+
+Start recording: menu row 1 CPU RECORDING (4.5): commit, [123a0dc] = 1, [123a0d8] = 0,
+  1772d0() zeroes both arrays, reset request.  In the following 13f9f0 (13fb64..13fbd0),
+  for BOTH actors: +0x240 |= 8; +0xa20 = (+0xa20 + 1) % 2; if the new +0xa20 == 0
+  +0x240 |= 2.
+  INFERRED consequence: the dummy becomes human-sampled from the practising player's
+  port and records; the practising player's own fighter becomes CPU kind 1 and follows
+  the CPU TYPE code, with ACTION and codes 9/10 forced to 0 by 139c88.  139488/1394e0
+  swap accordingly so the displays keep following the physical player.
+Sampling (149638..149738): port = +0xa24, toggled when +0x240 & 8;
+  index = +0x2c0 when +0x240 & 2 or & 4, else -1; playback = (+0x240 >> 2) & 1.
+  149790..1497cc: after the visit, if 141820() (battle+0x18 > 0 or round state >= 4):
+  ++(+0x2c0); when +0x240 & 4 the index is reduced modulo 0x2d0 (720).
+  Recording stores only indices 0..599 and does not stop by itself: the REC clock stays
+  at 00:000.  Playback of indices 600..719 yields neutral input, then wraps (a 12 s loop).
+Stop recording: reopen the menu and choose PRACTICE START, or close the menu (cancel or
+  the 0x80000 button): while 1393e0() is true a close always takes the start path, which
+  clears [123a0dc] and requests a reset.
+Replay: CPU TYPE = REPLAY and PRACTICE START -> [123a0d8] = 1; in 13f9f0 (13fcf4..13fd28)
+  every actor with +0xa20 == 1 gets +0x240 |= 4.  With REPLAY selected but bit 4 clear
+  (15aa18) the dummy idles in posture code 0x25 (stand).
+UNKNOWN: where +0x2c0 and the +0x240 bits are cleared on reset (expected in the actor
+  re-initialisation 148d58/148df0/148ed8 called by 13f9f0; not read), and whether the
+  recording is reused across CHARACTER SELECT (the arrays are only cleared by 1772d0).
+
+
+7. STATE SUMMARY (addresses, widths, initial values)
+----------------------------------------------------
+  4c3808 w  mode word 9 / 10              4c3818 w  g+0x10 = confirming seat ^ 1
+  4c38a8 w  sub-mode 3                    4c3820 w  g+0x18 := 1 on both exits
+  582afc w  1 on menu confirm             456890+0x20, +0x50 w := 0 (1116f8)
+  123a0c0 b battle type 1                 123a0c4 w pause request (cleared every frame)
+  123a0c8 w second pause flag             123a0cc w reset request, 123a0d4 w its argument
+  123a0d8 w replay flag                   123a0dc w recording flag
+  123a0e8 / 123a0ec w hit-stop delay / count (139290)
+  123a0f0 w combo-restart flag (1 after 139550)
+  123a0f4 / 123a0f8 / 123a0fc w max / total / last damage
+  123a100 w neutral counter, 123a104 w ring index, 123a108, 123a138 h[24] key rings
+  123a16c w combat frame counter          123a17c w per-frame flag
+  12d385c.. window state block (4.1)      13738a0.. settings arrays (3)
+  12d2978, 12d2e28 h[600] input recordings
+  4c8294 w select hand-over delay (10)
+  actor: +0xc8 behaviour code, +0x220 timer 28, +0x240 flags, +0x2c0 record index,
+         +0xa20 control kind, +0xa24 seat, +0xa30 life, +0xa34 max life, +0xa38 pending
+         damage, +0xa4c get-up type, +0xa54/+0xa58 (cleared by 142168)
+
+Data tables to extract (file offset = address - 0x32ce00 + 0x22de00 for .data,
+address - 0x5d3c00 + 0x4d4c00 for .rodata; use Elf.offset):
+  59cd70 12 pointers (row names)          59cda0 9 (CPU TYPE)       59cdc8 10 (stand; [9]
+  patched)   59cdf0 9 (crouch)            59ce18 5 (jump)           59ce30 32 (SPECIAL nn)
+  59ceb0 6 (gauge rows)   59cec8 4 (ukemi)   59ced8 2 (OFF/ON)   59cee0 3   59cef0 3
+  59cf00 14 (items)       59cfb8 10 (key-configuration labels)
+  jump tables: 664dbc (7), 664dd8 (6), 664df0 (9), 664e30 (12), 664e60 (7), 664e7c (7),
+  664eb4 (12), 5f20b4 (9), 5f20d8 (9), 5eb810 (38), 5eb744 (7), 5eb760 (5), 5eb774 (30)
+  floats: 664dac 600.0, 664db0 264.0, 664db4 12.0, 664db8 16.0, 664ef0 -200.0,
+  664ef4 400.0, 664ef8 128.0, 664efc 12.0, 664f00 16.0, 5f20b0 700.0, 6529e8 1.0, 6529f4 1.0
+  strings: 5e1a68/5e1a80/5e1a98 damage labels, 5e9bc0/5e9bd0 PLAY/REC, 664d90 gauge
+  format, 664ee8 "%3d%%", 5f2070/5f2098 prompts.
+Sounds (1e7b70(-1, id)): 0x20 move, 0 confirm, 0x24 cancel/refused.  No practice-specific
+  resource loads were found in the sites read; the window art uses the shared helpers.
+
+
+8. UNKNOWN / NOT YET READ, WITH SUGGESTED PROBE EXPERIMENTS
+-----------------------------------------------------------
+ 1. Physical button of pad mask 0x80000 (opens/closes the window) and of the page masks
+    0x100000/0x200000/0x400000/0x800000.  Check 118128's producer (docs/input-processing).
+ 2. Key configuration, skill list and skill detail windows (functions listed in 4.5).
+ 3. Text/box primitives (17c718, 17db28, 17db38, 17dd88, 17e038, 17e228, 17e428, 1145c0):
+    fonts, glyph advance (code assumes 14 px per character), depth.
+ 4. ACTION prefix table 15a540..15a948 (needs transcription) and the skill-list record
+    layout behind 15f4e8/15f518/15f558 (12-byte records; +2 technique, +3 kind, +4 type,
+    +8 name pointer are the only fields used here).
+ 5. The remaining AI sites keyed on AI+0xc0 (5.4 list) and 161658 (guard routine).
+    Probe: run 158990 on a fixture with AI+0xc0 preset to each code 0..0x25 and compare
+    AI+0x80/+0x84 and the sequence words against a native port; stub 139c88 by seeding
+    13738d0/1373930 and [123a0c0] = 1 rather than patching code.
+ 6. Capability predicates 14fac0/14fb08/14fbd8/14fb58/14fc30 per spirit system.
+    Probe: whole-function calls over the 9 systems and the descriptor table.
+ 7. Actor re-initialisation on reset: clearing of +0x240 bits and +0x2c0 (section 6).
+    Probe: whole 13f9f0(0) with [123a0dc] = 1, then again with 0; diff both actors.
+ 8. Select screen: P2 direction mirroring under port 0, the 12bca4 layout constant, the
+    cfg+8 == 6 spirit block (2.1..2.3).
+ 9. 13a280 key-history layout and glyph table 4ca210.
+10. 140998(4) / 140930(2,1) entry was not checked against the round dispatcher docs;
+    confirm with a whole 13fd80 run under [123a0c0] = 1 (expected requested state 4,
+    no introduction, no opening caption).
+11. Timer display in practice: battle+0x13c = 3 is observed; how the HUD renders mode 3
+    was not read.
+12. 14f220 (sword gauge refill) and 14edc0 (rage fill) internals.
+Suggested whole-function Probe targets with small fixtures: 210368, 210550, 211058,
+2117a0, 20e128 (pad fixture), 210630 (window forced open), 139588, 13a1b0, 180260.

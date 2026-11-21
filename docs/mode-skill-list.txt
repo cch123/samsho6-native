@@ -1,0 +1,356 @@
+SKILL LIST (command list) window -- SLPS-25559
+===============================================
+
+Pinned ELF SHA256: 72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf
+
+Status words used below:
+  OBSERVED  read from the disassembly or the data at the cited address; lines marked [V] are
+            additionally compared against the original code by work/ss6/validate_skill_list.py
+            (visit by visit for the task, call by call for the helpers).
+  INFERRED  conclusion drawn from OBSERVED facts, not executed.
+  UNKNOWN   not resolved.
+
+Native port: src/skill_list.hpp/.cpp; asset skill_list.bin (work/ss6/extract_skill_list.py,
+manifest outputs/ss6-feasibility/skill_list_tables.json); report
+outputs/ss6-feasibility/skill_list_validation.json.
+Reused, already validated widgets: src/menu_widgets.* (SlidePanel 17f308.., MenuSelector
+20dff8.., ListWidget 20e570.., GuideWindow 1822a0..).
+
+Glossary
+  seat    pad/port index 0 or 1
+  SJIS    Shift_JIS text encoding
+  g       g_GameData 0x4c3808 (mode word g+0)
+  opt     g_GameOption 0x43d058 (save image +0x618c); opt+N is one byte
+  group   the records of one list page: a record with id >= 0 followed by records with id -1
+  pad(n)  118128(n): +0 held, +4 pressed edges, +8 edges with the 117fd8 directional repeat
+
+
+1  Entry points and callers
+---------------------------
+
+Two independent hosts drive the same three widgets (category list, sub-list, detail page) and
+the same data. Neither host generates anything from the input tables (section 8).
+
+1.1 Pause menu (all battle modes except practice), OBSERVED:
+  1d9cd8 (pause open) creates the coroutine 13d680 through 13d5c8:
+      316140("commandListThread:STACK_SIZE=%X\n", 0x4000)   (string 5e7e00)
+      memset(127a1c0, 0, 0x10000); 1126f0(0x28, 13d680, 127a1c0, 0x4000, 0x20, tag 0x151b)
+  and stores the task record in word 582f5c with record word +4 = 0x21 (suspended).
+  13d628 is a wrapper that jumps to 13d5c8; it has no caller and no pointer reference
+  (the equivalent key-configuration wrapper 13cdb0 is referenced by the OPTION scene at
+  1cfd5c). INFERRED: a stand-alone menu-scene entry that the shipped menus do not use; the
+  task still contains its exit path (section 3, state -1).
+  13d640 frees tags 0x151b..0x157e (11e3a0 + 112a70 per tag); it is the scene destructor
+  passed to 1252f0 on that path.
+  Pause item SKILL LIST (row 2; row 1 when sub-mode g+0xa0 == 5), handler 1da644:
+      record 582f5c word +4 = 0x20 (runnable); word 582f4c = 3; 1da850(): word 582f50 = 1.
+  Return to the pause menu, 1da7e8 (called by the task, argument unused) [V]:
+      record 582f54 (pause task) word +4 = 0x10; word 582f30 (pause cursor) = 0;
+      records 582f58 and 582f5c word +4 = 0x21; word 582f50 = 0.
+  The task is therefore never destroyed while the pause menu exists: it is suspended inside
+  its loop and continues from the same yield at the next wake (section 3).
+  See docs/mode-pause-menu.txt for the pause task itself.
+
+1.2 Practice window (docs/mode-practice.txt 4.5), OBSERVED:
+  17f5a0 builds static objects 12d3af0 (list), 12d4360 (sub-list), 12d4bd0 (detail) with the
+  same constructor sequence as 13d680 (20e570, flag bit 16, 20e738(4ceef8, 2), 17f428 with the
+  same coordinates, 2100b0, 17f428(0,0,0,0,0x10)). States 6/7/8 of 17f790 are the three states
+  0/1/2 of section 3 with these differences (17fc00, 17fc7c, 17fde8):
+    - 20ee70(list), 20ee70(sub), 210210(detail) run every frame for all states;
+    - the character sub-list always preselects the fighter (no 17ea48 test);
+    - the fighter is 140090(seat) of the practice-local seat (the argument s0 of the entry
+      handler), list id actor+0xa14, +0x32 when actor+0x23c & 0x100000;
+    - cancel in state 6 returns to the practice menu (state 1) instead of closing a task;
+    - detail.active = detail.shown = (state == 8) is written after every entry handler.
+  The helper functions and the detail object are shared; the native practice port can call
+  fillCommonRows / commonSelection / SkillDetail from src/skill_list.*.
+
+1.3 Operating seat 178f90() (OBSERVED): mode 3 -> (word 582f3c == 1); modes 0xd/0xe -> word
+  12d35c4; modes 2, 5, 8, 0xa, 0xc, 0x10, 0x12 -> 1; every other mode -> 0.
+  17ea48() (OBSERVED) is 0 for modes 1, 2, 3, 6, 7, 8, 9, 0xa, 0xb, 0xc (a battle scene is
+  behind the window) and 1 otherwise.
+
+
+2  Objects of task 13d680 (stack frame 0x1330 bytes)
+----------------------------------------------------
+
+  sp+0x000   guide window G (1822a0; layout 5 by 182318(G, 5))
+  sp+0x170   category list L   (20e570; selector flag bit 16 "large text"; 20e738(L, 4ceef8, 2))
+             panel L+0x1c: 17f428 closed (-0x180, 0x50) open (0x10, 0x50) duration 0x10;
+             seat != 0: closed (0x34c, 0x50) open (0x1bc, 0x50)
+  sp+0x9e0   sub-list S        (20e570; flag bit 16)
+             panel S+0x1c: closed (-0x180, 0x98) open (0x10, 0x98) duration 0x10;
+             seat != 0: closed (0x360, 0x98) open (0x1d0, 0x98)
+  sp+0x1250  detail page D     (2100b0); panel D+0x1c: 17f428(0, 0, 0, 0, 0x10)
+  sp+0x12d0 / 0x12d4 / 0x12d8   event codes of L, S, D of the current visit
+  s0 overlay alpha (0..0xa0), s1 state, s2 state handled by the last entry, s3 seat
+  Initial: s0 = 0, s1 = 0, s2 = -1.                                                    [V]
+
+Widget word layout (shared with ListWidget): +0 width, +4 height, +8 vtable-like pointer
+(6647e8 list, 6648f0 detail; not read by the code in this file), +0xc visible rows, +0x10 top,
++0x14 shown, +0x18 active, +0x1c slide panel, +0x50 selector (+0x58 min, +0x5c max, +0x60
+step, +0x64 cursor, +0x68 page), list: +0x6c item pointers; detail: +0x6c category, +0x70
+group id, +0x74 record pointer.
+
+Category rows 4ceef8 (SJIS, verbatim in the asset):  0 共通コマンド   1 必殺技コマンド
+Common sub-list rows 4cef08: 0 基本操作, then the spirits in system-id order 怒 真 斬 天 零 剣
+魔 獣 祭 ("<name>スピリッツ").
+
+
+3  State machine (one visit = loop body up to 112a28(0))                              [V]
+----------------------------------------------------------------------------------------
+
+Every visit, in this order:
+  17c210()  (text depth reset)       1825b8(G)  (guide panels step)
+  e3 = 20ee70(L, seat);  e4 = 20ee70(S, seat);  e5 = 210210(D, seat)
+  if s1 != s2: entry handler of s1, then
+        D.active = (s1 == 2); D.shown = (s1 >= 2); s2 = s1
+  else: update handler of s2; if it changed s1: L.active = S.active = D.active = 0
+  alpha = clamp(s2 < 2 ? alpha - 8 : alpha + 8, 0, 0xa0)      (s2 after the step above)
+  if alpha > 0: 1145c0(0, 0, 0x280, 0x1c0, alpha << 24)       (black overlay)
+  182600(G); 20ef38(L); 20ef38(S); 210298(D); 112a28(0)
+
+Entry handlers
+  0   L.panel open; L.active = L.shown = 1; S.panel close; S.active = 0; 182648(G);
+      1827c0(G, 0x29, L.cursor)
+  1   if s2 <= 0 (arriving from the category list):
+        L.cursor == 0: 20e8c0(S, 9); 20e0d0(S.selector, 0); S.top = 17f560(...);
+                       seat == 1: S.panel open x = 0x1d0, closed x = 0x360
+        L.cursor != 0: 20eae0(S, 9, 0, 1, 0, 0)   (fighter list: 9 rows, EX fighters when
+                       opt+0x94, no Kuroko, filtered by the lock bytes opt+0x16+c);
+                       if 17ea48() == 0: 20ed70(S, list id of 140090(seat));
+                       seat == 1: S.panel open x = 0x158, closed x = 0x2e8
+        1827c0(G, L.cursor ? 0x2b : 0x2a, 0)
+      always: L.panel open; L.active = 0; L.shown = 1; S.panel open; S.shown = S.active = 1;
+      182648(G)
+  2   if s2 < 2: 210138(D, L.cursor, L.cursor ? 20ee20(S) : 20ea88(S))
+      L.panel close; L.active = 0; S.panel close; S.active = 0; 1826b0(G)
+  -1  L, S and D panels close; their active words = 0; 1826b0(G)
+  -2  nothing
+
+Update handlers
+  0   e3 == 4 -> 1;  e3 == 5 -> -1;  e3 in 1..3 -> 1827c0(G, 0x29, L.cursor)
+  1   e4 == 4 -> 2;  e4 == 5 -> 0
+  2   e5 == 4 or 5 -> 1
+  -1  when 17f400(L.panel) (slide finished):
+        17ea48() != 0: 1252f0(1, 0, 13d640, 1cfa10); s1 = -2
+        otherwise:     1da7e8(); s1 = 0
+      (s1 = 0 with s2 = -1 makes the visit after the next wake run entry 0 again; the lists,
+      their cursors and the cached detail page are kept across pause sessions.)
+  -2  nothing (the scene switch is pending)
+
+                 confirm                  confirm
+     [0 categories] -----> [1 sub-list] -----> [2 detail page]
+        |   ^  <-- cancel --    ^  <-- confirm / cancel --
+ cancel |   | next wake (battle)
+        v   |
+      [-1 closing] -- panel idle, menu mode --> [-2 leaving]  1252f0(1,0,13d640,1cfa10)
+
+Guide messages (table 4ee870): key 0x29 sub 0 "基本動作を確認します", sub 1 "各キャラクターの
+必殺技コマンドを確認します"; 0x2a "表示する項目を選択します"; 0x2b "表示するキャラクターを
+選択します".
+
+
+4  Input and sounds
+-------------------
+
+All input goes through the selector 20e128 of the focused widget with pad(seat)
+(docs/mode-practice.txt 4.2; native MenuSelector). OBSERVED consequences:               [V]
+  confirm = pressed & 0x20a (0x202 or START 8), cancel = pressed & 0x404 when no confirm;
+  L and S: vertical, wrap; S pages with repeat & 0x100000 / 0x400000 by its visible rows and
+  jumps with 0x200000 / 0x800000 when it scrolls.
+  D: selector flags = 1 (vertical, no wrap; 2100b0 clears bit 2), range 0..max(1, lines-11),
+  page 12: up/down scroll one text line, 0x100000 / 0x400000 scroll twelve lines, 0x200000 /
+  0x800000 jump to the first / last position; confirm and cancel both return to the sub-list.
+  A widget reads the pad only when its slide panel is open and idle (17f330 == 1) and its
+  shown and active words are set (L, S); D only tests shown and active.
+Sounds are the selector's 1e7b70(-1, id) requests only: 0x20 cursor move or page, 0 confirm,
+0x24 cancel. The task itself requests no sound; opening the window from the pause menu plays
+the pause menu's own confirm tone.
+
+
+5  Data
+-------
+
+All data is static .data of the ELF; no disc file is read.
+
+5.1 Record tables (0x14-byte records, terminated by id -2)
+  4caab0  common commands, 87 records, group ids 0..9  (13cf88(id) returns the first record)
+  4cb190  fighter commands, 785 records, group ids 0..48, 51, 72..75  (13cfc0(id))
+  Neither lookup has an end test: an id that is not in the table scans past the terminator
+  (the lists only produce ids that exist; the native find() returns -1).
+  Group ids of 4cb190 are the fighter list ids (actor+0xa14): 51 = fighter 1 + 0x32 and
+  72..75 = fighters 0x16..0x19 + 0x32 are the alternate forms, which the fighter list offers
+  as the EX rows 0x48..0x4b; id 0x2b (Kuroko) has a group but is never listed.
+  Record:
+    +0  s16 id        >= 0 opens a group, -1 continues it
+    +2  u8  type      0 basic action, 1 spirit heading, 2 weapon-flipping technique, 3 secret
+                      technique, 4 special move, 5 transformation, 6 text paragraph without
+                      heading (INFERRED names from the texts; the code uses the type as the
+                      colour index and tests only 1, 6 and 0xff; 0xff does not occur)
+    +3  u8  flags     1 usable armed (icon 0xe), 2 usable unarmed (icon 0xf), 4 "SC" icon
+                      0x2d at the right edge, 8 heading bar 4 pixels taller and the following
+                      record 14 pixels closer
+    +4  u16 spirits   bit i: the heading shows the icon of spirit i (0x10 + i)
+    +8  char* name;  +0xc char* condition;  +0x10 char* command   (SJIS, never null)
+  Occurring spirit masks: 0, 2, 0x20, 0x40, 0x80, 0xfe in 4cb190; one bit per heading in
+  4caab0. Type 6 records carry the dummy name "ダミー文字列", which is never drawn.
+
+5.2 Text encoding (decoder 17e428, section 6.2). SJIS double-byte characters are drawn as
+  glyphs; ASCII is read in pairs as control codes:
+    CR        end of line
+    MS        hide the rest of this line unless opt+0x7e (Matsuri spirit) is set
+    I1..I9    direction icon in numeric-keypad notation (icons 0..8); the text also uses the
+              full-width "Ｎ" glyph for neutral
+    IA IB IC ID IE   buttons A..E (icons 9..0xd)        IZ  icon 0x27 ("any slash")
+    IW IH     armed / unarmed icons 0xe / 0xf
+    G1..G9    spirit emblem icons 0x10..0x18 (not used by the tables)
+    L1 L2 R1 R2   icons 0x1f..0x22       ST SL   START / SELECT icons 0x1e / 0x1d
+    BO BX BT BS BP   icons 0x19, 0x1a, 0x1c, 0x1b, 0x23 (pad face buttons; BP UNKNOWN)
+    PL  "+" icon 0x29        OR  "or" icon 0x2a        SC  icon 0x2d (hidden unless opt+0x7e)
+    EX        the ASCII literal "EXIT" (5f2008)
+    space     half-width advance
+  Codes found in the tables: CR, MS, I1..I9, IA..IE, IZ, PL, OR, SC, ST and the space.
+  Button meaning (A weak slash .. E special) is INFERRED from the texts.
+
+5.3 Colours
+  4cef38  name colour, three bytes {b0,b1,b2} per type 0..6:
+          ffffff 1070e0 ff90bf 98e0ff 9fffd0 ffe970 ffffff
+  4cef50  name shadow: type 1 000030, other types 000000
+  4ee830  heading bar gradient per type 0..5 (17e0b0): {b0,b1,b2} with top byte 0xc0 on the
+          left vertices, {b0,b1,b2} with top byte 0x40 on the right vertices
+  Colour words (17db28 argument, vertex colour) are top << 24 | b0 << 16 | b1 << 8 | b2 with
+  top = 0xff for text. The asset keeps the bytes in table order. UNKNOWN: which byte is red
+  (the word format of 17db28 was not traced to the GS register).
+
+5.4 Icon rectangles 4ee6b8[icon] -> {s32 u, v, w, h} in texture slot 0x2e (icons < 0x33);
+  17df90 returns w, which is the pen advance.
+
+5.5 Unlock filters                                                                    [V]
+  Sub-list of 共通コマンド (20e8c0): row 0 always; spirit i (0..8) listed unless
+      i == 6: opt+0x7f == 0;   i == 8: opt+0x7e == 0;
+      i == 7: opt+0x80 == 0 and all of opt+0x42..0x45 (lock bytes of fighters 0x2c..0x2f)
+              are non-zero.
+  Row -> spirit map: s16 array 1373818 (entries 0..8 reset to -1, entry [row] = i; a tenth
+  entry is written when all nine spirits are listed). 20ea88(S) = map[cursor] + 1 = group id.
+  Heading spirit icons (13d0d0): bit 6 needs opt+0x7f, bit 7 opt+0x80, bit 8 opt+0x7e.
+  Fighter sub-list: 20eae0 (docs/mode-gallery.txt A.W; lock bytes opt+0x16+c, EX rows with
+  opt+0x94). No record is filtered inside a group: hidden content is limited to the "MS" lines
+  and the "SC" icon.
+
+
+6  Detail page
+--------------
+
+6.1 Object functions                                                                  [V]
+  2100b0(D)  width 0x80, visible 1, top/shown/active 0, 17f308(panel), 20dff8(selector) then
+             selector flag bit 2 cleared, category = selection = -1, record pointer 0.
+  210138(D, category, id)  no-op when both equal the stored pair; otherwise store them,
+             pointer = 13cf88(id) for category 0, 13cfc0(id) for category 1 (other values keep
+             the pointer); n = 13cff8(pointer, id); 20e028(selector, 0, max(1, n - 11), 1, 12);
+             selector.page = 12; cursor = 0; top = 0.
+  13cff8(pointer, id)  number of text lines of the group: for every record and each of its
+             three strings that is not empty, 1 + number of "CR" found by 17e3d8. Type 6
+             records are not special-cased here, so their undrawn name counts one line.
+  17e3d8(text)  bytewise scan for 'C','R'; returns the address behind it, 0 at the end of the
+             text. The byte following a 'C' is consumed without being tested as a new 'C',
+             and SJIS trail bytes are not skipped.
+  210210(D, seat)  0 unless shown and active; k = 20e128(selector, seat); top = 17f528(k, ..,
+             visible = 1, top, max); top = 17f560(cursor, 1, top, max) (top == cursor);
+             returns k.
+  210298(D)  if pointer != 0 and shown: 13d0d0(pointer, 0x38, 0x28, id, top, 12, 8); when
+             max > 1 the scroll bar 17f090(box {x = panel.x + 0x268, y = panel.y + 0x28,
+             w = 14.0, h = 368.0}, total = max + 11, 1, top, 12).
+  The detail slide panel is never stepped (no 17f330 call), so panel.x/y stay 0.
+
+6.2 Line renderer 17e428(text, size, plain) at (x, y) (f12, f13); returns the address behind
+    the line's "CR" or 0                                                              [V]
+  advance = 20 for size 1, 24 otherwise. Bytes are read in pairs (a, b); the line ends when
+  either is 0.
+    "CR" -> return.   "MS" -> if opt+0x7e == 0 nothing else of this line is drawn.
+    a >= 0x80: glyph a << 8 | b; size 1: 10a710 at (x, y + 2), size 2: 10a1c0 at (x, y), with
+               the colour word 4ee548; x += advance.
+    a == ' ':  17e228(" ", x, y, size); x += advance / 2; only one byte is consumed.
+    plain != 0: any other ASCII byte is skipped singly (one byte consumed).
+    "EX": 17e228("EXIT", x + 1, y + 3, size); x += 2 * advance + 1; one byte consumed.
+    icon code (5.2) with offset (dx, dy): w = 17e038(icon, x + 1 + dx, y + dy);
+               x += w + dx + 3.  Offsets: G* (-1,-2); L*/R* (0,5); ST (3,2); SL (3,4);
+               BO/BX/BT/BS (2,3); BP (2,1); others (0,0).
+               17e038 draws nothing and returns 0 for icon 0x2d while opt+0x7e == 0.
+    any other ASCII pair: one byte consumed.
+
+6.3 Page renderer 13d0d0(pointer, x, y, id, scroll, lines, gap)                        [V]
+  Returns at once when the first record's id is neither `id` nor -1. For each record of the
+  group (ids `id` / -1):
+    if scroll <= 0 and type != 6 (heading):
+        13d548: 17e0b0(type, w 0x220, h 0x11 or 0x15 with flag 8) at (48.0, y + 8)
+        flag 2: icon 0xf at (x - 22, y + 3);   flag 1: icon 0xe at (x - 22, y + 3), or at
+        (x - 44, y + 3) when flag 2 is also set;   flag 4: icon 0x2d at (x + 0x208, y + 2)
+        spirit icons from bit 8 down to 0, right-aligned: px starts at x + 0x1fe and steps
+        -24 before each visible icon 0x10 + bit, drawn at (px, y)
+    strings: {name, condition, command}; type 6: only the condition string
+    for each non-empty string, line by line:
+        scroll > 0: skip the line (17e3d8), --scroll
+        else: --lines;
+              name line: colour = shadow, 17e428(line, 2, 0) at (x + 1, y + 1) and at
+                  (x + 3, y + 2); colour = name colour of the type, 17e428(line, 2, 1) at
+                  (x, y)  -- the icons of a name ("SC") are drawn by the two shadow passes
+                  only, the coloured pass skips ASCII;
+              other lines: colour 0xffffffff, 17e428(line, 1, 0) at (x, y);
+              y += 27
+        if lines <= 0: return
+    if scroll <= 0: y += gap; with flag 8: y -= 14
+  The window passes x = 0x38, y = 0x28, lines = 12, gap = 8, so a page is the 12 text lines
+  from line `top`, with a heading for every record that starts inside the window.
+  Draw depth: every leaf takes its Z from 17c228 (a counter reset by 17c210 each visit, step
+  0.1); not modelled by the port.
+
+
+7  Native interface (src/skill_list.hpp)
+----------------------------------------
+
+  SkillListData        asset tables; find (13cf88/13cfc0), lines (13cff8)
+  skillNextLine        17e3d8          skillLayoutLine   17e428        skillPage   13d0d0
+  fillCommonRows       20e8c0          commonSelection   20ea88
+  SkillDetail          2100b0 / 210138 / 210210 / 210298
+  SkillListWindow      task 13d680: enter(seat), tick(pad) -> {tones, event}, draw()
+      event ReturnToPause = 1da7e8 (the host suspends the window and resumes the pause menu;
+      the next tick after a wake re-opens the category list), LeaveScene = the 1252f0 request.
+      gameMode and listId are read at the entry of state 1 and when the window closes.
+  Draw state: dim (overlay alpha), the guide window and both ListWidget objects (drawn by the
+  existing widget draw code: rows at panel + (14, 14 + 21 r), large font), and the ordered
+  leaf requests of the detail page (SkillDraw: Bar, Icon, Glyph, Ascii with positions, sizes
+  and colour words) plus the scroll-bar arguments.
+
+
+8  Relationship to the input tables
+-----------------------------------
+
+OBSERVED: 13cf88, 13cfc0, 13cff8, 13d0d0, 17e428, 20e8c0 and 210138 read only the tables of
+section 5. They never reference the command templates 4e9898 (input_commands.bin), the special
+bindings 4eb1e0 (input_special.bin), the per-character tables 4eab00 / 4e5c50, or the practice
+ACTION records 4dc1a8 (15f4e8, practice_mode.bin). The command notation shown to the player is
+hand-authored text; its agreement with the recognised motions is not enforced by code.
+UNKNOWN: whether every listed command matches its input template (no cross-check was made).
+The practice ACTION help line (2111e8) takes skill names from 4dc1a8, not from these tables.
+
+
+9  Corrections to earlier documents
+-----------------------------------
+
+  docs/mode-practice.txt 4.5: "20e8c0 / 20eae0 / 20ed70 with the practising player's list id"
+      -- 20e8c0 takes no fighter id; it builds the common sub-list (基本操作 + spirits) from
+      unlock bytes. Only the fighter list (20eae0) is positioned with the list id (20ed70).
+  docs/mode-battle-branches.txt 12: "window 582f5c.+4 = 0x20" is the scheduler word of the
+      suspended coroutine 13d680 (0x21 suspended, 0x20 runnable), not a window field.
+
+
+10  Not ported / UNKNOWN
+------------------------
+
+  - Draw routines 20ef38 (list), 182600 (guide), 17e0b0 / 17e038 / 10a710 / 10a1c0 / 17e228 /
+    17f090 leaves and the Z sequence: the port exposes their arguments only.
+  - Scheduler side (1126f0 record, suspension through word +4): the host decides when
+    tick() runs.
+  - Meaning of icon 0x23 ("BP") and of the unused codes G*, L*, R*, B*, SL, EX in this window
+    (they belong to the shared text renderer and are used by other screens).

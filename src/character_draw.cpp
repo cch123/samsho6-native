@@ -38,7 +38,7 @@ uint32_t capAlpha(uint32_t color,uint32_t part) {
 const CharacterDraws::Resource& CharacterDraws::resource(unsigned slot) {
     const auto id=slots_.at(slot);auto found=resources_.find(id);
     if(found==resources_.end()) {
-        Resource r{read(fighterResourcePath(assets_,"aid",id)),read(fighterResourcePath(assets_,"act",id)),read(fighterResourcePath(assets_,"pil",id))};
+        Resource r{read(characterResourcePath(assets_,"aid",id)),read(characterResourcePath(assets_,"act",id)),read(characterResourcePath(assets_,"pil",id))};
         if(r.aid.size()!=0x1800||r.act.size()%60||r.pil.size()%16)throw std::runtime_error("Invalid character draw record layout");
         found=resources_.emplace(id,std::move(r)).first;
     }

@@ -1,5 +1,6 @@
 #include "stage_item_schedule.hpp"
 #include "battle_round.hpp"
+#include "survival_run.hpp"
 #include "scalar_float.hpp"
 #include <algorithm>
 #include <bit>
@@ -37,7 +38,10 @@ int StageItemSchedule::roll(BattleRoundState& b,unsigned stage,int second) const
 }
 
 std::optional<StageItemDrop> StageItemSchedule::next(BattleRoundState& b,const StageEventPlayers& players) const {
-    if(!b.stageItemsOption4c3828||b.timers.decrease(3)>0||b.stageItems.busy())return std::nullopt;
+    // 141860: never in the demo; two-human fights need the item option, while
+    // arcade, practice and survival always deliver.
+    if(b.gameMode==0||(!b.survival()&&b.gameMode==3&&!b.stageItemsOption4c3828))return std::nullopt;
+    if(b.timers.decrease(3)>0||b.stageItems.busy())return std::nullopt;
     // 140fa0 looks up just the first kind-5 battle object. A live fuse
     // keeps another item off the stage even after its carrier has departed.
     const auto& pools=b.entry.tasks;
@@ -48,13 +52,39 @@ std::optional<StageItemDrop> StageItemSchedule::next(BattleRoundState& b,const S
         if(act==76||act==78||act==133)return std::nullopt;
         break;
     }
-    int second=60-b.timers.values[1]/0x5a00;
-    if(second<0){b.timers.clear(1);second=60;}
-    int kind=roll(b,b.matchEnd.metadataStage04,second);
-    if(kind<0)return std::nullopt;
-    // In local versus the three score awards are replaced by a bomb or
-    // a thrown item. Keep the extra random call in its original position.
-    if(kind>=4&&kind<=6)kind=b.random.bounded(2)?7:8;
+    int kind;
+    if(b.survival()) {
+        // 144fb4: the survival producer ignores the schedule. 14ea68 is the arena's
+        // own throwable (row word 0, ff for an arena index of 12 or more).
+        const unsigned stage=b.matchEnd.metadataStage04;
+        const auto row=table_.begin()+20*stage;
+        const int own=stage<12?int(uint32_t(row[0])|uint32_t(row[1])<<8|uint32_t(row[2])<<16|uint32_t(row[3])<<24):0xff;
+        const auto drop=survivalItemDrop(b.random,own);
+        auto scalar=[](float x){return ScalarFloat{std::bit_cast<uint32_t>(x)};};
+        ScalarFloat target{};
+        switch(drop.where) {
+        case 0:target=scalar(players.x0);break;
+        case 1:target=scalar(players.x1);break;
+        case 2:target=scalar(players.x0).add(scalar(players.x1)).mul({0x3f000000});break;
+        default:target=scalar(b.camera.projectionX);break;
+        }
+        b.timers.set(3,drop.nextDelay); // 140930(3, 258)
+        return StageItemDrop{drop.kind,target.truncate(),drop.side};
+    }
+    if(b.practice()) {
+        // 145068: the practice menu row ITEM chooses the kind; RANDOM draws 112300(0x13).
+        if(!b.practiceRules)return std::nullopt;
+        kind=practiceItemDelivery(*b.practiceRules,b.random);
+        if(kind<0)return std::nullopt;
+    } else {
+        int second=60-b.timers.values[1]/0x5a00;
+        if(second<0){b.timers.clear(1);second=60;}
+        kind=roll(b,b.matchEnd.metadataStage04,second);
+        if(kind<0)return std::nullopt;
+        // In local versus the three score awards are replaced by a bomb or
+        // a thrown item. Keep the extra random call in its original position.
+        if(b.gameMode==3&&kind>=4&&kind<=6)kind=b.random.bounded(2)?7:8;
+    }
     const int fromRight=b.random.bounded(2);
     const int anchor=b.random.bounded(4);
     auto scalar=[](float x){return ScalarFloat{std::bit_cast<uint32_t>(x)};};

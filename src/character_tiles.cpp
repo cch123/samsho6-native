@@ -1,4 +1,5 @@
 #include "character_tiles.hpp"
+#include "edit_art.hpp"
 #include <algorithm>
 #include <bit>
 #include <fstream>
@@ -30,7 +31,13 @@ CharacterPaletteBank::CharacterPaletteBank(const std::filesystem::path& assets):
     if(source_.size()!=266240)throw std::runtime_error("Unexpected original palette arena");
 }
 int CharacterPaletteBank::resolve(uint32_t key,unsigned bank,EffectPalettes& cache) {
-    if((key>>16)&3)throw std::runtime_error("Alternate palette-source mode not yet implemented");
+    if((key>>16)&3) {
+        // Owner bits: the same cache over the edited tables (EditPaletteBank is 115d40 for every key).
+        if(!editTables_||!editData_)throw std::runtime_error("Edited palette key without its tables");
+        EditPaletteBank edited(*editTables_,*editData_,source_,cache,raw16,format);
+        edited.setRuntime(0,runtime_[0]);edited.setRuntime(1,runtime_[1]);
+        return edited.resolve(key,int(bank));
+    }
     const auto logical=(key&0xffff)*32+bank;
     const auto tag=logical+0x10000;
     for(unsigned i=0;i<24;++i)if(!cache[2][i]&&cache[0][i]==tag){cache[1][i]=1;return int(paletteSlots[i]);}
@@ -70,7 +77,7 @@ void CharacterPaletteBank::colorize(uint32_t flags,uint32_t fadeColor,uint32_t a
 const CharacterTiles::Resource& CharacterTiles::resource(unsigned slot) {
     const auto id=slots_.at(slot);auto found=resources_.find(id);
     if(found==resources_.end()) {
-        found=resources_.emplace(id,Resource{read(fighterResourcePath(assets_,"idx",id)),read(fighterResourcePath(assets_,"map",id)),read(fighterResourcePath(assets_,"chr",id))}).first;
+        found=resources_.emplace(id,Resource{read(characterResourcePath(assets_,"idx",id)),read(characterResourcePath(assets_,"map",id)),read(characterResourcePath(assets_,"chr",id))}).first;
     }
     return found->second;
 }

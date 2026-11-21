@@ -22,13 +22,13 @@ REMATCH=0x139760
 BACKDROP_DRIVER=r'''
 #include "console_versus_art.hpp"
 namespace ss6 {
-class MenuBackdrop {
+class VersusMenuBackdropStub {
 public:
-    explicit MenuBackdrop(const std::filesystem::path&) {}
+    explicit VersusMenuBackdropStub(const std::filesystem::path&) {}
     void paint(const ConsoleVersusMenuDraw&,std::span<uint8_t>) const {}
 };
 }
-#define ConsoleVersusArt MenuBackdrop
+#define ConsoleVersusArt VersusMenuBackdropStub
 #include "viewer.cpp"
 '''
 def encode(pads):

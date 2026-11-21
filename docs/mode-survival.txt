@@ -1,0 +1,812 @@
+SURVIVAL MODE (SLPS-25559) -- static specification
+====================================================
+
+Scope: mode-menu item 3 (SURVIVAL), the unlock rule of the SURVIVAL / GALLERY / SPIRITS
+EDIT menu rows, character-select differences, opponent candidate generation, the
+in-battle survival controller (candidate selection, bonus conditions, rewards, in-place
+opponent replacement), every battle-side branch on the survival predicate, the end of
+a run, the per-character record and its location in the save image, and exit paths.
+Source: static reading of work/ss6/extracted/SLPS_255.59. No Probe (work/ss6/mips_probe.py
+interpreter) run was used. All addresses are hexadecimal EE virtual addresses; for
+.data and .rodata the file offset is (address - 0xff000).
+Labels:
+  OBSERVED  = read directly from instructions/data at the cited address.
+  INFERRED  = interpretation of observed code; not proven by execution.
+  UNKNOWN   = not read / not resolved.
+Related documents (not repeated here): docs/mode-practice.txt (shared battle-scene loop
+138f48, predicates 139388/1393a0/139430), docs/mode-arcade-flow.txt (Game Over scene
+138340, unlock announcement 1e5d88), docs/mode-gallery.txt A.4.6 (unlock predicate
+table 584f78), docs/mode-option.txt.
+
+Glossary
+  g      = game data block "g_GameData" 4c3808 (g+0 mode word "GameMode", g+4 stage,
+           g+8 match winner seat, g+0x10 seat word, g+0x2c, g+0x30, g+0x34
+           "nLevelEnding", g+0xa0 sub-mode "PS2_GameMode", g+0xa4).
+  cfg    = per-seat fighter configuration "g_PlayerData" 456890 + 0x30*seat
+           (+0 character, +4 colour, +8 spirit chosen in character select, +0xc spirit
+           used by battle setup, +0x14 arcade progress, +0x20 rounds to win,
+           +0x2c "nVersionCharacter").
+  setup  = battle setup block, pointer [4d3d04] (140060).
+  battle = battle block, pointer [4d3d00] (140030/140050).
+  actor  = per-fighter structure, 140090(seat) = [4d3d08] + 0xf2c*seat.
+  stats  = per-seat match statistics, 1400d8(seat) = battle + 0x254 + 0x108*seat
+           (+0x1c finish type, +0x20, +0x28 wins, +0x2c required wins).
+  gs     = system/save block "g_GameSetting" 43d058.
+  T      = "charaTable" block 12d3668 (.bss).
+  S      = survival controller globals 12d4cb8..12d4f68 (.bss).
+  N      = number of opponents already defeated in this run = s16 [12d36a4] (17b880).
+  RNG    = 112300(n): game random number generator, returns 0..n-1 (ported as
+           GameRandom; see docs/auxiliary-objects.txt).
+  HUD    = head-up display.  SJIS = Shift-JIS text encoding.  CPU = computer-controlled.
+  Pad words come from 118128(port): +0 held, +4 pressed edges, +8 edges with repeat.
+
+
+1. OVERVIEW
+-----------
+
+Survival is ONE battle scene that is never left between opponents. The human fights a
+sequence of up to 49 single-round matches. Before every match (including the first) a
+three-row candidate window is shown; each candidate fixes the opponent character, the
+stage, the opponent colour, the SPIRIT THE HUMAN MUST USE, a bonus condition ("mission")
+and a reward. Life and the round clock carry over between opponents; rewards restore
+life and/or clock. A time-up always counts as a loss. The run ends on the first loss or
+after the 49th win; the Game Over scene 138340 then stores the per-character record
+(wins, elapsed seconds).
+
+ mode menu 1ccfd0 item 3
+        |  1252f0(1,0,127d70,128008)
+        v
+ character select 128008 (single-sided branches shared with ARCADE, section 4)
+        |
+        v
+ battle scene (139660 init, 138f48 loop)                      requested battle state
+   S.state=1  candidate window on black screen (battle frozen)        (any)
+        | confirm
+        v
+   S.state=5  fade to black -> save life/clock -> 13a6c0 reload
+        v
+   S.state=0  fight: 13fd80 -> state 3 (ROUND 1 / FIGHT) -> 4 -> 5 -> ... -> 10
+        |                                                    143484: 145628()
+        |-- human lost / draw / time-up ----------------------------> 138340 Game Over
+        |-- human won, N+1 >= 0x31 ---------------------------------> 138340 (g+0x34=1)
+        |-- human won, N+1 <  0x31: 180e28() new candidates, S.state=2
+        v
+   S.state=2  result message, wait for button
+        |-- per-event mission ------------------------------> S.state=1
+        |-- mission achieved -> S.state=3 reward counting --> S.state=1
+        |-- mission failed   -> S.state=4 ------------------> S.state=1
+
+
+2. MENU: UNLOCK RULE AND CONFIRM
+--------------------------------
+
+2.1 Row-set selection (OBSERVED 1ccf10 and 1cd818)
+  ec = 1e3f70(43d09f) = number of non-zero bytes in gs+0x47 .. gs+0x77 (49 bytes,
+       loop bound 0x31 at 1e3f88) = number of characters whose arcade ending was seen.
+  mb = u8 [43d0d6] = gs+0x7e (read as 0x37(43d09f) at 1ccf30/1cd964 and as 0x7e(43d058)
+       at 1cd9ec/1cda64).
+  String-pointer tables (u32 pointers to ASCII strings, .rodata):
+      6568b8 (6 rows): ARCADE, VS, PRACTICE, COLOR EDIT, NETWORK, OPTION
+      6568f0 (8 rows): ARCADE, VS, PRACTICE, SURVIVAL, COLOR EDIT, GALLERY, NETWORK, OPTION
+      656928 (8 rows): ARCADE, VS, PRACTICE, SURVIVAL, SPIRITS EDIT, COLOR EDIT, NETWORK,
+                       OPTION
+      656948 (9 rows): ARCADE, VS, PRACTICE, SURVIVAL, SPIRITS EDIT, COLOR EDIT, GALLERY,
+                       NETWORK, OPTION
+  (strings: 656860 "ARCADE MODE", 656870 "VS MODE", 656878 "PRACTICE MODE", 6568d0
+   "SURVIVAL MODE", 656910 "SPIRITS EDIT MODE", 656888 "COLOR EDIT MODE", 6568e0
+   "GALLERY MODE", 656898 "NETWORK MODE", 6568a8 "OPTION MODE".)
+
+      ec    mb     rows  table    1ccf10 stores [582af8] (= rows-1, initial cursor word)
+      ==0   !=1    6     6568b8   5
+      ==0   ==1    8     656928   7
+      !=0   ==0    8     6568f0   7
+      !=0   !=0    9     656948   8
+  Note the asymmetric tests: with ec == 0 the comparison is mb == 1 (1ccf3c, 1cd96c,
+  1cd9f8); with ec != 0 it is mb != 0 (1ccf64, 1cdab4, 1cda64).
+  Consequences (OBSERVED from the tables):
+      SURVIVAL row     present iff ec != 0 || mb == 1
+      GALLERY row      present iff ec != 0
+      SPIRITS EDIT row present iff (ec == 0 ? mb == 1 : mb != 0)
+  Row colours in 1cd818 (three visible rows, index (cursor + k) % rows, k = 0..2, text
+  drawn by 1135e8(str, 0xf0, 0x14c + 0x18*k, colour)): k == 1 0xffffffff, k == 0/2
+  0xff808080; row index 1 (VS) uses 0xff404040 when 10c058(3) != 3; row index rows-2
+  (NETWORK) uses 0xff404040 when [443578] == 0. No colour rule depends on SURVIVAL.
+
+2.2 Where the unlock inputs are written (OBSERVED)
+  gs+0x47+c (ending-seen flag of character c): written only by the arcade ending task
+      182d30 at 182df0 (`sb 1, 0x47(gs + cfg[seat].+0)`), together with gs+0x81+k
+      (k = cfg[seat].+8, spirit-cleared flag) at 182de4; seat = (g+0 == 1) ? 0 : 1
+      (182d98/182e84). The same task sets g+0x34 = 1 (182e50) and switches to 138340.
+      Both arrays are zeroed by the factory initialiser 111458 (memset 0x31 bytes at
+      gs+0x16 and gs+0x47, 111470/111480).
+  gs+0x7e: debug-menu label "SECRET MATSURI" (table 65c320 row 8, toggle 1e4cc0).
+      Writers:
+        111458 (11148c)              = 0 (factory)
+        1e4728(v) setter #10 of 584fb8: v == 1 -> 1 else 0
+        1d91f0 / 1d9258 / 1d92c0     network session presets ("InitNetworkArcadeMode" 0,
+                                     "InitNetworkOrignalMode" 1, "InitNetworkVSMode" =
+                                     saved copy u8 [5735c8+0x620a])
+        12f8e8 (12fa0c / 12fbf4)     network character-select task (sub-mode 6 only)
+        1e4b18, 1e4cc0, 1e4e38       option-side debug/secret menu toggles
+      In offline play the only setter is #10, applied by 1e62b8 (unlock announcement
+      scene 1e5df0) when predicate #10 (1e3ed0) returns non-zero, and by 1e3638
+      (recompute-all, called from 1e5a00).
+  Predicate #10, 1e3ed0(ec, sc, force) (OBSERVED 1e3ed0..1e3f68; sc = 1e3fa0(43d0d9) =
+  number of non-zero bytes in gs+0x81..gs+0x89):
+      if gs[0x7e] != 0 and force != 1: return 0
+      allFour = gs[0x65] && gs[0x66] && gs[0x67] && gs[0x68]   (ending-seen of
+                characters 0x1e, 0x1f, 0x20, 0x21)
+      if allFour and gs[0x7f] != 0 and ec >= 0x18: return 1
+      if ec >= 0x20: return 1
+      if sc >= 8: return 1
+      return (u32 [43d0e8] > 0x2bf1f) ? 1 : 0
+  Predicate #14, 1e3878 (target gs+0x8c "mode_lock[MODE_SURVIVAL]", debug string
+  65c040; OBSERVED 1e3878..1e3910):
+      if gs[0x8c] != 0 and force != 1: return 0
+      if ec == 1: return 1                      (exact equality, 1e38e0)
+      return (u32 [43d0e8] > 0x2bf1f) ? 1 : 0
+  gs+0x8c is NOT read by the menu (2.1); INFERRED: it only records that the
+  "SURVIVAL MODE unlocked" announcement has been shown. Predicate #12 (1e36f0, gs+0x8a
+  "mode_lock[0]") has the identical body; predicate #13 (1e3790, gs+0x8b
+  "mode_lock[MODE_CUSTOM]") has the body of #10 with gs[0x8b] as its early-out byte.
+  The increment site of the counter gs+0x90 ([43d0e8]) is UNKNOWN (no direct-address
+  store found; the block is accessed through base pointers).
+  Save image: gs is stored at 5735c8 + 0x618c (1d92c0 reads 5735c8+0x61ca.. = gs+0x3e..
+  and +0x620a = gs+0x7e); the copy routine itself was not read (UNKNOWN).
+
+2.3 Session flags set by survival wins, 1e3fd0(count) (OBSERVED 1e3fd0..1e43d8)
+  Called from 145628 after every human win with count = N+1 (section 7.4).
+      valid only when (g+0 == 0xb && g+8 == 0) or (g+0 == 0xc && g+8 == 1)
+      opp = (g+0 == 0xb) ? 1 : 0                        (CPU seat)
+      c = cfg[opp].+0
+      1e4138: if gs[0x40] != 0 && c == 0x2a: [13430b0] = 1
+      1e43b8: if gs[0x46] != 0 && count >= 0x31: [13430cc] = 1
+      then, stopping after the first hit (stack counter, `slti <2`):
+      1e4178: gs[0x3f] && c == 0x29 -> [13430b4] = 1
+      1e41d8: gs[0x3e] && c == 0x28 -> [13430b8] = 1
+      1e4238: gs[0x42] && c == 0x2c -> [13430bc] = 1
+      1e4298: gs[0x43] && c == 0x2d -> [13430c0] = 1
+      1e42f8: gs[0x45] && c == 0x2f -> [13430c4] = 1
+      1e4358: gs[0x44] && c == 0x2e -> [13430c8] = 1
+  gs+0x3e..0x46 are the lock bytes of the hidden fighters (1 = locked; 111458 writes 1).
+  The flags are consumed by unlock predicates #0..#7 (docs/mode-gallery.txt A.4.6).
+  INFERRED: defeating a still-locked hidden fighter in survival, or clearing all 49,
+  unlocks that fighter at the next Game Over.
+
+2.4 Menu confirm, item 3 (OBSERVED 1cd494..1cd4f0, then 1cd48c/1cd490)
+      1252f0(1, 0, 127d70, 128008)          scene switch to character select
+      [582afc] = 1
+      g+0x10 = seat ^ 1
+      1ccfb8(0xb, 0xc, seat): g+0 = (seat == 0) ? 0xb : 0xc
+      111710(): cfg[0].+0x20 = cfg[1].+0x20 = 1      (rounds to win, see 6.1)
+      139280(2): u8 [123a0c0] = 2                    (battle kind: 0 normal, 1 practice,
+                                                      2 survival)
+      g+0xa0 = 4
+
+
+3. STATE
+--------
+
+3.1 Survival controller S (all s32 unless noted; .bss, zero at boot)
+  12d4cb8  battle pointer (140030()), set by 180510
+  12d4cbc  S.state 0..5 (section 5.2). 180510 writes 1
+  12d4cc0  S.prev: state value whose entry action has run. 180510 writes -1
+  12d4cc4  S.delay: frames during which the state logic is skipped. 180510 writes 0
+  12d4cc8  S.fade: 0..0xff, alpha of the full-screen black rectangle. 180510 writes 0
+  12d4ccc  S.savedLife: actor+0xa30 of the human sampled at 180df8
+  12d4cd0  S.savedClock: battle+0x114 sampled at 180dfc
+  12d4cd4  S.humanSeat: 0 when g+0 == 0xb or 1, else 1 (1805f0..18062c)
+  12d4cd8  S.pendingReward: reward id granted by a per-event mission, -1 = none
+  12d4cdc  S.lifeGain: life units still to be added
+  12d4ce0  S.clockGain: clock counts still to be added
+  12d4ce4  S.messageTimer: frames left for the in-fight reward message (0xb4)
+  12d4ce8  S.wins: N+1 after each win (180e6c); 0 at 180510. Read by 181488
+  12d4cec  S.elapsedFrames; 0 at 180510; 181468() = S.elapsedFrames / 60
+  12d4cf0  s32 M[22]: mission status words, index = mission id (section 5.5)
+  12d4d48  message window widget (extends to 12d4eaf; 1822a0 init, 182318(win, 7))
+  12d4eb0  candidate selector widget (211c30 init); +0x64 = cursor row [12d4f14],
+           +0x6c = pointer to the candidate array, +0xc = row count
+  12d4f20  candidate array C[3], 0x18 bytes each (section 5.3)
+
+3.2 charaTable T (12d3668)
+  +0x3c  s16 N (12d36a4). Zeroed by 17ac98 (called from 139660) and written by
+         17aca8 / 17b840
+  +0x3e  s16 stageHistory[i], i = 0..N-1 (written at T + 0x3c + 2*N when N > 0)
+  +0xa0  s16 defeated[i], i = 0..N-1     (written at T + 0x9e + 2*N when N > 0)
+  +0x104 s32 current candidate copy, 6 words (17b840), read by the accessors
+         17b988 (+0x104 stage), 17b998 (+0x108 human spirit), 17b9a8 (+0x10c
+         opponent character), 17b9b8 (+0x110 opponent colour), 17b9c8 (+0x114
+         reward), 17b9d8 (+0x118 mission)
+
+3.3 Other globals
+  123a0c0 u8   battle kind (2.4). 1393a0() = ([123a0c0] == 2)
+  123a0c4 s32  one-frame "skip battle update" request (1392e8 sets 1)
+  123a0cc/d0/d4 s32 reload requests (1392a8, 1392c0; section 5.6)
+  4c3834 (g+0x2c) set to 1 by the state-1 entry action (1808dc)
+  4c383c (g+0x34) "nLevelEnding": 1 when all 49 opponents were defeated (145cf8)
+  582244 s32   HUD copy of 181488() written by 1bc1c0 (section 6.9)
+  5735c8+0x63fc+8*i  record "g_savedata.survival_score[i]" (section 8)
+
+
+4. CHARACTER SELECT (scene 128008)
+----------------------------------
+Survival uses the single-sided branches of ARCADE (mode words 1/2 and 0xb/0xc are
+tested together); the full flow belongs to the arcade/character-select specification.
+Survival-specific code (OBSERVED):
+  1280e4..128108  if g+0 is 0xb or 0xc: 12f888() = memset(4c8d18, 0, 0x68) and
+                  12eea8() = memset(1239e68, 0, 8)   (per-seat EX-version flags)
+  128294..1282ac  g+0 == 1 or 0xb -> 128c78(0); g+0 == 2 or 0xc -> seat-1 variant
+  12a4ac..12a4bc  per-seat draw: if g+0 is 0xb/0xc call 12d410(seat)  (record panel)
+  12a9f8, 12aec8, 12b608, 12bb04, 12c3fc, 12c63c: g+0 == 2 or 0xc select the right-hand
+                  (seat 1) layout constants
+  12de78..12dec8  on the handled pad event, if g+0 is 0xb/0xc and u8 [43d0ec]
+                  (gs+0x94 "ex_chr_lock") == 1: [1239e68 + 4*seat] = (held & 0x100000)
+                  ? 1 : 0
+  12ef80          g+0 == 1 or 0xb -> 12f4c0(0) and task 12f8e8 for seat 0
+  1300d8..130128  spirit confirm (not modes 3/6/9/10): cfg[seat].+0xc = cfg[seat].+8 =
+                  chosen spirit
+  Record panel 12d410(seat) (OBSERVED 12d410..12d768):
+      labels (pointer pair at 5e07b0): 5e07a0 SJIS "成績" at (X0, 0x24), 5e07a8 "時間"
+      at (X0, 0x44); X0 = 0x18a for seat 0, 0x4a for seat 1; text call 109f08(str, x, y,
+      0, 0, 0, 0xff)
+      c = character under the cursor ([4c82a8 + 4*[4c82a0 + 4*seat]]); if
+      12eed0(seat) == 1 and gs[0x94] == 1 and 129208(c) == 1: c += 0x1b; if the grid
+      cell ([4c8370 + 4*(0x32*seat + cursor)]) == 0x31: c = 0x30
+      if c == 0x35: wins = 0, secs = 0
+      else wins = s8 [5735c8 + 0x63fc + 8*c], secs = u32 [5735c8 + 0x6400 + 8*c]
+      wins >= 0x31: 5e07b8 "クリア" at (X1, 0x24)
+      else sprintf("%d%s", wins, 5e07e0 "人斬り") right-aligned at X1 - 12*1b9838(wins)
+      minutes = secs / 60 -> "%d分" at (X1 - 12*1b9838(minutes), 0x44)
+      seconds = secs % 60 -> "%d秒" (or "0%d秒" when < 10) at (X2 - 12*1b9838(10), 0x44)
+      X1 = 0x20c, X2 = 0x23c for seat 0; 0xcc, 0xfc for seat 1
+  The spirit chosen here is overwritten for the human before every match (5.6):
+  1398c0 / 13a6c0 store the candidate spirit into cfg[human].+0xc. cfg[human].+8 keeps
+  the chosen value and is not read by the survival setup path.
+  UNKNOWN: whether the spirit page is displayed or skipped in survival; exact pad mask
+  semantics of 0x100000; behaviour of 129208.
+
+
+5. IN-BATTLE SURVIVAL CONTROLLER
+--------------------------------
+
+5.1 Entry points (OBSERVED)
+  139660 (battle scene init, all modes) calls 180510() then 17ac98() (N = 0).
+  180510:
+      S.battle = 140030(); 1392e8(); 139550()
+      S.prev = -1; S.state = 1; S.fade = 0; S.delay = 0; S.wins = 0; S.elapsedFrames = 0
+      1822a0(12d4d48); 182318(12d4d48, 7)                         message window
+      211c30(12d4eb0); 211cc0(12d4eb0, 12d4f20, 3)                selector, 3 rows
+      17f428(12d4ecc, -0x248, 0x70, 0x38, 0x70, 0x10)             selector slide params
+      17aca8(0, 0, 0, 12d4f20, 0)                                 first candidates
+      S.humanSeat = (g+0 == 0xb || g+0 == 1) ? 0 : 1
+  138f48 (battle scene loop), once per frame after the battle update decision
+  (139140..139174): if 1393a0(): 180630(skipped); 1d9b50(); yield. `skipped` is 1 when
+  140270 was not executed in this iteration because [123a0c4] or [123a0c8] was set.
+  143484 (battle requested-state 10 entry): if g+0x18 == 0: 145628(battle+0x2c); the
+  music stop 145d98 is skipped in survival (1434a0); requested state = -1.
+
+5.2 180630(skipped) per frame (OBSERVED 180630..180e24)
+  port  = 178f90()                    (returns 1 for mode words 2, 5, 0xa, 0xc; the
+                                       other cases were not read, INFERRED 0 for 0xb)
+  human = 181758() = 140090(S.humanSeat)
+  pad   = 118128(port)
+  1825b8(12d4d48)                                  window animation
+  sel = 211d48(12d4eb0, port)                      selector update, returns list code
+  1815f0()                                         sample mission words (5.5)
+  if 141db8() ([battle+0] == 4) and skipped == 0: S.elapsedFrames += 1
+  if S.delay > 0: S.delay -= 1
+  else: STATE LOGIC (below)
+  TAIL (1806e4):
+      if S.state == 1 or S.state == 5: 1392e8()
+      else if S.state is not 3 or 4, and S.delay > 0: 1392e8()
+      if S.fade > 0: 17c228([4ee54c] - 700.0); 1145c0(0, 0, 0x280, 0x1c0, S.fade << 24)
+      if skipped == 0: 1810f8()                    HUD panel (5.7)
+      182600(12d4d48); 211e18(12d4eb0)             draw window and selector
+
+  STATE LOGIC, part A, when S.state != S.prev (entry actions, jump table 5f2130):
+    0: S.pendingReward = -1; S.messageTimer = 0; then as 5
+    5: 1826b0(12d4d48); 17f4b0(12d4ecc); [12d4ec8] = 0
+    1: g+0x2c = 1; 182648(12d4d48); 1827c0(12d4d48, 0x31, 0);
+       181c10(12d4df4, 5f2100)   (button legend, SJIS with glyph codes: select / decide)
+       20e0d0(12d4f00, 0)                          cursor row 0
+       [12d4ec0] = 17f560([12d4f14], [12d4ebc], [12d4ec0], [12d4f0c]); 17f468(12d4ecc)
+       [12d4ec4] = 1; [12d4ec8] = 0
+    2: 181c10(12d4df4, 5f2118)   (legend: next)
+       17f4b0(12d4ecc); [12d4ec8] = 0
+       id = 17b880() >= 0x31 ? 0x32 : 180ef8() ? 0x33 : 180fd0() ? 0x34 : 0x35
+       1827c0(12d4d48, id, 0); 17f468(12d4db4); [12d4dac] = [12d4da8] = 1;
+       17f468(12d4e00); [12d4df8] = [12d4df4] = 1
+    3: 17f4b0(12d4ecc); [12d4ec8] = 0; r = 181498(); 1827c0(12d4d48, 0x36, r);
+       S.delay = 0x1e
+    4: none
+    then S.prev = S.state, then FADE STEP.
+  STATE LOGIC, part B, when S.state == S.prev (jump table 5f2148):
+    0 (fight):
+       if S.pendingReward != -1:
+           if S.lifeGain > 0: human+0xa30 = min(human+0xa30 + S.lifeGain, 0xc8);
+                              1b5b80(0, (int)(float)[[human+0]+0x40], 0x50)
+           if S.clockGain > 0: t = battle+0x114 + S.clockGain*0xb400;
+                               1e7b70(-1, 0x41); if t > 0x459bff: t = 0x459c00;
+                               battle+0x114 = t
+           1827c0(12d4d48, 0x36, S.pendingReward); 17f468(12d4db4);
+           [12d4dac] = [12d4da8] = 1; S.pendingReward = -1; S.clockGain = 0;
+           S.messageTimer = 0xb4; S.lifeGain = 0
+       else if S.messageTimer > 0: S.messageTimer -= 1
+       else: 17f4b0(12d4db4); [12d4dac] = 0
+    1 (candidate window):
+       if sel == 4:   17b840(17b880(), &C[[12d4f14]]); 181548(); S.state = 5
+       else if 17f400(12d4ecc) != 0: [12d4ec8] = 1
+    2 (result message): if pad.pressed & 0x60e:
+           1e7b70(-1, 0)
+           if 17b880() >= 0x31 or 180ef8() != 0: S.delay = 0x1e; S.state = 1
+           else S.state = 180fd0() ? 3 : 4
+    3 (reward counting):
+       if S.lifeGain > 0: human+0xa30 = min(human+0xa30 + S.lifeGain, 0xc8);
+                          1b5b80(0, x, 0x50); S.lifeGain = 0; S.delay = 10
+       else if S.clockGain > 0:
+           t = battle+0x114
+           if t > 0x459bff: S.clockGain = 0; t = 0x459c00
+           else: t += 0xb400; 1e7b70(-1, 0x42); S.clockGain -= 1;
+                 if t > 0x459bff: S.clockGain = 0; t = 0x459c00
+           battle+0x114 = t
+           S.delay = (pad.held & 0x60e) ? 0 : 3
+       else if pad.pressed & 0x60e: 1e7b70(-1, 0); S.state = 1
+    4: S.delay = 0x1e; S.state = 1
+    5 (fade-out before reload):
+       if S.fade >= 0xff and 17f400(12d4d64) != 0:
+           S.delay = 4; S.state = 0
+           S.savedLife = human+0xa30; S.savedClock = 1408a0(0) (= battle+0x114)
+           1e7df0(); 1815b0() (1b4e88(320.0, 0.0, 100.0) and 1b4d90(2, 1));
+           13a6c0()                                 (5.6)
+    then: if S.state != S.prev: [12d4ec8] = 0; then FADE STEP.
+  FADE STEP (180830..1808cc), keyed on S.prev:
+    5: S.fade = min(S.fade + 8, 0xff)
+    1: if 17b880() == 0: S.fade = 0xff
+       else move S.fade toward 0x80 in steps of 8 (clamped at 0x80 from either side)
+    other: S.fade = max(S.fade - 8, 0)
+
+5.3 Candidate record C[i] (0x18 bytes, six s32)
+  +0x00 stage id            RNG(0xb) -> 0..10; 0xb for opponent 0x2b
+  +0x04 human spirit        0..5 or 7, or 8 / 7 for boss-class human characters
+  +0x08 opponent character
+  +0x0c opponent colour     RNG(5) -> 0..4; 0 for opponent 0x2b
+  +0x10 reward id 0..8      (5.4)
+  +0x14 mission id 0..0x15  (5.5)
+
+5.4 Rewards
+  Name table 59cf38 (u32 pointers, 9 entries; SJIS): 0 "体力回復＋１０", 1 "体力回復＋２０",
+  2 "体力回復＋３０", 3 "体力回復＋５０", 4 "タイム回復＋１０", 5 "タイム回復＋２０",
+  6 "タイム回復＋３０", 7 "体力／タイム全快", 8 "" (none).
+  181498() (OBSERVED 181498..181544, jump table 5f2290 for ids 0..7): clears S.lifeGain
+  and S.clockGain, then by r = 17b9c8():
+      r   S.lifeGain   S.clockGain
+      0   0x1e (30)    0
+      1   0x3c (60)    0
+      2   0x5a (90)    0
+      3   0x96 (150)   0
+      4   0            0x0a (10)
+      5   0            0x14 (20)
+      6   0            0x1e (30)
+      7   0xc8 (200)   0x64 (100)
+      8+  0            0
+  Returns r (v0 is not modified after 17b9c8). Life is clamped to 0xc8; one clock count
+  is 0xb400 timer units and the clock is clamped to 0x459c00 (= 99 * 0xb400).
+  OBSERVED mismatch: the labels say +10/+20/+30/+50 while the life amounts are
+  30/60/90/150 units of a 200-unit bar (i.e. three units per labelled point).
+  Reward messages: 1821f8(0x36, r) returns entry [index of id 0x36 + r] of the message
+  table 4ee870 (8-byte entries {u8 id, pad, u32 text pointer}, terminator id 0xff):
+  r = 0..8 -> "体力が１０回復しました", "体力が２０回復しました", "体力が３０回復しました",
+  "体力が５０回復しました", "タイムが１０カウント回復しました", "タイムが２０カウント回復しました",
+  "タイムが３０カウント回復しました", "体力とタイムが全快しました", "ボーナスはありませんでした".
+  Other ids: 0x31 "対戦条件を選択します", 0x32 "サバイバルモードをクリアしました",
+  0x33 "次のステージへ進みます", 0x34 "ボーナス条件を達成しました",
+  0x35 "ボーナス条件を達成できませんでした".
+
+5.5 Missions (bonus conditions)
+  Name table 59cf60 (u32 pointers, ids 0..0x15; SJIS):
+       0 素手状態で勝利          8 武器飛ばし技で勝利      0x10 弾き返し成功の度
+       1 強斬りで勝利            9 秘奥義で勝利            0x11 技ありの度
+       2 追い討ち攻撃で勝利    0xa 一閃で勝利              0x12 アイテム投げヒットの度
+       3 防御崩しで勝利        0xb 無の境地で勝利          0x13 アイテムを弾き返す度
+       4 必殺技で勝利          0xc ３斬以上つなげて攻撃    0x14 空中ガード成功の度
+       5 超斬りで勝利          0xd 挑発を３回              0x15 勝利
+       6 連斬で勝利            0xe ぬいぐるみを３回
+       7 武器破壊技で勝利      0xf 見切りスライド３回成功
+  1815f0() sampling, every frame (OBSERVED 1815f0..181754); a = human actor,
+  st = 1400d8(a+0xa24). Skipped entirely when 14abb0(a) != 0 (the opponent's
+  stats+0x28 >= stats+0x2c, i.e. the opponent has won):
+      M[0]  = (a+0x248 >> 17) & 1        M[11] = (a+0x248 >> 23) & 1
+      M[1]  = (a+0x248 >> 18) & 1        M[12] = u8 a+0xf22  (maximum combo, 6.8)
+      M[2]  = (a+0x248 >> 19) & 1        M[13] = u8 a+0xf23
+      M[3]  = (a+0x248 >> 21) & 1        M[14] = u8 a+0xf24
+      M[4]  = (st+0x20 == 0)             M[15] = u8 a+0xf25
+      M[5]  = (st+0x1c == 2)             M[16] = u8 a+0xf26, then a+0xf26 = 0
+      M[6]  = (a+0x248 >> 22) & 1        M[17] = u8 a+0xf27, then cleared
+      M[7]  = (st+0x1c == 1)             M[18] = u8 a+0xf28, then cleared
+      M[8]  = (st+0x1c == 1)             M[19] = u8 a+0xf29, then cleared
+      M[9]  = (st+0x1c == 0)             M[20] = u8 a+0xf2a, then cleared
+      M[10] = (st+0x1c == 3)             M[21] = 1
+  Producers of the event bytes (only `sb` sites with these offsets): a+0xf22 149914;
+  a+0xf23 174880; a+0xf24 174830; a+0xf25 14da88; a+0xf26 154f74, 171374; a+0xf27
+  155c94; a+0xf28 156ca4; a+0xf29 15581c; a+0xf2a 17511c. All nine are zeroed by
+  149008 (1490c4..1490e8, every round initialisation) and by 181548 (candidate
+  confirm), which also zeroes M[0..21]. The producers of a+0x248 bits 17..23 and of
+  stats+0x1c / +0x20 were not read (UNKNOWN; they belong to the damage/finish code).
+  180fd0() "mission achieved" (OBSERVED 180fd0..1810f4; m = 17b9d8()):
+      if S.state == 5 or S.prev == 5: return 0
+      if 14abb0(human) != 0: return 0
+      m 0..0xb:      return M[m] != 0
+      m 0xc..0xf:    return M[m] >= 3
+      m 0x10..0x14:  return 0                    (jump-table entry 181080 skips s2 = 1)
+      m >= 0x15:     if S.state > 0: return 1
+                     if battle+0x24 != human+0xa24: return 0
+                     if 141820() == 0: return 0  (141820: battle+0x18 > 0 or
+                                                  battle+0 >= 4)
+                     return [battle+0] != 4
+  180ef8() "per-event mission" (OBSERVED 180ef8..180fcc):
+      dead = (human+0x23c & 0x80) || human+0xa30 <= 0 || human+0xa30 < human+0xa38
+             || 14abb0(human) != 0
+      if dead: return 0
+      if m in 0x10..0x14:
+          if M[m] > 0: M[m] = 0; S.pendingReward = 181498()    (grant now, 5.2 state 0)
+          return 1                               (the delay slot 180f8c sets the
+                                                  result for every per-event mission)
+      return 0
+  180ef8 is evaluated once per non-skipped frame from the HUD (5.7), from the state-2
+  entry action and from the state-2 button handler.
+
+5.6 Opponent setup and in-place replacement
+  1398c0(setup) survival branch (g+0 0xb/0xc; OBSERVED 139a68..139b24) and 13a6c0
+  (OBSERVED 13a6c0..13a82c) perform the same assignment; h = human seat (0 for 0xb),
+  c = 1 - h:
+      setup+0x00 = 17b890()                       CPU level word (table below)
+      setup+0x04 = 17b988()                       stage
+      setup+0x08+4h = 0 (human control); setup+0x08+4c = 1 (CPU)
+      cfg[h].+0xc = setup+0x20+4h = 17b998()      HUMAN spirit := candidate +4
+      cfg[c].+0 = 17b9a8(); cfg[c].+4 = 17b9b8()  opponent character and colour
+      sp = 139c50(cfg[c].+0, RNG(6))              opponent spirit: 0x2b -> 7;
+                                                  0x2c,0x2d,0x2e,0x2f -> 8; else RNG(6)
+      cfg[c].+0xc = setup+0x20+4c = sp
+      if cfg[h].+0 == cfg[c].+0 and cfg[h].+4 == cfg[c].+4: cfg[c].+4 = (cfg[h].+4 == 0)
+      setup+0x10+4i = cfg[i].+0; setup+0x18+4i = cfg[i].+4;
+      setup+0x28+4i = cfg[i].+0x20 (1398c0) or the constant 1 (13a6c0)
+  RNG order inside this step: RNG(6) only (139c38), after the four accessors.
+  13a6c0 additionally: 11e3a0(0xfa1); 112a70(0xfa1); 1392c0() ([123a0d0] = 1);
+  141558() ([50e04c] = 1); 1392a8() ([123a0cc] = 1, [123a0d4] = 1).
+  The loop 138f48 then (docs/mode-practice.txt section on 138f48):
+      frame with [123a0d0] != 0: if [123a0e0] == 0: 1a4a98(setup+4) (stage reload);
+                                 [123a0d0] = 0; 13abb0()
+      frame with [123a0cc] != 0: 13ac08(); 1e7df0(); 11e600(); 13f9f0([123a0d4]);
+                                 if [123a0e4] == 0: 1bc1c0(); [123a0cc] = 0
+  i.e. the scene, its tasks and the survival controller persist; stage and fighters
+  are reloaded in place behind S.fade = 0xff.
+  First match: 139660 calls 180510 (candidates for N = 0) and then 1398c0, which reads
+  the T+0x104 copy BEFORE any candidate has been confirmed (17b840 has not run). The
+  battle therefore starts with whatever T holds (zero after boot; INFERRED: the last
+  confirmed candidate of the previous run otherwise), frozen and hidden by state 1
+  (S.fade = 0xff because N == 0), and is replaced through 13a6c0 after the first
+  confirmation.
+  CPU level word 17b890() (OBSERVED 17b890..17b980), by N:
+      N >= 0x30 -> 7     N == 0x2f -> 8     N in {9, 0x13, 0x1d, 0x27} -> 6
+      0x2e -> 3          0x2b..0x2d -> 4    0x28..0x2a -> 2    0x24..0x26 -> 4
+      0x21..0x23 -> 2    0x1e..0x20 -> 1    0x1a..0x1c -> 2    0x17..0x19 -> 1
+      0x14..0x16 -> 0    0x10..0x12 -> 2    0xd..0xf -> 1      0xa..0xc -> 0
+      6..8 -> 2          3..5 -> 1          0..2 -> 0
+  It is passed as the level argument of 148df0 (13fa94 `lw t1, (setup)`) and stored
+  by 158830 into AI+0x100; in survival 158830 does NOT force level 8 for characters
+  0x21 / 0x30 (158850). In ARCADE the same word is cfg[human].+0x14, so the values are
+  arcade stage indices (INFERRED).
+
+5.7 HUD panel 1810f8 (OBSERVED 1810f8..181464; called only on non-skipped frames)
+      X = (human+0xa24 != 0) ? 0xe : 0x12c
+      boss = (17b880() >= 0x30)
+      if S.state == 1 and 17b880() == 0: return           (nothing before first match)
+      progress = mission in {0xc, 0xd, 0xe, 0xf}
+      height = boss ? 0x1c : progress ? 0x58 : 0x44
+      17c228([4ee54c] - 700.0); 1145c0(X, 0x56, 0x146, height, 0xc0000000)
+      17db28(0xffffffff)
+      s = S.elapsedFrames; 17e228(sprintf(5f21b8 "経過時間 %02d時間 %02d分 %02d秒",
+          s / 216000, (s / 3600) % 60, (s / 60) % 60), X + 8, 0x5a, 1)
+      if boss: return
+      17e228(sprintf(5f21d8 "ボーナス %s", name59cf38[17b9c8()]), X + 8, 0x6e, 1)
+      if 180ef8():      17db28(0xffffff80); fmt = 5f21e8 "　　条件 %s"
+      else if 180fd0(): 17db28(0xff80ff80); fmt = 5f2280 "　　達成 %s"
+      else              fmt = 5f21e8
+      17e228(sprintf(fmt, name59cf60[mission]), X + 8, 0x82, 1)
+      if progress: 17e228(sprintf(F, M[mission]), X + 8, 0x96, 1) with
+          0xc: 5f21f8 "　　　　 最大斬数　%02d斬"       0xd: 5f2218 "　　　　 挑発　現在%02d回"
+          0xe: 5f2238 "　　　　 ぬいぐるみ　現在%02d回"  0xf: 5f2258 "　　　　 見切りスライド現在%02d回"
+
+5.8 Candidate selector widget (OBSERVED 211c30..2120d8)
+  211d48(w, port): list input through 20e128 (confirm: pad.pressed & 8 -> sound
+  1e7b70(-1, 0), result 4; cursor sounds 1e7b70(-1, 0x24)); result 4 is consumed by
+  state 1. Input is accepted only when the slide animation 17f330(w+0x1c) reports 1 and
+  w+0x14, w+0x18, w+0x6c are non-zero.
+  211e18(w) draw, for row i < min(count, w+0x5c), origin (x, y) = (w+0x1c + 12.0,
+  w+0x20 + 12.0 + 0x3c*i):
+      selected row: 17c228([4ee54c] - 700.0); 1145c0(x + 2, y, 0x1f4, 0x38, 0xffff0000)
+      icon 17e038(id, x + 0x10, y + 2, z = 17c228([4ee54c] - 800.0)) with
+          id = 0x16 when C[i].+4 == 7, 0x17 when == 8, else C[i].+4 + 0x10
+      17e228(665170 "スピリッツ使用", x + 0x28, y + 6, 1)
+      17e228(665180 "対", x + 0xe4, y + 6, 1)
+      17e228(name4d4bb0[C[i].+8], x + 0x10c, y + 6, 1)     fighter-name pointer table
+      17e228(name59cf60[C[i].+0x14], x + 0x14, y + 0x1e, 1)
+      17e228(name59cf38[C[i].+0x10], x + 0x10c, y + 0x1e, 1)
+  Float constants 665184..665198 = -400.0, 528.0, 200.0, 12.0, 700.0, 800.0.
+
+
+6. CANDIDATE GENERATION 17aca8 ("charaTable:survivalSetCand")
+-------------------------------------------------------------
+17aca8(n, lastStage, defeatedChar, C, clockLow) -> count (always 3)
+Callers: 180510 (0, 0, 0, C, 0) and 180e28(n, stage, char) from 145d48 with
+clockLow = ([battle+0x114] / 0xb400 < 0x28). 180e28 also sets S.wins = n and, when
+n < 0x31, S.state = 2.
+OBSERVED 17aca8..17b83c. RNG calls are listed in execution order.
+
+  T.N = n; if n > 0: T.defeated[n-1] = defeatedChar; T.stageHistory[n-1] = lastStage
+  hc = (g+0 == 0xb) ? cfg[0].+0 : cfg[1].+0                 human character
+  boss = 0
+  STEP 1, character list L, k entries:
+      n >= 0x30: L = {0x2b}
+      n == 0x2f: L = {0x30}; boss = 1
+      n == 0x27: L = {0x1a}; boss = 1
+      n == 0x1d: L = {0x0d}; boss = 1
+      n == 0x13: L = {0x1b}; boss = 1
+      n == 9:    L = {0x0b}; boss = 1
+      otherwise: pool = every c in 0..0x32, ascending, with
+                     c not in {0x0b, 0x0d, 0x1a, 0x1b, 0x2b, 0x30, 0x31, 0x32},
+                     (n < 0x28 ? c < 0x28 : c >= 0x28),
+                     c not in T.defeated[0..n-1]
+                 if |pool| >= 3: three times: r = RNG(|pool|); while pool[r] is taken:
+                     r = (r + 1 < |pool|) ? r + 1 : 0; L += pool[r]; mark taken
+                 else L = pool (in order)
+      The human's own character is not excluded.
+  STEP 2: C[0..2].+8 = -1
+      k == 0: assertion print 316140(5f1e10 "ASSERT:%s\n", 5f1e88); L = {0}; k = 1
+      k == 1: L = {L0, L0, L0}
+      k == 2: r = RNG(2); L[2] = (r != 0) ? L[1] : L[0]
+  STEP 3, human spirit for i = 0, 1, 2:
+      hc in {0x2c, 0x2d, 0x2e, 0x2f}: C[i].+4 = 8
+      hc == 0x2b:                     C[i].+4 = 7
+      else repeat: v = RNG(7); if v >= 6: v = 7; until v differs from C[j].+4 for
+           all j < i; C[i].+4 = v
+  STEP 4: lifeTurn = (RNG(2) == 0)
+  STEP 5, for i = 0, 1, 2:
+      C[i].+8 = L[i]
+      C[i].+0 = RNG(0xb)
+      C[i].+0xc = RNG(5)
+      if boss: C[i].+0x14 = 0x15; C[i].+0x10 = 7
+      else:
+          sp = C[i].+4; build list Q by add(m): append m when 17ba88(m, sp, C, i) != 0
+          add 1, 3, 2, 4, 0xc, 0xd                                   (in this order)
+          if 169388(hc) == 0 and hc != 0x30: add 0
+          if sp == 0: add 5
+          if sp == 7: add 7;  else if sp != 1 and sp != 0: add 8
+          if sp == 1: add 0xe
+          if sp == 1: add 9
+          if sp == 3: add 0xa
+          if sp == 3: add 6
+          if sp == 5 or sp == 8: add 0xf
+          if clockLow != 0: clockLow = 0; lifeTurn = 0               (first row only)
+          else:
+              add 0x11, 0x12, 0x13
+              if 1693c0(C[i].+8) == 0: add 0x10
+              if sp == 2: add 0x14
+              if sp == 5: add 9
+              if sp == 4: add 0xa
+              if sp == 1: add 7
+              if sp == 4: add 0xb
+          m = Q[RNG(|Q|)]
+          C[i].+0x14 = m; C[i].+0x10 = 17b9e8(m, sp, lifeTurn)
+          lifeTurn = (C[i].+0x10 >= 4)
+      if C[i].+8 == 0x2b: C[i].+0 = 0xb; C[i].+0xc = 0; C[i].+0x14 = 0x15; C[i].+0x10 = 8
+  STEP 6: r = RNG(3); swap C[r] and C[1]
+  Total RNG sequence (non-boss, pool >= 3, ordinary human character):
+      RNG(|pool|) x3, RNG(7) x(3 + rejections), RNG(2),
+      then per row: RNG(0xb), RNG(5), RNG(|Q|); finally RNG(3).
+  |Q| == 0 is not guarded (RNG(0) would be requested); whether it is reachable is
+  UNKNOWN.
+
+  17b9e8(m, sp, lifeTurn) reward for a mission (OBSERVED 17b9e8..17ba84, jump table
+  5f1ea4, 22 entries):
+      m in {1, 3}:                     lifeTurn ? 0 : 4
+      m in {0, 2, 4, 6, 0xc..0xf}:     lifeTurn ? 1 : 5
+      m in {5, 8}:                     lifeTurn ? 2 : 6
+      m == 7:                          sp == 1 ? 3 : (lifeTurn ? 2 : 6)
+      m == 9:                          sp == 5 ? 2 : (lifeTurn ? 2 : 6)
+      m == 0xa:                        sp == 4 ? 3 : (lifeTurn ? 2 : 6)
+      m == 0xb:                        3
+      m in {0x10, 0x13, 0x14}:         1
+      m in {0x11, 0x12}:               0
+      m == 0x15 or m > 0x15:           8
+  17ba88(m, sp, C, i) admission (OBSERVED 17ba88..17bb34):
+      v = 17b9e8(m, sp, 0); alt = (v == 4) ? 0 : (v == 5) ? 1 : (v == 6) ? 2 : -1
+      for j < i: reject when C[j].+0x14 == m, or C[j].+0x10 == v, or C[j].+0x10 == alt
+      otherwise accept
+  17b840(n, &C[row]): T.N = n; T+0x104.. = the six words of the chosen row.
+
+  Opponent order implied by STEP 1 (INFERRED): N = 0..0x27 uses each of the 36 ordinary
+  characters 0..0x27 once, with fixed bosses 0x0b (N = 9), 0x1b (0x13), 0x0d (0x1d),
+  0x1a (0x27); N = 0x28..0x2e uses 0x28, 0x29, 0x2a, 0x2c, 0x2d, 0x2e, 0x2f once each;
+  N = 0x2f is 0x30; N = 0x30 is 0x2b on stage 0xb. Fighter names: table 4d4bb0.
+
+
+7. BATTLE RULES (every survival-specific branch)
+------------------------------------------------
+
+7.1 Match initialisation 13f9f0 (OBSERVED 13fb2c..13fc14)
+  battle+0x280+0x108*i (stats+0x2c, required wins) = 1 for both seats (same branch as
+  practice). battle+0x13c (time option) = 2 (99 counts), overriding gs+5 (43d05d).
+7.2 Round initialisation 13fd80 (OBSERVED 13fddc..13ffe0)
+  At entry: battle+0x18 (round index) = 0; for both seats battle+0x27c+0x108*i = 0 and
+      148ed8(actor, 0).
+  The character introduction is skipped (the `first` argument of 149008 is forced 0).
+  140998(3): requested state 3; 140930(2, 1): timer 2 = 1.
+  After 1b5980: v = 180e98() (= S.savedLife when N > 0, else -1); if v != -1, every
+      actor with +0xa20 == 0 (human control) gets +0xa30 = v.     LIFE CARRY-OVER
+  1406e0 (called from 13fd80; OBSERVED 14071c..140774), round clock, timer index 0:
+      v = 180ec8() (= S.savedClock when N > 0, else -1)
+      v == -1: ticks = 99 * 0xb4                                  (0x459c = 17820)
+      else     ticks = (v + 0xff) >> 8 (v + 0x1fe when v + 0xff < 0)   CLOCK CARRY-OVER
+      140930(0, ticks)
+      (other modes: seconds * 0x5a.) One displayed count = 0xb4 ticks = 0xb400 raw
+      units of battle+0x114, twice the ordinary 0x5a00.
+  1407d0 displayed clock: (battle+0x114 + 0xb3ff) / 0xb400 in survival (140800).
+7.3 Opening 143930 (14398c): the announcer label argument of 1249c8 stays 1 (the
+  round-number computation from battle+0x18 is skipped).
+7.4 Round end 143c60 (OBSERVED 143f9c..144004): when the loser by life still has
+  life > 0 (time-up), the winner is forced to the CPU seat: g+0 == 0xb -> winner 1,
+  else winner 0. A time-up is always a human loss. Equal lives follow the ordinary
+  draw path (battle+0x24 = -1, both seats receive a win through 147db8).
+  143e54: sub-modes 4 and 5 do not set g+0xa4 = 1.
+  144570 (1445c4..144654): the human seat for the skip test is seat 0 for 0xb, seat 1
+  for 0xc; afterwards 145358 (either seat reached its required wins) is true after the
+  single round, so the requested state becomes 10.
+  145118 (145198): g+8 = -1 when both seats reached their required wins.
+7.5 Match end 145628, survival part (OBSERVED 145c84..145d44)
+      n = 17b880()
+      won = (g+0 == 0xb && g+8 == 0) || (g+0 == 0xc && g+8 == 1)
+      if won:
+          1e3fd0(n + 1)                                            (2.3)
+          if n + 1 >= 0x31: finished = 1; g+0x34 = 1
+          145d48(g+8): 180e28(n + 1, setup+4, setup+0x10+4*(g+8 == 0 ? 1 : 0))
+      else finished = 1
+      if !finished: [4c38ac] = 0; return        (scene continues; S.state is now 2)
+      g+4 = setup+4; cfg[0].+0x14 = 0; cfg[1].+0x14 = 0
+      g+0 = (g+0 == 0xb) ? 1 : 2                MODE WORD BECOMES THE ARCADE VALUE
+      1252f0(2, 0, 139778, 138340); [4c38ac] = 0
+  (A non-zero u8 gs+2 at the top of 145628 also jumps to the 138340 switch.)
+  g+0xa0 stays 4.
+7.6 Damage and options
+  14f2b8 (damage percentage gs+9), 14f310 / 14f360 (per-seat option bytes gs+0x11/0x14
+  and gs+0x12/0x15), 14f3b0 / 14f428 (gs+0x10/0x13): 139430() is true in survival, so
+  14f2b8 returns its argument unscaled, 14f310 returns [50d91c] = 0x20, 14f360 returns
+  [50d90c] = 0x14, 14f3b0 / 14f428 return 0.
+  1a3c18 / 1a3f90 (damage scaling for a CPU-controlled side, 1a3e70 / 1a40fc): factor
+  floats 6529e8 / 6529f4 = 1.0 instead of the difficulty-table factor.
+7.7 Items, delivery scheduler 144f40 (OBSERVED 144f40..145064)
+  141860() returns 1 in survival (items always enabled). When timer 3 has expired and
+  140fa0() == 0:
+      r = RNG(100)
+      r < 25: kind 8;  r < 50: kind 7
+      r < 75: kind = 14ea68(battle+0x10), 0xff -> 8
+      else:   kind = (RNG(100) < 0x1e) ? 1 : 3
+      side = RNG(2); x = 148368(RNG(4)); 1b5800(kind, x, side)
+      140930(3, 0x258)                           (fixed 600; other modes RNG(8)*60+0x168)
+  Kind names per docs/mode-practice.txt 5.6 (7 POISON, 8 BOMB); 14ea68 UNKNOWN.
+7.8 Maximum combo tracker in the actor update 1494f0 (OBSERVED 1498d0..149914):
+  in survival, c = stats[actor+0xa24]+0xc; if c != 0 and u8 actor+0xf22 < c:
+  actor+0xf22 = min(c, 0x63).
+7.9 HUD
+  1bc1c0 (HUD re-initialisation after each reload): [58223c] = g+0; [582244] =
+  181488(); stats+0x28 = 0 for both seats; 1be1a8: for g+0 0xb/0xc the life-bar records
+  (132f3a0, stride 0x98) are initialised by 1be450 from the CURRENT actor+0xa30 values
+  instead of the ordinary 1be3f8 / 1be538 path.
+  1bb2c8 (name/marker header) tests [58223c] against 0xb (seat 1) and 0xc (seat 0) at
+  1bb420..1bb468 next to the arcade tests (1 seat 0, 2 seat 1), and prints [582244]
+  through 1ba768(x - 5, 0xa, -0x12d, [582244], 0xa, 0, 4c6010, 0) at 1bb528..1bb550
+  after 1bbeb8(.., seat, 0xd3, 0x17b). INFERRED: this is the defeated-count display on
+  the CPU side. The branch polarity around the local words [sp+0x20+4*seat] and the
+  layout were not resolved (UNKNOWN, U6).
+  13a870: the elapsed-seconds accessor returns 181468() in survival.
+7.10 Pause 1d9b50 (OBSERVED 1d9bb0..1d9c78): for g+0 == 0xb (port 0) / 0xc (port 1)
+  the pause menu 1d9cd8 opens on pad.pressed & 0x80000 only while 181778() == 0
+  (S.fade == 0). Leaving through the pause menu runs destructor 1da210 (139778 first).
+  When the pause result word [582f34] == 2, its sub-mode 4 case (1da358, table 658998)
+  calls 124d50(), keeps g+0 (0xb/0xc), sets g+0x2c = 1 and g+0xa0 = 4, then clears
+  cfg[0].+4, +0x10, +0x2c and cfg[1].+4, +0x10, +0x2c. When [582f34] == 6 it calls
+  124d50(), 11d1a8() and sets g+0x2c = 1 (the sub-mode 5 rewrite at 1da3ec does not
+  apply). Pause strings 658a30.. name the items ("ゲームに戻ります",
+  "キャラクターセレクト画面に戻ります", ...); the mapping of [582f34] values to items and
+  target scenes was not read (UNKNOWN, U10).
+
+
+8. END OF RUN AND RECORD
+------------------------
+Scene 138340 "Task_GameOver" (shared; see docs/mode-arcade-flow.txt 5.10).
+Survival-specific parts (OBSERVED 138400..138654, 138810..138a04):
+  If g+0x34 != 0 and g+0xa0 == 4: the winner fighter object is created
+      (11d488(g+8, cfg[g+8].+0), 11e2e8(0xbbd), 11d528, 11d570(obj, g+8, 0x140, 0, 0),
+      11d908(obj, 0x1fb, 1, 0)); the frame counter [4ca204] advances only while
+      obj+0xc0 == 1, and the skip button (pad.pressed & 4, counter 0x1e..0x117) is
+      honoured only then.
+  Record update when g+0xa0 == 4 (1384f8..138650):
+      wins = (s8) 181488()                    = S.wins
+      secs = 181468()                         = S.elapsedFrames / 60
+      seat = (g+0 == 2) ? 1 : 0               (g+0 was rewritten to 1/2 by 145628)
+      i = cfg[seat].+0; if cfg[seat].+0x2c == 1 and i in 0x16..0x19: i += 0x1b
+      R = 5735c8 + 0x63f0 + 8*i
+      if (s8) R[0xc] < wins: R[0xc] = wins; (u32) R[0x10] = secs
+      else if R[0xc] == wins and secs < (u32) R[0x10]: R[0x10] = secs
+      316218(5e17e8)
+  Record layout "g_savedata.survival_score[i]" (names from debug strings 5e16f8,
+  5e1738): 8 bytes at save-image offset 0x63fc + 8*i from 5735c8: +0 s8 win_num,
+  +4 u32 time (seconds). i = character id 0..0x30, or 0x31..0x34 for the EX versions of
+  characters 0x16..0x19. Elapsed time counts only frames with battle state 4 that were
+  not skipped (5.2).
+  S.wins is N+1 after the last WIN; a run that ends by loss keeps the previous value
+  (0 if the first match was lost). After the 49th win S.wins = 0x31, shown as "クリア"
+  in the record panel (section 4).
+  Exit of 138340: at counter 0x12c, 1e6180() == 1 -> 138a48(); 1e5d88() (unlock
+  announcement), else 10f158(); 1252f0(1, 1, 138a48, 1e8850).
+
+Exit paths summary
+  loss / draw / time-up     145628 -> 138340 -> 1e5d88 or 1e8850
+  49 wins                   145628 (g+0x34 = 1) -> 138340 (winner display) -> same
+  pause menu                1da210 destructor (7.10); target scene chosen by the menu
+  No path returns to character select between opponents.
+
+
+9. DATA TABLES (extraction summary; file offset = address - 0xff000)
+---------------------------------------------------------------------
+  6568b8 / 6568f0 / 656928 / 656948   menu row pointer tables, 6 / 8 / 8 / 9 u32
+  59cf38   reward name pointers, 9 u32 (entry 9 is 0)
+  59cf60   mission name pointers, 22 u32
+  4d4bb0   fighter name pointers, 49 u32 (.data)
+  4ee870   message table, 8-byte entries {u8 id, 3 pad, u32 ptr}, 207 entries, id 0xff
+           terminates; ids 0x31..0x36 at indices 190..195, reward variants 196..203
+  5f1ea4   jump table of 17b9e8 (22 code pointers; decoded in section 6)
+  5f2130 / 5f2148   state entry / update jump tables (6 code pointers each)
+  5f2160   jump table of 180fd0 (22 code pointers)
+  5f2290   jump table of 181498 (8 code pointers)
+  5f1e78   three s32 -1 (initial character triple)
+  5f2100, 5f2118   SJIS button legends;  5f21b8..5f2280 HUD format strings
+  5f212c, 5f228c   float 700.0;  5f22b0 320.0;  5f22b4 100.0
+  665170 "スピリッツ使用", 665180 "対", floats 665184..665198
+  5e07a0..5e07e0   record panel strings
+  17b890 thresholds and the STEP 1 boss schedule are immediate constants in code.
+
+
+10. UNKNOWN / NOT READ, AND SUGGESTED PROBE EXPERIMENTS
+-------------------------------------------------------
+  U1  Producers of actor+0x248 bits 17, 18, 19, 21, 22, 23 and of stats+0x1c / +0x20
+      (missions 0..0xb). Needed before missions can be evaluated natively.
+  U2  The nine event-byte producers listed in 5.5 were located but their conditions
+      were not read.
+  U3  178f90() for mode words other than 3, 0xc (pad port used by the controller).
+  U4  Widget internals: 1822a0 / 182318 / 1825b8 / 182600 / 182648 / 1826b0 / 1820f8
+      (message window), 17f330 / 17f400 / 17f428 / 17f468 / 17f4b0 / 17f560 (slide
+      animation), 20e128 remainder (cursor movement masks), 17e038 / 17e228 / 17db28 /
+      17c228 / 1145c0 draw primitives, 1b5b80 (life-gain effect), sound ids 0x41 / 0x42.
+  U5  Character-select flow for single-sided modes (owner: arcade slice), 129208,
+      pad mask 0x100000.
+  U6  HUD header 1bb2c8 / 1bbeb8 / 1ba768 layout for the defeated count.
+  U7  14ea68, 169388, 1693c0 predicates; 140fa0.
+  U8  gs+0x90 increment site; save-image copy routine for gs and survival_score.
+  U9  Reachability of an empty mission list in 17aca8; content of T+0x104 at the first
+      1398c0 call after boot versus after an earlier run.
+  U10 Pause-menu item set and target scenes in sub-mode 4.
+  Probe experiments (work/ss6/mips_probe.py):
+  P1  17aca8 whole-function comparison: seed [3d2e80]/RNG state, vary n in 0..0x30,
+      human character (ordinary, 0x2b, 0x2c..0x2f, 0x30), defeated lists, clockLow;
+      compare C[3], T.N, T arrays and RNG state. Stub only 316140. Covers 17b9e8,
+      17ba88, 169388, 1693c0 as real callees.
+  P2  17b890 for N = 0..0x40; 181498 for reward ids 0..9.
+  P3  180fd0 / 180ef8 / 1815f0 with synthetic actor, stats and S fields for every
+      mission id.
+  P4  180630 state trajectories with stubbed widget/draw/sound callees: verify the
+      order of S.delay, entry actions, FADE STEP and 1392e8 requests per frame.
+  P5  1406e0 with saved clocks (including values not divisible by 0x100) and 143c60
+      time-up scenarios for g+0 = 0xb / 0xc.
+  P6  145628 survival branch and the 138340 record update for wins / secs boundaries.
+  P7  1cd818 / 1ccf10 for the four (ec, mb) classes including mb = 2.

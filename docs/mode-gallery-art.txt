@@ -1,0 +1,204 @@
+GALLERY MODE drawing (SLPS-25559) - what src/gallery_art.* ports
+================================================================
+
+Scope: the submissions (queue 68c3c0 entries) of the gallery top menu 1d2380, the
+illustration viewer 13edf0, the sound test 13e0e8 with its lyrics overlay 13dc98,
+the ending selection 13f4a8, and the window library they share (17c210..17f090,
+1817f0..182600, 20ef38). Logic is in docs/mode-gallery.txt; this file only adds
+what the drawing needed and corrects that document where the binary differs.
+Everything below is OBSERVED in the disassembly and confirmed by
+work/ss6/validate_gallery_art.py unless marked otherwise.
+Colour words are AARRGGBB (the convention of src/menu_canvas.hpp).
+
+1. Frame order of the pages
+---------------------------
+Top menu 1d2380 (after the pad handling):
+    1ce570()                    background picture + overlay sprites
+    1ce660(0, 0, 0)             bands and button legend, THEN the counter advance
+    a = 1cf738()                content alpha after that advance
+    1d2620(a)                   title plate: banner record 8 (4c7660+8*18) at
+                                (6575e0, 6575e4, 6575e8) = (16, 28, -350)
+    1d26d0(row, a)              text depth = (int)114d88(657640 = -350); four
+                                10a460 rows at (0x44, 0x58 + 0x18*i), white, the
+                                cursor row (255, 0, 0)
+    1d27c8(row, a)              text depth = (int)114d88(657644 = -350); help
+                                text at (1ceb10 x, 0x198) when x < 0x280
+  The bands and the legend use the counters BEFORE the advance, the plate and the
+  texts the alpha AFTER it.  GalleryTopMenu::tick has already advanced them, so
+  drawGalleryTop takes the MenuChrome copied before tick().
+
+Sub-scenes (coroutines), per visit:
+    17c210()                    depth cursor = 0
+    ...logic...
+  illustration viewer, only while prev == 1 (full view):
+    1145c0(cx-h-3, cy-h-3, size+6, size+6, 40000000)   z = 17c228(base - 520)  [5e9aa8]
+    17eda0(id, size, cx-h, cy-h)                       z = 17c228(base - 700)  [5e9aac]
+    (h = size/2 toward zero; submitted BEFORE the background, the depth puts it
+     in front of the menu picture -49 and behind nothing but the guide bars and
+     the list, whose cursor depths are drawn later and therefore nearer)
+    hideUi && prev == 1 ? 1817f0(backdrop only) : 182600(guide); 20ef38(list)
+  sound test:
+    182600(guide); 20ef38(category); 20ef38(second); 20ef38(tracks); 13dc98(...)
+  ending selection:
+    182600(guide); 20ef38(list)     (nothing on the visit that returns the choice;
+                                     17c210 has already cleared the depth cursor on it)
+
+2. Depth
+--------
+17c228(z) = z - cursor; cursor += 0.1 [5f1f08].  EE single arithmetic (rounding
+toward zero) - the cursor accumulates 0.1 steps and the native port uses the
+ScalarFloat helpers for every add/sub.  Every library primitive calls
+17c228([4ee54c] - K); the result goes through 114d88 (queue depth
+10000000 - 100 z + tie counter) inside 1145c0/113f98.
+    K = 500  backdrop plane (kind 2)           [5f22b8]
+        520  viewer backing                    [5e9aa8]
+        700  soft bars of title/message/keys   [5f23ac, 5f3ef4, 5f2378], picture, lyric dim + bar
+        800  frame borders/fill, scroll bar, title sprite [5f1f10, 5f1f1c, 5f2058, 5f23b8]
+        900  text (17e228/17e428), icons, small font      [5f1ffc, 5f2018, 5f1fcc]
+       1000  lyric glyphs (13dc98 text depth)  [5e9990]
+    Text layer K is 1000 when word 4ee85c is set (17e1f0), else 520 when 4ee860
+    is set (17e200), else 900.  17e228 and 17e428 hold separate copies of the
+    three constants (5f1ff4.. and 5f2010..).  Icons inside 17e428 always use 900.
+
+3. Primitives
+-------------
+17eed8(x, y, z, w, h) soft bar: for i = 0..5, d = 3 - i, alpha = {10,20,40,80,a0,c0}[i]
+    X = (int)(x - d), Y = (int)(y - d), W = (int)(w + 2d), H = (int)(h + 2d)
+    i < 5: rect(X, Y, W, 1) rect(X, Y+H, W, 1) rect(X, Y+1, 1, H-1) rect(X+W, Y+1, 1, H-1)
+    i = 5: rect(X, Y, W+1, H+1)               all black, all at the caller's z.
+17c3d8(colour; x, y, w, h, t): four rectangles, each with its own 17c228(base-800):
+    left ((int)x, (int)y, (int)t, (int)h), top ((int)x, (int)y, (int)w, (int)t),
+    right ((int)(x+w-t), ..), bottom (.., (int)(y+h-t), ..).
+17c260 frame record: w = h = 1.0, border ff000000, line ffffffff, fill 80ffffff.
+17c2d0(F, focused): focused   fill c0101010 line ffffffff border ff000080 / ff800000 (seat 1)
+                    unfocused fill c0000000 line ffa0a0a0 border ff000060 / ff600000
+    (the unfocused branch first stores ff404040 and overwrites it).
+17c718(F, gutter): gutter > 0 (styles 0..2): rect((int)(x+w), (int)y, gutter, (int)h, border)
+    style 0: border ring 5; fill inset 5
+    style 1: ring(border, 0, 5) ring(line, +5, -10, 2) ring(border, +7, -14, 2); fill inset 9
+    style 2: ring(border,0,5) ring(line,+5,-10,5) ring(border,+10,-20,2) ring(line,+12,-24,1)
+             ring(border,+13,-26,1); fill inset 14
+    other  : fill only, no inset.
+    fill = rect((int)(x+n), (int)(y+n), (int)(w-2n), (int)(h-2n), fill colour).
+17f090(F2, count, visible, top, scale): rect(x+2, y+2, w-4, h-4, LINE colour F+20);
+    rect(x+4, y+4, w-8, h-8, ff000000); track = (int)(h-8);
+    thumb = max(track*visible*scale/count, 2); off = track - thumb;
+    if top+visible < count: o = track*top/count; if !(track < o+thumb) off = o;
+    if scale >= 2 and track < off+thumb: thumb = track - off;
+    rect((int)(x+6), (int)(y+4+off), (int)(w-12), thumb, LINE colour).
+    CORRECTION: mode-gallery.txt W.4 calls the F+20 colour "colour F2+0x20" without
+    naming it: it is the inner-line colour (white focused, a0a0a0 unfocused).
+17e228(text, x, y, mode): text depth = (int)114d88(base - K) (this consumes one
+    114d88 tie-break count), 113828(17c228(base - K)) (one cursor step, sets the
+    ASCII depth 3d3aac), then 1135e8 / 10a460 / 109f08 with the bytes of the colour
+    word 4ee548 (R = bits 16..23, G, B, alpha = bits 24..31), 113838 (3d3aac = -200),
+    text depth restored.
+17dc90 small font: 1142c8; 3db900 = colour word for the string; per character
+    c >= 0x20 (bytes above 7f included): sprite slot 1 at (x, y), 12 x 7 from
+    ((c-20)%30*17+2, (c-20)/30*17+2) span 14 x 15, z = 17c228(base-900); x += 10;
+    newline: x = start, y += 8.
+17df90(slot, rect; x, y, z): 1142c8 (additive latch off); 3db900 = ffffffff (left
+    so); 113f98 with the rectangle unscaled; returns rect.w.  3db8fc (blend) is
+    NOT written: the sprite uses whatever the previous submitter left.
+17e038(n): n = -1 or 5d -> 0; n = 2d with byte 43d0d6 == 0 -> 0; slot 2e for
+    n < 33, slot 5 otherwise (those 21 records, 4c9138.., lie on a 1024 sheet
+    another scene binds; not used by the gallery); table 4ee6b8 has 72 pointers.
+17e428(text, mode, plain; x, y) markup - as mode-gallery.txt W.6 with these additions:
+    * the routine sets the text depth with one 114d88 call at entry and restores
+      it at the end of the text, but NOT when it returns at a "CR" token;
+    * "MS" sets a skip flag only when byte 43d0d6 == 0; skipped units are still
+      scanned for "CR";
+    * a Shift-JIS unit draws 10a710(code, (int)x, (int)(y + 2.0)) in mode 1 and
+      10a1c0(code, (int)x, (int)y) otherwise; x += 20 / 24;
+    * " " calls 17e228(" ", ...) - nothing visible, but one 114d88 count and
+      one cursor step - then x += advance/2 and re-reads from the next BYTE;
+    * "EX": 17e228("EXIT", (int)(x+1), (int)(y+3)), x += 2*advance + 1, one byte;
+    * icon: z = 17c228(base - 900); w = 17e038(n; x + 1 + dx, y + dy);
+      x += w, then x += dx + 3.  "I1".."I9" 0..8, "IA".."IE" 9..d, "IW" e, "IH" f,
+      "IZ" 27, "G1".."G9" 10..18 (-1,-2), "L1"/"L2" 1f/20 (0,5), "R1"/"R2" 21/22
+      (0,5), "SC" 2d, "ST" 1e (3,2), "SL" 1d (3,4), "BO" 19 "BX" 1a "BT" 1c "BS" 1b
+      (2,3), "BP" 23 (2,1), "OR" 2a, "PL" 29;
+    * any other ASCII unit consumes one byte.
+17eda0(id, size; x, y, z): on id != [12d3854]: 1142d8(5, "gl_%02d.pvr"),
+    1163c0("gl_%02d.pvp") (512 bytes -> 256 colours), first colour = 0,
+    116478(0x300, 256, data), 10add8(5, 0x30).  Then 1142c8, 3db900 = ffffffff,
+    113f98(5; x, y, z, size, size, 0, 0, 1024.0 [5f2054], 1024.0).
+    CORRECTION (sampling): 113f98 normalises UV by the slot factor 5dd448[5] =
+    1/1024, and 108118 (10848c..108524) multiplies back by the texture size and
+    CLAMPS each coordinate to size - 1.  The quad therefore reaches the queue with
+    UV (0,0)..(1023,1023), not 1024: across `size` pixels the texel under pixel i is
+    floor((2i+1)*1023 / (2*size)).  MenuCanvas::sprite does not model this clamp
+    (no other menu sprite touches the far edge of its sheet); GalleryArt::picture
+    applies it to the record it has just emitted.
+    The colour is not faded by 117288 beyond the usual 113f98 path; the CLUT is
+    interpolated by 116588 like every 16-bit palette (validated at three fade
+    states).
+
+4. Widgets
+----------
+20ef38(W): nothing when W+14 (shown) == 0.  Frame style 1 at the panel position,
+    size (W+0, W+4), gutter 10 when visible < count.  Rows r < min(count, visible):
+    17db38(active, top+r == cursor) is called for EVERY row (also for a null
+    item), then for a non-null item
+        large  (bit 16): 17e228(text, (int)(P.x+14.0), (int)(P.y+14.0) + 21 r, 1)
+        medium (bit 15): 17e228(text, same x, same y + 17 r, 0)
+        small          : 17db70((int)(P.x+12.0), (int)(P.y+12.0) + 9 r, "%s", text)
+    then the scroll bar when visible < count: frame record tinted like the
+    list, x = P.x + width - 9, y = P.y + 3, w = 14.0 [664864], h = height - 6;
+    17f090(F2, count, visible, top, 1).
+1817f0 backdrop: kind -1 nothing; 17ea48() == 0 -> 109de8() (not ported: the
+    battle scene stays behind the window); kind 0 1ce628(); kind 1 1ce570();
+    kind 2 rect(0, 0, 0x280, 0x1c0, ff000040) at 17c228(base - 500).
+181e88 title: skipped when layout == -1.  17eed8(P.x, P.y, z700, 640, 48); 17df90(2e,
+    4c7660[titleRect]; P.x + 0x10, P.y + 0xc, z800).  The optional text word B+4c
+    (17e428 mode 2 at P.x + 0x168, P.y + 0x24) is never set by the gallery.
+182118 message: skipped when layout == -1.  17eed8(P.x, P.y, z700, 640, 48); colour
+    ffffffff; 17e428(text, 1, 0; P.x + 0x10, P.y + 0xc).  The text pointer is
+    never null after 182010 (an absent key gives ""), so 17e428 always runs and
+    always consumes its 114d88 count.
+181c30 keys / extra: skipped when layout == -1, or layout == 0 in game mode 0x11.
+    17eed8(P.x, P.y, z700, w, h); when the text pointer is set: colour ffffffff;
+    17e428(text, 1, 0; P.x + dx, P.y + dy).
+    All bars are drawn wherever their panel is; 1145c0 culls what is off screen.
+
+5. Lyrics overlay 13dc98(set, counter, alpha)
+---------------------------------------------
+    text depth = (int)114d88(base - 1000)          on EVERY visit
+    alpha == 0, or set not 0/1: return WITHOUT restoring the text depth word
+        (348a8c keeps the lyric layer value until the next writer; every text
+         routine sets its own, so nothing visible depends on it).
+    1145c0(0, 0, 0x280, 0x1c0, ((alpha/8) << 24) + ffffff), z = 17c228(base - 700)
+    glyphs: 10a710(code, x, y, r, g, b, alpha) as mode-gallery.txt A.5.6
+    alpha > 0: colour word = ffffffff; z = 17c228(base - 700);
+        17eed8(440.0, (float)(0xff - alpha + 0x188), z, 172.0, 30.0);
+        17e428("BOBXBTBS戻る", 1, 0; 460.0, (float)(0xff - alpha + 0x18c))
+    text depth restored.
+
+6. Pictures
+-----------
+gl_00..gl_54 are members of SAM_DATA.BIN (archive table in the ELF,
+work/ss6/extract_resources.py): gl_NN.tex = 1,048,576 bytes, the 1024x1024 8-bit
+index plane, and gl_NN.pal = 512 bytes, 256 colours A1B5G5R5 as the menu
+background uses them (bit 15 = opaque; red in bits 10..14 of the word as stored;
+MenuCanvas::rebuildPalettes convention).  The game asks for "gl_%02d.pvr" /
+"gl_%02d.pvp"; the loader maps those names onto the .tex/.pal members.
+Image id = character id 0..48 for a character row, 49..54 for the six fixed rows.
+
+7. Not ported / not verified here
+---------------------------------
+  * 109de8 (backdrop of the guide window when a battle scene is behind it).
+  * Icons 33..47 (slot 5 edit sheet) - the table is extracted, the sheet is not
+    bound by this module.
+  * GS rasterisation itself: frames are compared against the reference painter of
+    validate_menu_canvas.py (pixel-centre sampling of the queue quads), not
+    against a GS model.  Scaled-picture filtering on hardware is NOT verified.
+  * 1252f0 scene fade while a gallery scene leaves (the logic modules do not
+    model it either).
+
+8. Validation (work/ss6/validate_gallery_art.py, 2026-11-21)
+------------------------------------------------------------
+30 original/native traces: 15,221 identical primitive lists, 9,540 identical
+640x480 frames, 2,660,061 original queue entries, all 55 pictures drawn,
+3,985,396,769 original instructions.  Report:
+outputs/ss6-feasibility/gallery_art_validation.json (its "scope" string lists
+every boundary that is not executed).

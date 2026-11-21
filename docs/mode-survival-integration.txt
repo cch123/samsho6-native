@@ -1,0 +1,117 @@
+SURVIVAL MODE -- native integration status and corrections to docs/mode-survival.txt
+===================================================================================
+
+Scope: how the validated logic of src/survival_run.* is wired into the playable game
+(src/native_match_survival.cpp, src/survival_session.hpp, src/local_versus.cpp and the
+battle-side branches), what was read from the executable for that wiring, and what is a
+placeholder or a fallback. Addresses are hexadecimal EE addresses of SLPS-25559.
+OBSERVED = read from the disassembly during this work; [V] = also executed in Probe by
+work/ss6/validate_survival_battle.py.
+
+1. Session flow (native)
+------------------------
+  title mode menu, SURVIVAL row            NativeMatch::tick -> openSurvivalSelect(seat)
+        |   1cd494: mode word b/c, sub-mode 4      (row listed with byte 43d0d6; viewer option
+        v                                           --unlock-modes yes)
+  single-seat character select             CharacterSelect::configure(b/c): no spirit page
+        |
+        v
+  LocalVersus::startSurvival               139660: 180510 (first candidates), 17ac98, 1398c0,
+        |                                  13f9f0(1) -> hidden placeholder fight
+        v
+  NativeMatch::tickSurvival  (one iteration of 138f48: battleFrame, 145628, 180630)
+        |-- confirm -> state 5 -> 13a6c0 -> LocalVersus::startSurvivalFight (next opponent)
+        |-- human won, fewer than 49 -> 180e28 -> states 2/3/4 -> next candidate window
+        +-- human lost / draw / unported opponent -> LocalVersus::endSurvival
+                 record 1384f8 -> GAME OVER (arcade scene and drawing) -> title
+
+  In-place reload. The original keeps one battle scene and reloads the arena and both
+  actors behind the black rectangle (13a6c0, then 1a4a98 and 13f9f0(1) on the next two
+  frames of 138f48). NativeMatch owns its fighter banks for its whole life, so the native
+  side constructs a new NativeMatch per opponent (the path ARCADE uses). What the original
+  carries is carried explicitly:
+    controller, charaTable, configuration, setup, pause request   SurvivalSession (shared)
+    process RNG (both streams)                                    MatchRules::random
+    human life / round clock                                      180e98 / 180ec8 in 13fd80
+    arena animation clocks, sound state, save image               NativeMatch rematch path
+  Frame schedule after the controller reports the reload on frame A (delay 4):
+    A    13a6c0: tag fa1 released (NativeMatch::survivalReleaseStage)
+    A+1  old scene, held (original: 1a4a98 arena load)
+    A+2  new NativeMatch constructed before the frame (original: 13f9f0(1)), held
+    A+3, A+4 held; A+5 first frame with 140270, controller entry of state 0
+  Difference from the original: on frame A+1 the old arena and fighters are still the
+  ones dispatched and drawn (hidden by fade ff), and the priority-5 gauge task of the old
+  fight is not dispatched on A+2. Neither draws from the game RNG while the pause is on.
+  The charaTable (history rows and the last confirmed candidate) is kept by LocalVersus
+  between runs, so the placeholder fight of a later run is built from the previous run's
+  last candidate exactly as 1398c0 does.
+
+2. Corrections and additions to the static specification (all OBSERVED)
+----------------------------------------------------------------------
+  a. [V] 140930 divides the loaded value by 8 only when 11f450(100,-1) != 100 AND the
+     timer index is 5 or 6 (140960 `addiu s0,s0,-5; sltiu s0,s0,2`). The round clock
+     (timer 0) is never divided; src/battle_round.cpp used the pause divisor for timer 0,
+     which only mattered once 13fd80 could run under a pause (the survival reload).
+  b. [V] 14ea68(stage) = word [4d5a20 + 14*stage] for stage < c, else ff: the arena's
+     own throwable, the same row byte StageItemSchedule::roll returns for group kind 4.
+  c. [V] U1 of the specification: actor+248 bits 17..22 are set in 1576e8 (already ported
+     in src/finishing_blow.cpp); bit 23 is set at 15787c when 14eb78(actor+10c) returns a
+     record whose word 0 (actor+13c, the system-effect state) is 3. Added as the
+     `concentration` argument of recordContactFinish / recordScriptFinish.
+  d. U2: the event bytes actor+f22..f2a. Native producers:
+       f22 1498d0 (survival only, max combo)   NativeMatch::visitActor               [V slice]
+       f23 174880 taunt / weapon discard        src/weapon_handling.cpp (existing)
+       f24 174830                               src/ground_state.cpp (existing)
+       f25 14da88 kind-9 decoy struck           NativeMatch::strikeMikiri (existing)
+       f26 154f74, 171374 deflection            src/weapon_deflection.cpp (existing)
+       f27 155c94 counter hit by a body         NativeMatch::resolveStrike            [V slice]
+       f28 156ca4 thrown item hit               NativeMatch::resolveStrike (existing)
+       f29 15581c item deflected                NativeMatch::resolveContacts (existing)
+       f2a 17511c air guard                     src/jump_motion.cpp (existing)
+     155c78 also calls 140a48(seat) = record+0 := 1; that word has no native field.
+  e. [V] 13fddc..13fe30: every 13fd80 in survival clears battle+18 and both win counters
+     (record+28) before the introduction decision; 13ffa0..13ffe0 writes 180e98() into
+     actor+a30 of every actor with actor+a20 == 0 when it is not -1.
+  f. [V] 158850: the level-8 rule of characters 21 / 30 is skipped in survival.
+  g. 1434a0: 145d98 (sound stop of the state-10 entry) is skipped in survival.
+  h. 143f84..143fd4: the perfect flag of a time-up is computed from the life leader
+     before the survival override of the winner seat.
+
+3. Native fallbacks (surfaced as a notice line, like LocalVersus::arcadeNotice)
+------------------------------------------------------------------------------
+  Arena without a port (CombatStageState::supports false)   fight held on arena 0; the
+                                                            candidate's stage id still goes
+                                                            to the history (180e28)
+  Human spirit 7 dictated by a candidate (RNG(7) >= 6)      fight runs with spirit 0
+  Opponent 2b (the 49th fight) has no fighter port          the run ends through GAME OVER
+                                                            with the wins reached
+  A move without a port (UnportedFighterState)              the run ends through GAME OVER
+  The placeholder fight of 139660 substitutes fighter 0 / spirit 0 silently when the
+  stale candidate is not playable: it is never fought.
+
+4. Placeholders and omissions
+-----------------------------
+  Candidate window 211e18, message window 182600, panel 1810f8 and the defeated count of
+  the HUD header 1bb2c8: text rows through the viewer's sessionOverlay
+  (NativeMatch::survivalOverlay) with provisional English labels. The black rectangle of
+  1806e4 is drawn by the viewer from NativeMatch::survivalFade over the whole window.
+  Pause menu 1d9b50 in survival (sub-mode 4 exits): not opened.
+  EX versions (config+2c, record rows 31..34): the select does not model the held bit.
+  HUD re-initialisation 1bc1c0 / 1be450 from the carried life: the native life bar starts
+  from its ordinary reset.
+  Winner display of a cleared run in Task_GameOver (138400): not ported; unreachable while
+  opponent 2b has no port.
+  1e3fd0 session flags are computed (SurvivalSession::flags) but the unlock announcement
+  scene that consumes them is not part of this integration.
+  Total play time gs+90 (139778) is not accumulated.
+
+5. Validation
+-------------
+  work/ss6/validate_survival_battle.py   Probe: whole 140930, whole 1406e0 (survival), whole
+                                         144f40 against StageItemSchedule::next, whole 158830,
+                                         whole 1575d0/1413d8 -> 1576e8 with the system state
+                                         varied, slices 13ff90, 1498d0, 155c80
+  work/ss6/validate_survival_session.py  replay-driven session from the title: both seats,
+                                         three opponents with carry-over, rewards, the item
+                                         period, a loss, the record, a second run
+  work/ss6/validate_survival_run.py      unchanged logic validator of src/survival_run.*

@@ -14,8 +14,12 @@ int projectileFinishCategory(const AuxiliaryObject&,const StateEntryActor& owner
 // Sample counter status before changing
 // the target's state or increasing the source's per-combo hit counter.
 bool isCounterContact(const StateEntryActor& target,const PlayerMatchStats& sourceStats,const ContactEvent&);
+// `concentration`: 14eb78(source) exists and its state word (actor+13c) is 3 at the
+// lethal request; 15787c then sets flags248 bit 23 (survival mission b).
 void recordContactFinish(StateEntryActor& source,const StateEntryActor& target,PlayerMatchStats& sourceStats,
-                         const ContactEvent&,bool projectile,bool guarded,bool counter,const InputBindings&,int projectileCategory=10);
+                         const ContactEvent&,bool projectile,bool guarded,bool counter,const InputBindings&,int projectileCategory=10,
+                         bool concentration=false);
 void recordScriptFinish(StateEntryActor& source,const StateEntryActor& target,PlayerMatchStats& sourceStats,
-                        bool projectile,bool captureDamage,const InputBindings&,int projectileCategory=10);
+                        bool projectile,bool captureDamage,const InputBindings&,int projectileCategory=10,
+                        bool concentration=false);
 }

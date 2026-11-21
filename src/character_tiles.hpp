@@ -1,6 +1,7 @@
 #pragma once
 #include "character_draw.hpp"
 #include "scheduled_opening.hpp"
+#include "color_edit.hpp"
 #include <span>
 
 namespace ss6 {
@@ -14,8 +15,19 @@ public:
     int resolve(uint32_t key,unsigned bank,EffectPalettes&);
     void colorize(uint32_t flags,uint32_t fadeColor,uint32_t fadeAmount,std::span<const uint16_t,1024> tones);
     const std::vector<uint8_t>& source() const {return source_;}
+    // 115f08 clears the first colour of a group in its source table, so the arena is mutable.
+    std::vector<uint8_t>& mutableSource() {return source_;}
+    // Sources of 115d40 for keys with an owner bit (10000 / 20000): the edit
+    // block of the save image and, with 40000, the runtime tables 3ec740 /
+    // 3f28c0. Unbound, such keys are rejected.
+    void bindEdited(const ColorEditTables* tables,SystemData* data,std::array<std::span<uint8_t>,2> runtime) {
+        editTables_=tables;editData_=data;runtime_=runtime;
+    }
 private:
     std::vector<uint8_t> source_;
+    const ColorEditTables* editTables_=nullptr;
+    SystemData* editData_=nullptr;
+    std::array<std::span<uint8_t>,2> runtime_{};
 };
 struct CharacterTileQuad {
     //Four original108910 vertices: x,y,z,u,v,color. The rotated layout

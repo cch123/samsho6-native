@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "round_initialization.hpp"
 #include "input_features.hpp"
 #include "stage_camera.hpp"
@@ -11,6 +12,7 @@
 #include "versus_result.hpp"
 #include "console_versus_menu.hpp"
 #include "round_rules.hpp"
+#include "practice_mode.hpp"
 #include <vector>
 
 namespace ss6 {
@@ -50,6 +52,35 @@ struct BattleRoundState {
     int32_t requestedState=0,currentState=0,field08=-1,field0c=-1;
     uint32_t flags138=0,field140=0,phase130=0;
     int32_t gameMode=3,timeOption13c=3;
+    // 123a0c0 (139280): 0 normal, 1 practice, 2 survival. Most battle sites
+    // test this byte through 139388/1393a0 instead of the mode word.
+    int32_t battleKind123a0c0=0;
+    // Option byte 43d061 (DAMAGE LEVEL) and 43d05c (GAME LEVEL).
+    int32_t damagePercent43d061=100,gameLevel43d05c=4;
+    bool practice() const {return battleKind123a0c0==1;}          // 139388
+    // Practice settings and the replay/recording words (13738a0.., 123a0d8/dc);
+    // owned by the session, set only while battleKind123a0c0 is 1.
+    const PracticeState* practiceRules=nullptr;
+    // 14a934: 139588 receives the unscaled amount queued for the dummy seat.
+    std::function<void(const StateEntryActor&,int32_t)> practiceDamage;
+    bool survival() const {return battleKind123a0c0==2;}          // 1393a0
+    // 180e98 / 180ec8: the human's life and the round clock (battle+114) saved by the
+    // survival controller before 13a6c0, or -1 before the first win.
+    int32_t survivalLife=-1,survivalClock=-1;
+    bool networkSubmode() const {return matchEnd.submodeA0==5||matchEnd.submodeA0==6;} // 139408
+    bool fixedRules() const {return survival()||practice()||networkSubmode();}        // 139430
+    // 13fd80: the demo, practice and survival skip the character introduction.
+    bool skipsIntroduction() const {return gameMode==0||practice()||survival();}
+    // The seat whose arcade run this fight belongs to, or -1.
+    int arcadeSeat() const {return gameMode==1?0:gameMode==2?1:-1;}
+    // State 9 (1447c0 / 144848): the arcade round tally task 1c7f08, owned
+    // by the scene. tallyUpdate returns 1c87f0 (done).
+    std::function<void()> tallyEnter,tallyLeave;
+    std::function<bool()> tallyUpdate;
+    // 143d6c: rounds the arcade seat won with a qualifying finish (17a718),
+    // and whether state 10 reached 145628 outside the VS menu.
+    int32_t arcadeQualifyingWins=0;
+    bool modeMatchEnded=false;
     // In local versus one displayed count spans 90 normal battle updates.
     static constexpr std::array<int,4> roundTimeLimits{60,90,99,0};
     int remainingSeconds() const;
@@ -59,6 +90,14 @@ struct BattleRoundState {
     StageItemDelivery stageItems;
     StageItemNotices itemNotices;
 };
+// 140930 loads a battle timer through 143228 with divisor 8 only while 11f450(100,-1)
+// is not 100 (global pause) and only for timers 5 and 6 (140960: index - 5 < 2).
+inline int32_t battleTimerDivisor(unsigned index,bool paused) {return paused&&index-5<2?8:1;}
+// 13ffa0..13ffe0: the life saved by the survival controller (180e98, -1: none)
+// replaces the round-start life of a human-controlled actor (actor+a20 == 0).
+inline int32_t survivalRoundLife(int32_t roundLife,uint32_t controlKind,int32_t carried) {
+    return carried!=-1&&controlKind==0?carried:roundLife;
+}
 struct RoundPlayerRef {
     PlayerObject& body;
     StateEntryActor& actor;

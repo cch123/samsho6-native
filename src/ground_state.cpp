@@ -454,6 +454,7 @@ DownedEvents GroundStateRuntime::downedCallback(PlayerObject& o,StateEntryActor&
         }
         DownedInput controls;controls.system=config;controls.character=a.character;
         controls.controlKind=a.controlKindA20;controls.opponentX=frame.opponentX;
+        controls.training=frame.training;controls.trainingAction=frame.trainingAction;controls.trainingRecovery=frame.trainingRecovery;
         // 1720b0 reads the published features for either control type. A CPU
         // recovery uses its command from this actor visit, including BACK.
         controls.pressRecovery=input.sampledFeatures[0x28/4];
@@ -887,7 +888,7 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             (a.contactKind252>8||!frame.battle||!frame.weaponLock))
         throw std::runtime_error("Elemental damage requires its full callback path");
     if(table==2&&((a.flags23c&0x80)||state==7||state==16||state==30||state==31||KnockdownPlayback::supportsFall(state))&&
-            (!frame.effects||!frame.random||frame.training))
+            (!frame.effects||!frame.random))
         throw std::runtime_error("Ordinary downed/KO callbacks require battle effects and random state");
     captureBody(o,a);a.flags248&=~0x20u;
     entries_.transition(a,input,config,context);
@@ -941,6 +942,7 @@ DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorC
             // 149f00 ends the opponent's combo when this recipient leaves
             // the set of hit reactions that preserve contact history.
             if(frame.opponentStats)frame.opponentStats->hitCount0c=0;
+            if(frame.comboEnded)frame.comboEnded();
         }
         restoreBody(o,a);
     }

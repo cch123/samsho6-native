@@ -125,7 +125,7 @@ class Display:
         subprocess.run([self.viewer,'--assets',self.assets,'--mode',mode,'--match-replay',replay,'--snapshot',out],
                        env=DUMMY,capture_output=True,check=True)
         actual=np.asarray(Image.open(out).convert('RGBA'))
-        original,_,_=original_frame(self.p,self.tex,menu,first,0,0,0,0,prompt,level,white,self.cache)
+        original,_,_=original_frame(self.p,self.tex,menu,first,0,0,0,0,prompt,level,white,cache=self.cache)
         scale=actual.shape[0]//480
         assert actual.shape==(480*scale,640*scale,4)
         wanted=np.repeat(np.repeat(original,scale,axis=0),scale,axis=1)

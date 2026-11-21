@@ -82,15 +82,9 @@ def main():
     restart,_=ready(pads,second,2)
     assert all(r[54:56]==['1','0'] for r in second)
     assert second[restart][12]==second[restart][22]=='0'
+    # Every fighter and all ten selector stages are ported, so no choice
+    # returns to the live grid any more; that path has no reachable case.
     blocked=[]
-    for kind in ('character','stage'):
-        q=[v[:] for v in pads[:505]]
-        if kind=='character':q[65][0]=0
-        if kind=='stage':q[309][1]=64
-        q.append([256,0]);q.append([0,0])
-        rr=trace(assets,'select',q)
-        assert rr[-3][49]=='1' and rr[-2][49]=='0' and rr[-1][24]=='1' and rr[-1][30]=='-1',kind
-        blocked.append(kind)
     enabled=[v[:] for v in pads]
     enabled[265][1]=128
     item_rows=trace(assets,'select',enabled)

@@ -126,6 +126,13 @@ def play(binary,assets,dump):
     L.idle(2000);L.tap(START,0,4)
     L.until(lambda r:scene(r)=='-1',limit=400,what='title')
     L.idle(30)
+    # The title must accept input again: 1e6130 runs 124d50, so the arcade mode
+    # word is gone and START + confirm reaches a new character select.
+    marks['title']=L.title_mark=len(L.rows)
+    L.idle(32);L.tap(START,0,15);L.tap(HEAVY,0,40)
+    L.until(lambda r:len(r)>26 and r[26]=='1',limit=600,what='character select after title')
+    L.until(lambda r:scene(r)!='-1',limit=600,pad=press,what='new arcade run after title')
+    L.idle(10)
     tail=L.close()
     log=[]
     for line in tail.splitlines():
@@ -299,9 +306,12 @@ def compile_driver(build,work):
 
 def reference(exe,assets,L,log):
     """Replays every presentation scene instance through the driver; returns (frames, mismatches)."""
-    rows,pads=L.rows,L.pads
+    # Only the first run: the second run after the title exists to prove the title accepts input.
+    cut=getattr(L,'title_mark',len(L.rows))
+    rows,pads=L.rows[:cut],L.pads[:cut]
+    count=max(int(r[LOGSIZE]) for r in rows if len(r)>LOGSIZE)
     entries=[]   # (log index, first row)
-    for i,e in enumerate(log):
+    for i,e in enumerate(log[:count]):
         if e['scene'] not in PRESENTED:continue
         first=next(k for k,r in enumerate(rows) if len(r)>LOGSIZE and int(r[LOGSIZE])>i)
         entries.append((i,first))
@@ -376,9 +386,12 @@ def main():
         names={v:k for k,v in S.items()}
         order=[names.get(s,s) for s,_,_ in seq]
         assert order[:5]==['select','opening','map','walkin','battle'],order
-        assert order[-5:]==['ending','gameover','unlock','ranking','title'],order
-        # The run ends at the title (the arcade session is gone).
-        assert rows[-1][SCENE]=='-1'
+        k=len(order)-1-order[::-1].index('ending')
+        assert order[k:k+5]==['ending','gameover','unlock','ranking','title'] and order[k+5:k+6]==['select'],order
+        # 124d50 at the arcade exit: the title starts from a cleared mode word (column 24
+        # without a session) and its menu reaches a second run.
+        t=[r for r in rows[marks['title']:] if scene(r)=='-1']
+        assert t and t[0][24]=='3','124d50 must clear the arcade mode word: '+t[0][24]
         # 2. State hand-over.
         res=[k for k,r in enumerate(rows) if scene(r)==S['result']]
         rows=[r for r in rows]

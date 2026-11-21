@@ -189,12 +189,13 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
         const auto system=match_->systemHandle();
         if(arcade_->presentation)arcadeLog_.insert(arcadeLog_.end(),arcade_->presentation->log.begin(),arcade_->presentation->log.end());
         arcade_.reset();
-        // 124d50 after a survival run: the mode word, the sub-mode and the battle kind
-        // of the last fight must not reach the title's battle block.
+        // 124d50 clears g_GameData on every exit to the title: the survival Game Over,
+        // the arcade credits destructor 1e6130 and the attract destructor 138a48. The
+        // last fight's mode word, sub-mode and battle kind must not reach the title.
         MatchRules rules;
-        const bool survival=std::exchange(survivalOver_,false);
+        survivalOver_=false;
         auto title=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,match_.get(),spirits_,std::nullopt,0,
-                                                 std::array<CpuSeatDecision,2>{},survival?&rules:nullptr);
+                                                 std::array<CpuSeatDecision,2>{},&rules);
         title->openTitle(false);
         match_=std::move(title);
     }

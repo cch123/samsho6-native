@@ -7,6 +7,7 @@
 #include "contact_trial.hpp"
 #include "trial_script.hpp"
 #include "local_versus.hpp"
+#include "arcade_art.hpp"
 #include "fighter_roster.hpp"
 #include "character_select_art.hpp"
 #include "console_title_art.hpp"
@@ -801,8 +802,37 @@ class VersusScreen {
         }
         check(SDL_RenderPresent(r));
     }
-    std::vector<uint8_t> menuPixels_;
+    std::vector<uint8_t> menuPixels_,overlayPixels_;
+    std::optional<ss6::MenuCanvas> overlayCanvas_;
+    std::optional<ss6::ArcadeArt> arcadeArt_;
+    std::optional<ss6::ArcadeTallyTables> overlayTables_;
+    ss6::MenuDrawList overlayList_;
+    ss6::FreeSeatPrompt freeSeatPrompt_;
+    void arcadeOverlay(const ss6::NativeMatch& match,const ss6::ArcadeSession& arcade,bool scene) {
+        if(!overlayCanvas_){overlayCanvas_.emplace(assets_);arcadeArt_.emplace(assets_);overlayTables_.emplace(assets_);}
+        auto& canvas=*overlayCanvas_;auto& list=overlayList_;
+        canvas.setBrightness(match.system().brightness());
+        overlayPixels_.assign(640*480*4,0);
+        for(size_t i=3;i<overlayPixels_.size();i+=4)overlayPixels_[i]=255;
+        list.beginFrame();
+        const auto& run=arcade.run;
+        if(scene) {
+            if(arcade.scene==ss6::ArcadeScene::Continue)
+                ss6::drawArcadeContinue(canvas,list,arcadeArt_->tables(),arcade.continueScene.draw);
+            else ss6::drawArcadeGameOver(canvas,list,arcadeArt_->tables(),arcade.gameOver.draw,run.game.levelEnding!=0);
+        } else {
+            std::copy_n(frame_.rgba.begin(),std::min(frame_.rgba.size(),overlayPixels_.size()),overlayPixels_.begin());
+            const auto& b=match.battle();
+            const bool latched=b.matchEnd.continue2c==1||(match.pauseMenu()&&match.pauseMenu()->active);
+            ss6::drawArcadeScore(canvas,list,*overlayTables_,arcadeArt_->tables(),b.gameMode,b.matchEnd.submodeA0,match.arcadeScore());
+            ss6::drawFreeSeatPrompt(canvas,list,*overlayTables_,freeSeatPrompt_,b.gameMode,b.matchEnd.submodeA0,true,latched);
+            if(match.arcadeTally().active())ss6::drawArcadeTally(canvas,list,*overlayTables_,match.arcadeTally().draw);
+        }
+        arcadeArt_->rasterise(canvas,list,overlayPixels_);
+        for(size_t i=3;i<overlayPixels_.size();i+=4)overlayPixels_[i]=255;
+    }
 public:
+    const ss6::LocalVersus* session=nullptr;
     std::vector<std::string> overlay;
 private:
     static void paintJudgments(SDL_Renderer* r,const ss6::NativeMatch& match) {
@@ -957,6 +987,16 @@ public:
             present(r,result,paused);
             return;
         }
+        const auto* arcade=session?session->arcade():nullptr;
+        if(arcade&&(arcade->scene==ss6::ArcadeScene::Continue||arcade->scene==ss6::ArcadeScene::GameOver)) {
+            // Task_Continue / Task_GameOver. The stage picture and the
+            // loser's fighter object behind the art are not drawn yet.
+            arcadeOverlay(match,*arcade,true);
+            check(SDL_UpdateTexture(texture,nullptr,overlayPixels_.data(),640*4));
+            check(SDL_RenderTexture(r,texture,nullptr,nullptr));
+            present(r,{},paused);
+            return;
+        }
         paint(match,{},true);
         if(match.mikiriWhiteFrame()) {
             color(r,255,255,255);check(SDL_RenderClear(r));check(SDL_RenderPresent(r));return;
@@ -976,6 +1016,12 @@ public:
             present(r,result,paused);return;
         }
         const SDL_Rect arenaPixels{0,0,frame_.width,frame_.height};
+        if(arcade&&match.arcadeTables()&&frame_.width==640) {
+            // Score, the free seat's PRESS START legend and the round tally
+            // are composed over the finished arena and HUD.
+            arcadeOverlay(match,*arcade,false);
+            check(SDL_UpdateTexture(texture,&arenaPixels,overlayPixels_.data(),640*4));
+        } else
         check(SDL_UpdateTexture(texture,&arenaPixels,frame_.rgba.data(),frame_.width*4));
         color(r,23,26,29);check(SDL_RenderClear(r));
         SDL_FRect stage{0,0,640,448};check(SDL_RenderTexture(r,texture,&stage,&stage));
@@ -1015,15 +1061,6 @@ std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
     const auto* arcade=session.arcade();
     if(!arcade)return lines;
     if(!session.arcadeNotice().empty())lines.push_back(session.arcadeNotice());
-    if(arcade->scene==ss6::ArcadeScene::Battle) {
-        const auto& tally=match.arcadeTally();
-        std::string line="ARCADE STAGE "+std::to_string(arcade->run.players[arcade->run.humanSeat()].stageIndex+1)+"  SCORE "+std::to_string(match.arcadeScore());
-        if(tally.active())line+="  FINISH "+std::to_string(tally.draw.finish)+" TIME "+std::to_string(tally.draw.time)+
-            " LIFE "+std::to_string(tally.draw.life)+" TOTAL "+std::to_string(tally.draw.total);
-        lines.push_back(line);
-    } else if(arcade->scene==ss6::ArcadeScene::Continue) {
-        lines.push_back("CONTINUE?  "+std::to_string(arcade->continueScene.draw.seconds)+"   PRESS START");
-    } else if(arcade->scene==ss6::ArcadeScene::GameOver)lines.push_back("GAME OVER");
     return lines;
 }
 
@@ -1116,7 +1153,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
     if(!texture)throw std::runtime_error(SDL_GetError());
     check(SDL_SetTextureScaleMode(texture.get(),SDL_SCALEMODE_NEAREST));
     if(canvas) {
-        screen->overlay=sessionOverlay(session);
+        screen->overlay=sessionOverlay(session);screen->session=&session;
         screen->show(renderer.get(),texture.get(),session.match(),false,boxes);
         check(SDL_SaveBMP(canvas.get(),snapshot.string().c_str()));return 0;
     }
@@ -1157,7 +1194,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
         // The original display advances at the battle cadence. Poll input
         // between ticks without rasterizing the same arena several times.
         if(running&&(redraw||smoke)){
-            screen->overlay=sessionOverlay(session);
+            screen->overlay=sessionOverlay(session);screen->session=&session;
             screen->show(renderer.get(),texture.get(),session.match(),paused,boxes);
             redraw=false;
             if(smoke&&++shown>=smoke)running=false;

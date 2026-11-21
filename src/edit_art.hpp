@@ -217,31 +217,38 @@ std::array<EditPreviewObject,3> drawColorEdit(const EditArt& art,MenuDrawList& l
                                               const ColorEditTables& tables,const EditFrame& frame,
                                               const EditWidgetAssets& widgets,unsigned seat,bool option7e=true);
 
-// 115d40 with the 24-entry cache 439a48/439aa8/439b08 over the save image.
-// Unlike StandaloneEditPaletteCache it reproduces the reference ageing of
-// 1159d0/115a60, so its rows are the rows the original draw path binds.
+// 115d40 for every palette key, including the owner bits 10000 / 20000 that
+// select an edited table, over the 24-entry cache 439a48 / 439aa8 / 439b08
+// and the CLUT store 43ab70. It can own that state or be bound to the fighter
+// renderer's (EffectPalettes and CharacterPaletteBank::raw16 / format), so
+// that the rows COLOR EDIT pokes are the rows the preview sprite samples.
 class EditPaletteBank final:public EditPaletteCache {
 public:
-    // palAll: pal_all.bin; runtime copies 3ec740 / 3f28c0 and the network
-    // buffers 1232c80 / 1232ce0 are optional spans owned by the caller.
-    EditPaletteBank(const ColorEditTables& tables,SystemData& data,std::span<const uint8_t> palAll);
-    void setRuntime(unsigned side,std::span<const uint8_t> table) {runtime_[side&1]=table;}
-    void setNetwork(unsigned side,std::span<const uint8_t> banks) {network_[side&1]=banks;}
+    using Words=std::array<std::array<uint32_t,24>,3>;   // identity, reference, busy (= EffectPalettes)
+    // palAll is the resident pal_all.bin arena; 115f08 clears the first
+    // colour of a group in its SOURCE table, so every table is mutable.
+    EditPaletteBank(const ColorEditTables& tables,SystemData& data,std::span<uint8_t> palAll);
+    EditPaletteBank(const ColorEditTables& tables,SystemData& data,std::span<uint8_t> palAll,Words& words,
+                    std::span<uint16_t,1024> raw16,std::span<uint32_t,1024> format);
+    void setRuntime(unsigned side,std::span<uint8_t> table) {runtime_[side&1]=table;}  // 3ec740 / 3f28c0, 6180 bytes
+    void setNetwork(unsigned side,std::span<uint8_t> banks) {network_[side&1]=banks;}  // 1232c80 / 1232ce0, 60 bytes
     void reset() override;                                         // 1159d0
-    int resolve(uint32_t key,int bank) override;                   // 115d40: CLUT row 5dd5c8[slot], or -1
-    void poke(int row,unsigned entry,uint16_t colour) override;    // 43ab70[slot*16 + entry]
-    // Sixteen A1B5G5R5 colours of a row returned by resolve.
-    std::span<const uint16_t,16> colours(int row) const;
-    // The same colours as the 32-bit RGBA values 116478 uploads for a
-    // 16-colour bank (alpha 80 when bit 15 is set, entry 0 transparent).
-    std::array<uint32_t,16> rgba(int row) const;
-    int slotOf(int row) const;                                     // inverse of 5dd5c8
-    std::array<uint32_t,24> identity{},reference{},busy{};         // 439a48, 439aa8, 439b08
-    std::array<uint16_t,24*16> cache{};                            // 43ab70
+    void beginFrame() {words_->at(1).fill(0);}                     // 113aa8: reference words age every frame
+    int resolve(uint32_t key,int bank) override;                   // 115d40: CLUT row 5dd5c8[entry], or -1
+    void poke(int row,unsigned entry,uint16_t colour) override;    // 43ab70[row*16 + entry]
+    std::span<const uint16_t,16> colours(int row) const;           // A1B5G5R5 as uploaded by 116478
+    const Words& words() const {return *words_;}
+    std::span<const uint16_t,1024> store() const {return raw16_;}
 private:
     const ColorEditTables& tables_;
     SystemData& data_;
-    std::span<const uint8_t> palAll_;
-    std::array<std::span<const uint8_t>,2> runtime_{},network_{};
+    std::span<uint8_t> palAll_;
+    Words ownWords_{};
+    std::array<uint16_t,1024> ownRaw16_{};
+    std::array<uint32_t,1024> ownFormat_{};
+    Words* words_;
+    std::span<uint16_t,1024> raw16_;
+    std::span<uint32_t,1024> format_;
+    std::array<std::span<uint8_t>,2> runtime_{},network_{};
 };
 }

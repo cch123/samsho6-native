@@ -1,4 +1,5 @@
 #include "edit_art.hpp"
+#include "scalar_float.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -203,9 +204,11 @@ void EditArt::rebuildGauge() {
 }
 
 float EditArt::layer(Context& c,uint32_t constant) const {
-    const float z=c.list.cursorBase-f(constant);
-    const float out=z-c.list.cursor;
-    c.list.cursor=c.list.cursor+f(0x5f1f08);
+    // The 0.1 steps are inexact: EE add.s / sub.s rounding (toward zero).
+    // Every other sum of this module is exact in single precision.
+    const float z=eeSub(c.list.cursorBase,f(constant));
+    const float out=eeSub(z,c.list.cursor);
+    c.list.cursor=eeAdd(c.list.cursor,f(0x5f1f08));
     return out;
 }
 void EditArt::focus(Context& c,EditBox& box,bool focused) const {
@@ -431,7 +434,7 @@ uint32_t EditArt::rowColour(bool active,bool selected) {
 void EditArt::text(Context& c,std::string_view sjis,int x,int y,int mode) const {
     const uint32_t k=c.pen.front?0x5f1ff4:c.pen.middle?0x5f1ff8:0x5f1ffc;
     const int saved=c.list.textDepth;
-    c.list.textDepth=trunc(canvas_->depth(c.list,c.list.cursorBase-f(k)));
+    c.list.textDepth=trunc(canvas_->depth(c.list,eeSub(c.list.cursorBase,f(k))));
     c.list.asciiDepth=layer(c,k);                       // 113828
     const uint32_t colour=c.pen.colour;
     if(mode==0)canvas_->ascii(c.list,sjis,x,y,colour);
@@ -453,7 +456,7 @@ int EditArt::icon(Context& c,int index,float x,float y,float z) const {
 size_t EditArt::markup(Context& c,std::string_view s,int mode,bool plain,float x,float y) const {
     const uint32_t k=c.pen.front?0x5f2010:c.pen.middle?0x5f2014:0x5f2018;
     const int saved=c.list.textDepth;
-    c.list.textDepth=trunc(canvas_->depth(c.list,c.list.cursorBase-f(k)));
+    c.list.textDepth=trunc(canvas_->depth(c.list,eeSub(c.list.cursorBase,f(k))));
     const int advance=mode==1?0x14:0x18;
     const int textMode=mode==1?1:2;
     bool skip=false;
@@ -649,16 +652,19 @@ void EditArt::spiritEditor(Context& c,const SpiritEditor& e) const {
 }
 void EditArt::spiritSummary(Context& c,int x,int y,std::span<const SpiritIcon> icons) const {
     sheet(c,assets_.summaryPlate,float(x),float(y),layer(c,0x5f2028));
-    int extras=y;
+    int extras=y,listed=0;
     for(size_t i=0;i<icons.size();++i) {
         const int group=icons[i].group;
         float column;int second;
         if(group==5) {
-            // The fixed-option column stacks 17 pixels per entry.
+            // The second column stacks 17 pixels per entry under one heading,
+            // which only its first entry draws.
             column=float(x+0x87);
             const int first=extras+5;second=extras+0x15;
-            const float z=layer(c,0x5f202c);
-            icon(c,group+0x33,column,float(first),z);
+            if(!listed++) {
+                const float z=layer(c,0x5f202c);
+                icon(c,group+0x33,column,float(first),z);
+            }
             extras+=0x11;
         } else {
             column=float(x+0xc);
@@ -900,9 +906,9 @@ std::array<EditPreviewObject,3> colorEditPreview(const ColorEditTables& tables,c
     std::array<EditPreviewObject,3> out;
     const auto& v=scene.preview;
     const auto layer=[&](unsigned scalar) {
-        const float z=list.cursorBase-tables.scalars.at(scalar);
-        const float r=z-list.cursor;
-        list.cursor=list.cursor+art.assets().f(0x5f1f08);
+        const float z=eeSub(list.cursorBase,tables.scalars.at(scalar));
+        const float r=eeSub(z,list.cursor);
+        list.cursor=eeAdd(list.cursor,art.assets().f(0x5f1f08));
         return r;
     };
     // 13bf00: the large portrait. Hidden objects still take their depth step.
@@ -947,5 +953,59 @@ std::array<EditPreviewObject,3> drawColorEdit(const EditArt& art,MenuDrawList& l
     art.frame(c,frame);
     art.dialog(c,scene.dialog,art.assets().text(EditArtAssets::ResetQuestion));
     return preview;
+}
+
+// ---------------------------------------------------------------------
+EditPaletteBank::EditPaletteBank(const ColorEditTables& tables,SystemData& data,std::span<uint8_t> palAll)
+    :tables_(tables),data_(data),palAll_(palAll),words_(&ownWords_),raw16_(ownRaw16_),format_(ownFormat_) {
+    if(palAll.size()!=266240)throw std::runtime_error("Unexpected original palette arena");
+    ownWords_[0].fill(0xffffffff);
+}
+EditPaletteBank::EditPaletteBank(const ColorEditTables& tables,SystemData& data,std::span<uint8_t> palAll,Words& words,
+                                 std::span<uint16_t,1024> raw16,std::span<uint32_t,1024> format)
+    :tables_(tables),data_(data),palAll_(palAll),words_(&words),raw16_(raw16),format_(format) {
+    if(palAll.size()!=266240)throw std::runtime_error("Unexpected original palette arena");
+}
+void EditPaletteBank::reset() {
+    (*words_)[0].fill(0xffffffff);(*words_)[1].fill(0);(*words_)[2].fill(0);
+}
+int EditPaletteBank::resolve(uint32_t key,int bank) {
+    auto& identity=(*words_)[0];auto& reference=(*words_)[1];auto& busy=(*words_)[2];
+    const auto source=resolveEditPaletteSource(tables_,key,bank);
+    for(size_t i=0;i<24;++i)if(!busy[i]&&identity[i]==source.identity) {reference[i]=1;return int(tables_.cacheSlots[i]);}
+    size_t entry=24;
+    for(size_t i=0;i<24;++i)if(!busy[i]&&identity[i]==0xffffffff) {entry=i;break;}
+    if(entry==24)for(size_t i=0;i<24;++i)if(!busy[i]&&!reference[i]) {entry=i;break;}
+    if(entry==24)return -1;
+    using Table=EditPaletteSource::Table;
+    std::span<uint8_t> bytes;
+    switch(source.table) {
+    case Table::PalAll:bytes=palAll_;break;
+    case Table::SaveImage:bytes=std::span<uint8_t>(data_.image()).subspan(SystemData::editData,0x6180);break;
+    case Table::RuntimeP1:bytes=runtime_[0];break;
+    case Table::RuntimeP2:bytes=runtime_[1];break;
+    case Table::NetworkP1:bytes=network_[0];break;
+    case Table::NetworkP2:bytes=network_[1];break;
+    }
+    const size_t at=size_t(source.group)*32;
+    if(at+32>bytes.size())throw std::runtime_error("Palette group outside its table");
+    // 115f08: the first colour is cleared in the source table itself.
+    bytes[at]=bytes[at+1]=0;
+    const size_t row=tables_.cacheSlots[entry];
+    for(size_t i=0;i<16;++i) {
+        raw16_[row*16+i]=uint16_t(bytes[at+2*i]|bytes[at+2*i+1]<<8);
+        format_[row*16+i]=0;                          // 116478 marks the sixteen entries as 16-bit
+    }
+    identity[entry]=source.identity;reference[entry]=1;
+    return int(row);
+}
+void EditPaletteBank::poke(int row,unsigned entry,uint16_t colour) {
+    // A failed lookup (-1) makes 13ca58 store below the array; no editor
+    // path exhausts the 24 entries, so that store is not modelled.
+    if(row>=0&&row<64&&entry<16)raw16_[size_t(row)*16+entry]=colour;
+}
+std::span<const uint16_t,16> EditPaletteBank::colours(int row) const {
+    if(row<0||row>=64)throw std::out_of_range("Palette row");
+    return std::span<const uint16_t,16>(raw16_.data()+size_t(row)*16,16);
 }
 }

@@ -3,6 +3,7 @@
 // one line per mixer frame: the requests, then every keyed physical voice
 // with a hash of the sample it reads and its peak output in that frame.
 #include "audio_routing.hpp"
+#include "arcade_presentation.hpp"
 #include "local_versus.hpp"
 #include <array>
 #include <iostream>
@@ -21,9 +22,41 @@ uint64_t identity(const ss6::CombatSoundSample& s) {
 }
 }
 
+// Every GALLERY ending playback (mode word d) as NativeMatch routes it:
+// 120110's bank 49 load, then each visit's requests until 182a98 returns.
+int endings(const std::filesystem::path& assets) {
+    ss6::SystemData system(assets);
+    ss6::SoundSelection selection(assets);
+    ss6::GameRandom random;
+    std::array<int16_t,2*800> pcm;
+    for(int c=0;c<50;++c) {
+        ss6::CombatAudio mixer(assets);
+        ss6::GalleryEndingPlayer player(assets);
+        player.begin(c,false);
+        selection.beginFrame();selection.loadBank(0,0x31);
+        for(unsigned visit=0;visit<40000;++visit) {
+            std::vector<ss6::ArcadeSceneSound> requests;
+            const bool done=player.tick(0,requests);
+            ss6::selectEndingSounds(selection,system,requests,13,random);
+            ss6::routeBattleSounds(mixer,selection.events());
+            mixer.tick();mixer.render(pcm);
+            std::cout<<"F "<<visit<<' '<<c<<" E";
+            for(const auto& e:selection.events())std::cout<<' '<<int(e.kind)<<','<<e.bank<<','<<e.tone<<','<<e.extra;
+            std::cout<<" |";
+            for(unsigned i=0;i<22;++i)if(const auto* s=mixer.channelSample(i))
+                std::cout<<' '<<i<<':'<<std::hex<<identity(*s)<<std::dec<<':'<<mixer.channelPeak(i);
+            std::cout<<'\n';
+            selection.beginFrame();
+            if(done)break;
+        }
+    }
+    return 0;
+}
+
 int main(int argc,char** argv) {
     try {
         if(argc<2)throw std::runtime_error("Expected an asset directory");
+        if(argc>2&&std::string_view(argv[2])=="--endings")return endings(argv[1]);
         bool unlockModes=false;auto entry=ss6::VersusEntry::Fight;auto mode=ss6::VersusMode::FixedMatch;
         for(int i=2;i<argc;++i) {
             const std::string_view arg=argv[i];

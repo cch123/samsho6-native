@@ -16,7 +16,9 @@ Each scene request is resolved independently from the disc (inspect_iso.py, no n
   Music 1e7c00(n, f)     BGMd/BGMnn_L.VB and _R.VB (214210 directory rule) on voices 0 / 1,
                          decoded prefix; 213ff0 track 23 is BVOICE1[49] tone 12 (212d80)
 and must be read by a keyed voice that outputs non-zero PCM within the original latency.
-The documented scene tracks (docs/mode-arcade-*.txt) must each be requested in their scene."""
+The documented scene tracks (docs/mode-arcade-*.txt) must each be requested in their scene.
+The 50 ending scripts are also played through the GALLERY routing (selectEndingSounds: script
+1e7b70 into bank 49 / the common bank, object 1e8298 commands, the ending and staff-roll music)."""
 import argparse
 from collections import Counter,defaultdict
 import json
@@ -38,6 +40,7 @@ BATTLE_KINDS=('Sample','Voice','Stop','StopGroup','ResidentJingle','MusicPreload
 SCENE_MUSIC={'map':{0x16},'winquote':{0x19},'result':{0x19},'cont':{0x1a},'gameover':{0x1b},'prefinal':{0x14},
              'dialogue':{0x11,0x12,0x13},'ending':{3,4}}
 VOICE_LATENCY=4      # 213378 queue: IOP ready, SIF transfer, completion (213660 one stage a visit)
+ONSET=8           # frames a keyed sample may stay silent before its first audible block
 MUSIC_LATENCY=60     # 213ff0 request machine plus the IRX's two initial reads (CombatMusic: 18 visits)
 
 
@@ -115,10 +118,15 @@ def parse(text):
 
 
 def heard(frames,start,stop,identity,channels):
-    """First frame in [start, stop) with a keyed voice of `channels` reading `identity` at non-zero output."""
+    """First frame in [start, stop) keying a voice of `channels` on `identity`, provided that
+    voice reaches non-zero output within ONSET frames (samples may open with silent blocks)."""
     for k in range(start,min(stop,len(frames))):
-        for ch,(h,peak) in frames[k]['voices'].items():
-            if ch in channels and h==identity and peak>0:return k
+        for ch,(h,_) in frames[k]['voices'].items():
+            if ch in channels and h==identity:
+                for j in range(k,min(k+ONSET,len(frames))):
+                    v=frames[j]['voices'].get(ch)
+                    if not v or v[0]!=identity:break
+                    if v[1]>0:return k
     return None
 
 
@@ -169,6 +177,34 @@ def check(frames,disc,language,variant):
     return per,silent,latency,failures
 
 
+def check_endings(frames,disc,variant):
+    """GALLERY ending playback of all 50 scripts: script 1e7b70 / 1e7c00 and object 1e8298 requests."""
+    counts=Counter();failures=[];silent=Counter();music=Counter()
+    groups=[50,0,0];last=None
+    for k,fr in enumerate(frames):
+        if fr['scene']!=last:groups=[50,0,0];last=fr['scene']
+        for kind,a,b,c in fr['requests']:
+            kind=BATTLE_KINDS[kind];counts[kind]+=1
+            if kind=='LoadBank':groups[a+1]=b
+            elif kind=='Sample':
+                ident=disc.effect(groups[a],b)
+                if ident is None:silent['Sample: tone beyond the bank']+=1
+                elif heard(frames,k,k+1,ident,range(14,22)) is None:failures.append(('ending',fr['scene'],k,'Sample',a,b))
+            elif kind=='MusicRequest':
+                music[b]+=1;end=k+MUSIC_LATENCY
+                for j in range(k+1,min(end,len(frames))):
+                    if frames[j]['scene']!=fr['scene'] or any(BATTLE_KINDS[r[0]] in ('MusicRequest','MusicStop','LoadBank') for r in frames[j]['requests']):end=j;break
+                left,right=disc.music(variant,b)
+                if heard(frames,k,end,left,{0}) is None or heard(frames,k,end,right,{1}) is None:
+                    if end<k+MUSIC_LATENCY:silent['Music: superseded before the key-on']+=1
+                    else:failures.append(('ending',fr['scene'],k,'Music',b))
+            elif kind=='Voice':
+                ident,where=disc.voice(a,b,0,groups)
+                if ident is None:silent[f'Voice: {where}']+=1
+                elif heard(frames,k,k+VOICE_LATENCY,ident,where) is None:failures.append(('ending',fr['scene'],k,'Voice',a,b))
+    return counts,silent,music,failures
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--build',default='work/ss6/build-audio')
@@ -188,7 +224,12 @@ def main():
     assert not mismatch,('probe and replay disagree on the scene',mismatch[:5])
     disc=Disc()
     per,silent,latency,failures=check(frames,disc,language=0,variant=0)
+    ends=parse(subprocess.run([str(build/'ss6-scene-audio-probe'),str(assets),'--endings'],text=True,capture_output=True,check=True).stdout)
+    ecounts,esilent,emusic,efail=check_endings(ends,disc,variant=0)
+    failures+=efail
     report=dict(build=str(args.build),ticks=len(L.pads),mixer_frames=len(frames),
+                gallery_endings=dict(scripts=len({f['scene'] for f in ends}),visits=len(ends),requests=dict(ecounts),
+                                     music_tracks={str(k):v for k,v in sorted(emusic.items())},expected_silent=dict(esilent)),
                 requests={k:dict(v) for k,v in per.items()},expected_silent={k:dict(v) for k,v in silent.items()},
                 latency_frames={k:dict(Counter(v)) for k,v in latency.items()},failures=failures[:20],
                 scope='Viewer routing (src/audio_routing.cpp) of the shipping session on the arcade route of validate_arcade_session.py; '
@@ -198,7 +239,8 @@ def main():
     (OUT/'scene_audio_validation.json').write_text(json.dumps(report,indent=1)+'\n')
     assert not failures,failures[:10]
     total=sum(sum(v.values()) for v in per.values())
-    print(f'scene audio: {len(frames)} mixer frames, {total} scene requests, every audible request heard')
+    print(f'scene audio: {len(frames)} mixer frames, {total} scene requests, {len(ends)} ending visits '
+          f'({sum(ecounts.values())} requests), every audible request heard')
 
 
 if __name__=='__main__':main()

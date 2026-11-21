@@ -1,3 +1,4 @@
+#include "audio_routing.hpp"
 #include "practice_art.hpp"
 #include "native_match.hpp"
 #include "arcade_presentation.hpp"
@@ -447,14 +448,8 @@ void NativeMatch::tickGallery(const std::array<MenuPad,2>& pads,const std::array
         if(m.endingPlaying) {
             std::vector<ArcadeSceneSound> requests;
             const bool done=m.endingPlayer->tick(pads[m.ending->seat].pressed,requests);
-            for(const auto& r:requests) switch(r.kind) {
             // The scripts' 1e7c00 / 1e7b70 / 1e7ad0 and their objects' 1e8298 (mode word d / e).
-            case ArcadeSceneSound::Music:sounds_.requestMusic(0,system_->setting(6)!=0,r.a,r.b);break;
-            case ArcadeSceneSound::Sound:sounds_.sample(std::clamp(r.a,-1,1),r.b);break;
-            case ArcadeSceneSound::MusicStop:sounds_.stopMusic();break;
-            case ArcadeSceneSound::ObjectSound:sounds_.act(r.a,r.c,r.b,0,battle_.gameMode,0,battle_.random);break;
-            default:break;
-            }
+            selectEndingSounds(sounds_,*system_,requests,battle_.gameMode,battle_.random);
             if(!done)break;
             // 182a98 returned: this visit continues into 182858 and 13f4a8 without a yield.
             m.endingPlaying=false;m.reselect=true;

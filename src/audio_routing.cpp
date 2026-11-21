@@ -1,4 +1,5 @@
 #include "audio_routing.hpp"
+#include <algorithm>
 
 namespace ss6 {
 namespace {
@@ -34,6 +35,17 @@ void routeSceneSounds(CombatAudio& mixer,const SystemData& system,const std::vec
     case K::LoadBank:mixer.loadBank(e.a+1,e.b);break;
     case K::EffectsStop:mixer.stopGroup(2);break;                // 1e7b40 -> 213be8(2)
     case K::ObjectSound:break; // ArcadePresentation lists the Sound / Voice it selects after it
+    }
+}
+void selectEndingSounds(SoundSelection& selection,const SystemData& system,const std::vector<ArcadeSceneSound>& sounds,
+                        int gameMode,GameRandom& random) {
+    using K=ArcadeSceneSound;
+    for(const auto& r:sounds) switch(r.kind) {
+    case K::Music:selection.requestMusic(0,system.setting(6)!=0,r.a,r.b);break;
+    case K::Sound:selection.sample(std::clamp(r.a,-1,1),r.b);break;
+    case K::MusicStop:selection.stopMusic();break;
+    case K::ObjectSound:selection.act(r.a,r.c,r.b,0,gameMode,0,random);break;
+    default:break;
     }
 }
 }

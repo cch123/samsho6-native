@@ -327,6 +327,11 @@ void ArcadeSession::tickGameOver(std::array<uint32_t,2> pressed) {
     const bool pending=presentation&&unlockPending(system_,presentation->unlockSession);
     const auto next=gameOver.tick(run,seat>=0&&seat<2?pressed[unsigned(seat)]:0,pending);
     autosave=autosave||gameOver.autosave;
+    if(presentation) {
+        // 1387b8: the button skip's 1e7b40, then 138af0's 1e7d60(0x31, 0x4b) at frame 0x1e.
+        if(gameOver.soundStopped)presentation->sounds.push_back({ArcadeSceneSound::EffectsStop});
+        if(gameOver.voiceRequested)presentation->sounds.push_back({ArcadeSceneSound::Voice,0x31,0x4b});
+    }
     if(next==ArcadeScene::None)return;
     if(!presentation){scene=ArcadeScene::None;leftToTitle=true;run.transition={};return;}
     if(next==ArcadeScene::UnlockNotice) {

@@ -13,4 +13,8 @@ void routeBattleSounds(CombatAudio& mixer,std::span<const BattleSoundEvent> even
 // Arcade presentation scenes: the soundtrack (43d056) and narration language
 // (43d055) bytes are read when the request is made.
 void routeSceneSounds(CombatAudio& mixer,const SystemData& system,const std::vector<ArcadeSceneSound>& sounds);
+// GALLERY ending playback (182ce0 -> 182a98, mode word d / e): its script and
+// object requests through the battle sound selection (1e8298 with gameMode).
+void selectEndingSounds(SoundSelection& selection,const SystemData& system,const std::vector<ArcadeSceneSound>& sounds,
+                        int gameMode,GameRandom& random);
 }

@@ -27,7 +27,8 @@ from validate_selected_combat import prefix,BUILD
 from extract_collision_tables import SOURCE_HASH
 
 OBJECT=0xb10000
-from probe_fighter_gaps import pads as move_pads, MOTIONS, PLAYABLE
+from probe_fighter_gaps import pads as move_pads, MOTIONS, PLAYABLE, slot_pads, slot_selection
+SLOT_RUNS=[]
 import argparse
 FIGHTER=None
 
@@ -46,8 +47,9 @@ def original(seat,expected,counts):
     wrong=[]
     for case,before,after,owner in expected:
         handler,words,flags,f17,left,right,top,c128=before
-        b38,b40,b44,s194,a3c,c0,c1,c5,r18c,ox,oy,osys,ostate,f244,c3,h0,h1,h2,ot20=owner[:19]
-        p.write(actor+0x244,f244,4);p.write(actor+0x26c,c3,4)
+        b38,b40,b44,s194,a3c,c0,c1,c5,r18c,ox,oy,osys,ostate,f244,c3,h0,h1,h2,ot20,pend=owner[:20]
+        p.write(actor+0x244,f244,4);p.write(actor+0x190,pend,4)
+        p.write(actor+0x26c,c3,4)
         for k,h in enumerate((h0,h1,h2)):p.write(actor+0x2c4+4*(0x5b+k),h,4)
         opp=ACTORS+(1-seat)*0xf2c;p.write(opp,BODY+0x4000,4)
         for off,v in ((0x40,ox),(0x44,oy)):p.write(BODY+0x4000+off,v,4)
@@ -69,10 +71,11 @@ def original(seat,expected,counts):
         if got[47] and act<=got[47]<act+0x100000:got[47]-=act-1
         ref=[p.read(TASK,4),got,p.read(actor+0xf17,1),p.read(BODY+0x2000+0x128,4),
              [p.read(actor+off,4) for off in (0x23c,0xa3c,0x260,0x264,0x274,0x18c,0x244)]]
-        mine=[after[0],after[1],after[2],after[3],[x&0xffffffff for x in owner[19:]]]  # object callbacks without owner words
+        mine=[after[0],after[1],after[2],after[3],[x&0xffffffff for x in owner[20:]]]  # object callbacks without owner words
         if ref!=mine:
             diff=[(hex(i*4),hex(x),hex(y)) for i,(x,y) in enumerate(zip(mine[1],ref[1])) if x!=y]
-            wrong.append((case,hex(handler),hex(mine[0]),hex(ref[0]),diff[:6],mine[2],ref[2],mine[3],ref[3]))
+            wrong.append((case,hex(handler),hex(mine[0]),hex(ref[0]),diff[:6],mine[2],ref[2],mine[3],ref[3],
+                          [(k,hex(x),hex(y)) for k,(x,y) in enumerate(zip(mine[4],ref[4])) if x!=y]))
     return wrong
 
 SPAWN_WORDS=(0x0c,0x10,0x14,0x20,0x24,0x28,0x2c,0x30,0x38,0x40,0x44,0x48,0x4c,0x50,0x54,0x58,0x5c,0x60,0x70,
@@ -108,7 +111,12 @@ def original_spawns(seat,spawns,counts):
 
 def run(job):
     exe,seat,move=job
-    if move.startswith('CPU'):
+    if move.startswith('SLOTSEL'):
+        # A slot-sweep run (probe_fighter_gaps.py --slots) chosen to cover special states.
+        lineup,_,cpu,mv,sp=SLOT_RUNS[int(move[7:])]
+        seq=prefix(lineup,sp)+[[0,0]]*330+[[x,0] if seat==0 else [0,x] for x in slot_pads(seat,mv)]
+        cpu=[cpu] if cpu!='none' else []
+    elif move.startswith('CPU'):
         # CPU-vs-CPU after selection reaches moves public input does not.
         other=int(move[3:]);seq=prefix((FIGHTER,other) if seat==0 else (other,FIGHTER))+[[0,0]]*12000;cpu=['both']
     else:seq=pads(seat,move);cpu=[]
@@ -122,7 +130,7 @@ def run(job):
         elif tag=='P' and v[1]==seat:
             b=v[2:];before=(b[0],b[1:81],b[81],b[82],b[83],b[84],b[85],b[86]);a=b[87:]
             after=(a[0],a[1:81],a[81],a[82])
-            calls.append(((seat,move,v[0]),before,after,v[-26:]))
+            calls.append(((seat,move,v[0]),before,after,v[-27:]))
     last=frames[-1];victim=1-seat
     return seat,move,(calls,spawns),dict(life=last[1+6*victim+3],hits=last[1+6*seat+4],guards=last[1+6*seat+5])
 
@@ -137,6 +145,9 @@ def main():
         subprocess.run([*cxx,'-DupdateScriptFighterObject=tracedFighterObject','-c',ROOT/'src/script_fighter.cpp','-o',fighter],check=True)
         subprocess.run([*cxx,ROOT/'work/ss6/mina_projectile_trace.cpp',obj,fighter,BUILD/'libss6-runtime.a','-o',exe],check=True)
         jobs=[(exe,s,m) for s in (0,1) for m in (*MOTIONS,*(f'CPU{o}' for o in PLAYABLE))]
+        global SLOT_RUNS
+        SLOT_RUNS=slot_selection(FIGHTER)
+        jobs+=[(exe,r[1],f'SLOTSEL{i}') for i,r in enumerate(SLOT_RUNS)]
         with ThreadPoolExecutor(8) as pool:results=list(pool.map(run,jobs))
     counts=Counter();outcomes=[];wrong=[]
     for seat in (0,1):

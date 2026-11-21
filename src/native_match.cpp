@@ -1039,7 +1039,7 @@ void NativeMatch::auxiliaryPhase(ObjectPhase phase) {
                 case 0x16c700:case 0x16c760:case 0x16c7c0:
                     updateRimururuIce(aux_,pools,task,b.camera,parents.at(i)[0x24/4]);break;
                 case 0x16cac0:case 0x16c818:case 0x16c8d0:case 0x16c940:
-                case 0x16ccb8:case 0x16cd60:case 0x16ce50:case 0x16cf40:case 0x16cb88:case 0x16cc70:case 0x16f088:case 0x16f510:case 0x16d1a0:case 0x16d270:case 0x16c9e0:
+                case 0x16ccb8:case 0x16cd60:case 0x16ce50:case 0x16cf40:case 0x16cb88:case 0x16cc70:case 0x16f088:case 0x16f510:case 0x16d1a0:case 0x16d270:case 0x16c9e0:case 0x16f8e8:
                     scriptProjectileTask(i,task);break;
                 case 0x16ec48:updateAndrewAmmo(pools,task,fighters_[i].actor);break;
                 case 0x1f2c68:break; // Basara's shadow: an empty task callback (jr ra)

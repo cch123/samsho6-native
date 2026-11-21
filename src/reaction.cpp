@@ -43,6 +43,10 @@ unsigned ReactionTables::ordinaryAction(unsigned state,bool armed,bool onBack) c
     if(state==61)return (onBack?418:416)+!armed; // 170960, hit while down.
     if(state==74)return 378+!armed; // 175538 chooses the airborne hit action at 4e8c48.
     if(KnockdownPlayback::supportsFall(int(state)))return KnockdownPlayback::fallAction(int(state),armed);
+    // 1707b0(cb, row, strength): states 32..49 are rows 0..5 x strength; 18 / 19 (174fe0) are rows 14 / 15.
+    // Rows >= 6 ignore the strength.
+    if(state==18||state==19){const size_t offset=1984+(state-4)*4;
+        return (uint32_t(data_[offset])|uint32_t(data_[offset+1])<<8|uint32_t(data_[offset+2])<<16|uint32_t(data_[offset+3])<<24)+!armed;}
     if (state<32 || state>=50) throw std::runtime_error("Reaction action outside grounded slash subset");
     unsigned group=(state-32)/3,strength=(state-32)%3;
     size_t offset=1984+group*4;

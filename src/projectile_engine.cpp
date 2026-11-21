@@ -63,6 +63,7 @@ uint32_t spawnDescriptorProjectile(const ProjectileTable& table,ProjectileOwner&
     case 10:handler=0x16cd60;break;
     case 11:handler=0x16ce50;break;
     case 12:handler=0x16cb88;break; // 16d6c8: no placement
+    case 16:handler=0x16f8e8;break; // 16d8f4: PakuPaku's 0xa0 / 0xa1, no placement
     default:throw std::runtime_error("Projectile group "+std::to_string(d.group)+" is not ported generically");
     }
     if(d.group>=8&&d.group<=11)a.flags23c&=~0x1000u;
@@ -196,7 +197,7 @@ uint32_t spawnScriptProjectile(const ProjectileTable& table,ProjectileOwner& w,c
 }
 bool isDescriptorProjectileTask(uint32_t h) {
     return h==0x16def0||h==0x16c9e0||h==0x16f088||h==0x16f510||h==0x16d1a0||h==0x16d270||h==0x16cac0||h==0x16c818||h==0x16c8d0||h==0x16c940||
-           h==0x16ccb8||h==0x16cd60||h==0x16ce50||h==0x16cf40;
+           h==0x16ccb8||h==0x16cd60||h==0x16ce50||h==0x16cf40||h==0x16f8e8;
 }
 namespace {
 // 16ff18: the thrown weapon lands and becomes the owner's ordinary dropped
@@ -340,6 +341,9 @@ void updateDescriptorProjectile(const ProjectileTable& table,ProjectileOwner& w,
             auto& n=ownEffect(w,0x25a,0x16d270);n[0x108/4]&=~0x2000u;
             std::copy_n(o.begin()+0x40/4,12,n.begin()+0x40/4); //11da98
         }
+        return;
+    case 0x16f8e8: // group 16: below the floor -> y = 0, stop, ACT 0x23a, then the default 16def0
+        if(Y(o).less(F{0})){o[0x44/4]=0;AuxiliaryObjects::stop(o);w.objects.request(o,0x23a,false,false);t[0]=0x16def0;}
         return;
     case 0x16d270: // deleted once out of view
         if(o[0x104/4]&4){o[0x108/4]|=0x1000;hold(w.pools,task);}

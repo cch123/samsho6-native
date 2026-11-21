@@ -64,6 +64,10 @@ struct StateEntryPlan {
     //continuation without prematurely changing attack-meter state.
     bool finishAttackAfterEntry=false;
 };
+//Test instrumentation only (never set by the game): called for every state
+//StateEntryRules::transition enters, including states that a script entry
+//leaves again within the same visit and therefore never appear in a sampled state.
+extern void (*stateEntryObserver)(const StateEntryActor&,int table,int index);
 bool stateRequestDiffers(const SelectionActor&); //150000
 void commitStateRequest(SelectionActor&); //150038
 //1491e0 prefix ending immediately before14a348. The caller must perform

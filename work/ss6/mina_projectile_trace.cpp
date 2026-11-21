@@ -42,13 +42,14 @@ void updateDescriptorProjectile(const ProjectileTable& table,ProjectileOwner& ow
     // body 38/40/44, actor 194/a3c/260/264/274/18c before; 23c/a3c/260/264/274/18c after.
     // Then the opponent (group 15 homes on it; 142120 reads its spirit): body 40/44, actor 10c/13c.
     const ActorCommandInput* in=nullptr; // descriptor projectiles never read the owner's buttons
-    const uint32_t ownerBefore[19]{owner.body[0x38/4],owner.body[0x40/4],owner.body[0x44/4],a.state194,uint32_t(a.queuedActionA3c),
+    const uint32_t ownerBefore[20]{owner.body[0x38/4],owner.body[0x40/4],owner.body[0x44/4],a.state194,uint32_t(a.queuedActionA3c),
                                   a.callbacks260[0],a.callbacks260[1],a.callbacks260[5],uint32_t(a.request18c),
                                   owner.opponentBody[0x40/4],owner.opponentBody[0x44/4],
                                   owner.opponentConfig?owner.opponentConfig->system:0u,
                                   owner.opponentActor?uint32_t(owner.opponentActor->systemState13c):0u,a.flags244,
                                   a.callbacks260[3],in?in->sampledFeatures[0x5b]:0u,in?in->sampledFeatures[0x5c]:0u,in?in->sampledFeatures[0x5d]:0u,
-                                  owner.opponentActor?uint32_t(owner.opponentActor->timers[20]):0u};
+                                  owner.opponentActor?uint32_t(owner.opponentActor->timers[20]):0u,
+                                  uint32_t(uint16_t(a.pendingTable))|uint32_t(uint16_t(a.pendingIndex))<<16}; // 190/192 for 1491e0
     tracedProjectile(table,owner,task);
     w(t[0]);for(auto x:o)w(x);w(owner.actor.characterBytesF14[3]);
     w(owner.companion?(*owner.companion)[0x128/4]:0);w(owner.companion?(*owner.companion)[0x12c/4]:0);

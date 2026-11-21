@@ -20,7 +20,8 @@ import tempfile
 from validate_selected_combat import BUILD, ROOT, prefix
 from validate_mina_specials import Original as MinaOriginal
 from validate_weapon_handling import setup
-from probe_fighter_gaps import pads as move_pads, PLAYABLE, MOTIONS
+from probe_fighter_gaps import pads as move_pads, PLAYABLE, MOTIONS, slot_pads, slot_selection
+SLOT_RUNS=[]
 from fighter_roster import SCRIPT_STUBS
 
 RES=ROOT/'work/ss6/extracted/resources'
@@ -30,7 +31,7 @@ SLOT_WORDS=(0xcc,0xd0,0x24,0x40,0x28,0x38,0x44,0xb0,0xc0,0xc4,0x104,0x108,0xe4,0
 # handles there (not original pointers), so these words are neither seeded nor compared for them.
 PLAIN_WORDS={44:(0x128,0x12c,0x130,0x134)}
 # Directed rage scenarios for rage-gated moves the CPU sweep does not reach.
-RAGE_MOVES={48:('CPU21S3','CPU24S3','CPU15S1'),45:('RAGE7:236AB','RAGE0:236AB','RAGE26:236AB','RIDE40:BC,214A,236B,214C,236C','RIDE40:214B,236A,BC')}
+RAGE_MOVES={16:('RAGE7:214BC','RAGE26:236BC'),41:('RAGE7:236BC',),48:('CPU21S3','CPU24S3','CPU15S1'),45:('RAGE7:236AB','RAGE0:236AB','RAGE26:236AB','RIDE40:BC,214A,236B,214C,236C','RIDE40:214B,236A,BC')}
 class Original(MinaOriginal):
     def compare(self,case,values):
         # Map the native presence flag onto the fixture's registry slot. An
@@ -85,7 +86,7 @@ class Original(MinaOriginal):
         if os.environ.get('SS6_DEBUG_ROW'):
             r0=start[self.fields.index((self.src.a+0x28c,4))];r11=start[self.fields.index((self.src.a+0x28c+44,4))]
             print('ROW',case,hex(pc),r0,bytes(p.read(r11+20*r0+k,1) for k in range(20)).hex() if r11 else None,'body24',hex(p.read(p.read(self.src.a,4)+0x24,4)),flush=True)
-        if (self.fighter,start[8]) in ((4,15),(19,5),(41,15)):
+        if (self.fighter,start[8]) in ((4,15),(19,5),(41,15),(23,4)):
             # 1ef608 (Galford 15) and 1f82b0 (Rera 5) run the opponent's 1491e0 at once; that entry reads its whole actor, which this
             # fixture does not mirror (the shared state-entry validators cover it).
             k=self.fields.index((self.src.other+0x23c,4));end[k]=p.read(self.src.other+0x23c,4)
@@ -139,7 +140,11 @@ class Original(MinaOriginal):
 
 def run(job):
     exe,side,move,fighter=job
-    if move.startswith('RAGE'):
+    if move.startswith('SLOTSEL'):
+        lineup,_,c,mv,sp=SLOT_RUNS[int(move[7:])]
+        seq=prefix(lineup,sp)+[[0,0]]*330+[[x,0] if side==0 else [0,x] for x in slot_pads(side,mv)]
+        cpu=[c] if c!='none' else []
+    elif move.startswith('RAGE'):
         # 'RAGE<opp>:<motion>': a CPU opponent beats the idle fighter into rage while the motion
         # repeats every 150 neutral ticks (rage-gated moves such as Shikuru's hawk assist).
         other,motion=move[4:].split(':');other=int(other)
@@ -188,6 +193,9 @@ def main():
         # Every generic probe motion, plus CPU-vs-CPU against each playable fighter.
         jobs=[(exe,s,m,n) for s in (0,1) for m in (*MOTIONS,*(f'CPU{o}' for o in PLAYABLE),*RAGE_MOVES.get(n,()),
                                                    *(f'CPU{o}S{sp}' for sp in range(5) for o in PLAYABLE[::6]))]
+        global SLOT_RUNS
+        SLOT_RUNS=slot_selection(n)
+        jobs+=[(exe,r[1],f'SLOTSEL{i}',n) for i,r in enumerate(SLOT_RUNS)]
         with ThreadPoolExecutor(6) as pool:results=list(pool.map(run,jobs))
     wrong=[w for _,ws in results for w in ws]
     total=Counter()

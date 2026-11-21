@@ -20,6 +20,8 @@ public:
     // The running ARCADE MODE session, or null. While its scene is not the
     // fight, match() still holds the last fight for display only.
     const ArcadeSession* arcade() const {return arcade_.get();}
+    // The save image shared by every scene of this session; restart() keeps it.
+    SystemData& system() {return *system_;}
     // Set when the scheduled stage or fighter has no native port yet.
     const std::string& arcadeNotice() const {return arcadeNotice_;}
     unsigned matchNumber() const {return matchNumber_;}
@@ -37,6 +39,7 @@ private:
     void configureControllers(NativeMatch&) const;
     MatchRules versusRules() const;
     std::unique_ptr<ArcadeSession> arcade_;
+    std::shared_ptr<SystemData> system_;
     std::string arcadeNotice_;
     bool arcadeSelecting_=false; // CONTINUE reopened the character select
     void startArcade(unsigned seat,int character,int colour,int spirit);

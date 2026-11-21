@@ -1,3 +1,3 @@
 #!/bin/sh
 project_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec "$project_dir/battle.command" --mode title "$@"
+exec "$project_dir/battle.command" --mode title --save "$project_dir/outputs/ss6-feasibility/savedata.bin" "$@"

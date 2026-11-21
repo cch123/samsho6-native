@@ -34,7 +34,8 @@ LocalVersus::LocalVersus(const std::filesystem::path& assets,int roundTime,Versu
 
 LocalVersus::LocalVersus(const std::filesystem::path& assets,int roundTime,VersusMode mode,
                          std::array<unsigned,2> spirits,VersusEntry entry,std::array<bool,2> cpuSeats)
-    :assets_(assets),roundTime_(roundTime),mode_(mode),spirits_(spirits),entry_(entry),cpuSeats_(cpuSeats) {restart();}
+    :assets_(assets),roundTime_(roundTime),mode_(mode),spirits_(spirits),entry_(entry),cpuSeats_(cpuSeats),
+     system_(std::make_shared<SystemData>(assets)) {restart();}
 
 void LocalVersus::configureControllers(NativeMatch& match) const {
     for(unsigned seat=0;seat<2;++seat)if(cpuSeats_[seat])match.enableCpu(seat);
@@ -153,6 +154,7 @@ void LocalVersus::tickArcade(const std::array<NormalizedPadSample,2>& pads) {
 void LocalVersus::restart() {
     arcade_.reset();arcadeNotice_.clear();arcadeSelecting_=false;
     match_=std::make_unique<NativeMatch>(assets_,roundTime_,mode_,nullptr,spirits_);
+    match_->adoptSystem(system_);
     if(entry_==VersusEntry::Arcade){startArcade(0,0,0,int(spirits_[0]));matchNumber_=1;return;}
     if(entry_==VersusEntry::Fight)configureControllers(*match_);
     if(entry_==VersusEntry::CharacterSelect)match_->openCharacterSelect(true);

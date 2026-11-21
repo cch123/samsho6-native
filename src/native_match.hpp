@@ -71,6 +71,8 @@ public:
     // The save image outlives every scene; rematches and new fights share it.
     SystemData& system() const {return *system_;}
     const std::shared_ptr<SystemData>& systemHandle() const {return system_;}
+    // Call before the first tick or scene: replaces the factory image.
+    void adoptSystem(std::shared_ptr<SystemData> system) {system_=std::move(system);}
     NativeMatch(const NativeMatch&)=delete;
     NativeMatch& operator=(const NativeMatch&)=delete;
     void tick(const std::array<NormalizedPadSample,2>& pads);

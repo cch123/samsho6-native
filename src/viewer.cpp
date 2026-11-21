@@ -990,6 +990,10 @@ public:
         present(r,result,paused,menu.fadeAlpha);
     }
 };
+// Session-wide save data options (--save FILE, --unlock-modes yes).
+fs::path saveFile;
+bool unlockModes=false;
+
 // Text lines for session states that have no ported picture yet.
 std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
     std::vector<std::string> lines;
@@ -1014,6 +1018,18 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
               unsigned updates,unsigned smoke,bool boxes,int roundTime,ss6::VersusMode mode,const fs::path& audioOut={},std::array<unsigned,2> spirits={},ss6::VersusEntry entry=ss6::VersusEntry::Fight,
               std::array<bool,2> cpuSeats={}) {
     ss6::LocalVersus session(assets,roundTime,mode,spirits,entry,cpuSeats);
+    if(!saveFile.empty()||unlockModes) {
+        auto& data=session.system();
+        // The native file replaces the memory card; a missing or corrupt
+        // file leaves the factory image, as a failed card read does.
+        data.file=saveFile;data.loadFile();
+        if(unlockModes) {
+            // Byte 43d0d6 lists SURVIVAL and SPIRITS EDIT; one seen ending lists GALLERY.
+            data.option(0x7e)=1;
+            if(!data.modeMenuUnlock()||!(data.modeMenuUnlock()&2))data.markEndingSeen(0);
+        }
+        session.restart(); // the title reads the unlock state at entry
+    }
     auto screen=std::make_unique<VersusScreen>(assets);
     const bool interactive=snapshot.empty() && dump.empty() && stageDump.empty() && audioOut.empty();
     std::optional<ss6::CombatAudio> mixer;
@@ -1154,6 +1170,8 @@ int main(int argc, char** argv) {
             if (i + 1 >= argc) throw std::runtime_error("Expected option value");
             if (arg == "--assets") assets = argv[++i];
             else if (arg == "--cpu") cpuSeats=ss6::versusCpuSeats(argv[++i]);
+            else if (arg == "--save") saveFile=argv[++i];
+            else if (arg == "--unlock-modes") unlockModes=std::string(argv[++i])=="yes";
             else if (arg == "--dump") dump = argv[++i];
             else if (arg=="--p1-spirit" || arg=="--p2-spirit") {
                 if(i+1==argc)throw std::invalid_argument(arg+" requires a spirit name");

@@ -725,10 +725,10 @@ struct VersusControls {
         static constexpr Binding keys[]={
             {SDLK_W,0,ss6::PadUp},{SDLK_A,0,ss6::PadLeft},{SDLK_S,0,ss6::PadDown},{SDLK_D,0,ss6::PadRight},
             {SDLK_J,0,ss6::PadLight},{SDLK_U,0,ss6::PadMedium},{SDLK_L,0,ss6::PadHeavy},{SDLK_M,0,ss6::PadKick},
-            {SDLK_F,0,ss6::PadSystem},{SDLK_T,0,ss6::PadStart},
+            {SDLK_F,0,ss6::PadSystem},{SDLK_T,0,ss6::PadStart},{SDLK_TAB,0,ss6::PadSelect},
             {SDLK_UP,1,ss6::PadUp},{SDLK_LEFT,1,ss6::PadLeft},{SDLK_DOWN,1,ss6::PadDown},{SDLK_RIGHT,1,ss6::PadRight},
             {SDLK_O,1,ss6::PadLight},{SDLK_LEFTBRACKET,1,ss6::PadMedium},{SDLK_I,1,ss6::PadHeavy},{SDLK_RIGHTBRACKET,1,ss6::PadKick},
-            {SDLK_BACKSLASH,1,ss6::PadSystem},{SDLK_RETURN,1,ss6::PadStart}};
+            {SDLK_BACKSLASH,1,ss6::PadSystem},{SDLK_RETURN,1,ss6::PadStart},{SDLK_BACKSPACE,1,ss6::PadSelect}};
         if(key==SDLK_K||key==SDLK_P)guard[key==SDLK_P]=down;
         for(const auto& b:keys)if(b.key==key) {
             if(down)keyboard[b.player]|=b.mask;
@@ -997,9 +997,23 @@ bool unlockModes=false;
 // Text lines for session states that have no ported picture yet.
 std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
     std::vector<std::string> lines;
+    const auto& match=session.match();
+    const auto ascii=[](const std::string& text){for(unsigned char c:text)if(c>=0x80)return false;return true;};
+    if(const auto* pause=match.pauseMenu();pause&&pause->active) {
+        // The pause window art is not ported: list its rows as text.
+        const auto& draw=match.pauseDraw();const auto& assets=*match.pauseAssets();
+        if(match.keyConfigOpen())lines.push_back("KEY CONFIGURATION (SCREEN IN DEVELOPMENT) / SELECT: CLOSE");
+        else if(match.skillListOpen())lines.push_back("SKILL LIST (SCREEN IN DEVELOPMENT) / SELECT OR CANCEL: CLOSE");
+        else {
+            for(int i=0;i<draw.rows;++i) {
+                const auto& item=draw.rows==6?assets.items[unsigned(i)]:assets.items5[unsigned(i)];
+                lines.push_back(std::string(i==draw.cursor?"> ":"  ")+(ascii(item)?item:"ITEM "+std::to_string(i)));
+            }
+            if(draw.dialog)lines.push_back(std::string(draw.dialog==1?"RETURN TO TITLE?":"CHARACTER SELECT?")+(draw.choice==0?"  [YES]  NO":"  YES  [NO]"));
+        }
+    }
     const auto* arcade=session.arcade();
     if(!arcade)return lines;
-    const auto& match=session.match();
     if(!session.arcadeNotice().empty())lines.push_back(session.arcadeNotice());
     if(arcade->scene==ss6::ArcadeScene::Battle) {
         const auto& tally=match.arcadeTally();

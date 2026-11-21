@@ -19,13 +19,17 @@
 #include "spirits_edit.hpp"
 #include "arcade_tally.hpp"
 #include "menu_canvas.hpp"
+#include "pause_menu.hpp"
+#include "key_config.hpp"
+#include "skill_list.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
 enum BattleButton : uint32_t {
     PadUp=0x10,PadDown=0x20,PadLeft=0x40,PadRight=0x80,
     PadLight=0x100,PadMedium=0x200,PadHeavy=0x400,PadKick=0x800,PadSystem=0x1000,PadStart=8,
-    PadMediumHeavy=0x2000,PadLightMedium=0x4000,PadLightKick=0x8000
+    PadMediumHeavy=0x2000,PadLightMedium=0x4000,PadLightKick=0x8000,
+    PadSelect=0x10000 // physical 80000: opens the pause menu
 };
 enum class VersusMode { FixedMatch, Console };
 struct VersusFighterChoice {unsigned character=0,spirit=0,palette=0;};
@@ -96,6 +100,14 @@ public:
     // 12f100: the seat and its character, colour and spirit.
     struct SoloSelection {unsigned seat=0;int character=0,colour=0,spirit=0;};
     const std::optional<SoloSelection>& soloSelection() const {return soloSelection_;}
+    // In-battle pause menu (1d9b50) and its child windows.
+    const PauseMenu* pauseMenu() const {return pause_.get();}
+    const PauseMenuAssets* pauseAssets() const {return pauseAssets_.get();}
+    const PauseMenuDraw& pauseDraw() const {return pauseDraw_;}
+    bool keyConfigOpen() const {return pause_&&pause_->windowTask[0]==PauseMenu::Woken;}
+    bool skillListOpen() const {return pause_&&pause_->windowTask[1]==PauseMenu::Woken;}
+    // A pause-menu exit the session must route (arcade runs only).
+    PauseScene pauseExit() const {return pauseExitDone_?pauseExit_:PauseScene::None;}
     void openSoloSelect(unsigned seat);
     const ArcadeTallyTables* arcadeTables() const {return tallyTables_.get();}
     bool titlePromptVisible() const {return promptClock_<60;}
@@ -146,6 +158,19 @@ private:
     unsigned editSeat_=0;
     std::unique_ptr<ArcadeTallyTables> tallyTables_;
     std::optional<SoloSelection> soloSelection_;
+    std::unique_ptr<PauseMenuAssets> pauseAssets_;
+    std::unique_ptr<PauseMenu> pause_;
+    PauseMenuDraw pauseDraw_;
+    ArcadeGameData pauseGame_;
+    std::array<ArcadePlayer,2> pausePlayers_{};
+    std::unique_ptr<KeyConfigAssets> keyAssets_;
+    std::unique_ptr<MenuWidgetData> widgetData_;
+    std::unique_ptr<SkillListData> skillData_;
+    KeyConfigWindow keyConfig_;
+    std::optional<SkillListWindow> skillList_;
+    PauseScene pauseExit_=PauseScene::None;
+    bool pauseExitDone_=false,pauseHold_=false;
+    bool tickPause(const std::array<NormalizedPadSample,2>&);
     ArcadeTally tally_;
     int32_t arcadeScore_=0,arcadeFinishBonus_=0;
     std::array<uint32_t,2> menuPressed_{};

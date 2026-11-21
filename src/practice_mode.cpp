@@ -353,8 +353,8 @@ std::array<bool,4> PracticeWindow::begin(const MenuPad& pad,PracticeState& pract
 PracticeWindowResult PracticeWindow::finish(const MenuPad& pad,const PracticeSubEvents& sub,PracticeState& practice,const PracticeFighter& dummy) {
     auto& help=out_.help;
     const int seat=practice.localSeat();
-    const auto closeOthers=[&](bool keyToo) {
-        if(keyToo){keyConfig.slide.close();keyConfig.focused=0;list.slide.close();list.focused=0;subList.slide.close();subList.focused=0;}
+    const auto closeOthers=[&] {
+        keyConfig.slide.close();keyConfig.focused=0;list.slide.close();list.focused=0;subList.slide.close();subList.focused=0;
         confirm.slide.close();confirm.focused=0;
     };
     if(state!=lastState) {
@@ -370,7 +370,7 @@ PracticeWindowResult PracticeWindow::finish(const MenuPad& pad,const PracticeSub
             help.push_back({PracticeHelp::Page,4,0});help.push_back({PracticeHelp::Open,0,0});
             if(state<lastState)help.push_back({PracticeHelp::Text,0,menu.rows.value});
             menu.slide.open();menu.focused=menu.active=1;
-            closeOthers(true);
+            closeOthers();
             break;
         case 2:menu.focused=0;break;
         case 3:
@@ -383,12 +383,13 @@ PracticeWindowResult PracticeWindow::finish(const MenuPad& pad,const PracticeSub
         case 4:
             help.push_back({PracticeHelp::Close,0,0});
             menu.slide.close();menu.focused=0;
-            closeOthers(true);
+            closeOthers();
             break;
         case 5:
             help.push_back({PracticeHelp::Page,0,0});help.push_back({PracticeHelp::Open,0,0});
             keyConfig.slide.open();keyConfig.focused=keyConfig.active=1;
-            closeOthers(false);
+            // 17fbf8 enters the shared tail at 17faec with the menu slide still in s0: the menu, not the dialog, closes.
+            menu.slide.close();menu.focused=0;
             break;
         case 6:
             help.push_back({PracticeHelp::Page,5,0});help.push_back({PracticeHelp::Open,0,0});

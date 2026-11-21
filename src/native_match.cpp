@@ -36,6 +36,7 @@ namespace {
 uint32_t resultPad(uint32_t logical) {
     constexpr std::array<uint32_t,8> physical{0x400,0x200,2,4,0x400000,0x800000,0x100000,0x200000};
     uint32_t bits=logical&0xf8;
+    if(logical&PadSelect)bits|=0x80000;
     for(unsigned i=0;i<physical.size();++i)if(logical&(PadLight<<i))bits|=physical[i];
     return bits;
 }
@@ -1202,6 +1203,66 @@ void NativeMatch::tickOption(const std::array<NormalizedPadSample,2>& pads) {
     else enterOption(pendingOption_==OptionScene::KeyConfig?OptionScene::Top:pendingOption_);
     pendingOption_=OptionScene::None;
 }
+bool NativeMatch::tickPause(const std::array<NormalizedPadSample,2>& pads) {
+    auto& b=battle_;
+    // The demo has no pause menu; practice replaces it with its own (17f790).
+    if(b.gameMode==0||b.practice()||b.survival())return false;
+    if(!pause_) {
+        pauseAssets_=std::make_unique<PauseMenuAssets>(assets_);
+        pause_=std::make_unique<PauseMenu>(*pauseAssets_);
+        keyAssets_=std::make_unique<KeyConfigAssets>(assets_);
+        widgetData_=std::make_unique<MenuWidgetData>(assets_);
+        skillData_=std::make_unique<SkillListData>(assets_);
+    }
+    auto& game=pauseGame_;
+    game.mode=b.gameMode;game.submode=b.matchEnd.submodeA0;
+    game.transitionLock=b.matchEnd.continue2c;game.challengerFreeze=b.matchEnd.field18;
+    if(pauseExit_!=PauseScene::None) {
+        // 1252f0(2,0,1da210,scene): black fade, then the destructor at the midpoint.
+        if(!pauseExitDone_&&sceneFade_.tick()) {
+            pause_->exitScene(game,pausePlayers_);pause_->teardown();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            if(b.matchEnd.submodeA0==2) {
+                const auto scene=pauseExit_;pauseExit_=PauseScene::None;
+                if(scene==PauseScene::Title)openTitle(true);else openCharacterSelect();
+            } else pauseExitDone_=true;
+        }
+        return true;
+    }
+    const auto menuPads=menuRepeat_.sample({resultPad(pads[0].held),resultPad(pads[1].held)},
+                                           {resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
+    const bool hold=pauseHold_;
+    if(pause_->poll(game,menuPads,false)) {
+        // 1d9cd8 creates both child tasks suspended at every open.
+        const unsigned seat=pause_->ownerSeat(game);
+        keyConfig_.start(*widgetData_,seat);
+        skillList_.emplace(*skillData_,*widgetData_,*system_);
+        skillList_->gameMode=unsigned(b.gameMode);
+        skillList_->listId=fighters_[seat].actor.characterA14+((fighters_[seat].actor.flags23c&0x100000)?0x32:0);
+        skillList_->enter(seat);
+    }
+    if(!pause_->active){pauseHold_=false;pauseDraw_={};return hold;}
+    const auto widgetPad=[&](unsigned i){return WidgetPad{resultPad(pads[i].held),menuPads[i].pressed,menuPads[i].repeat};};
+    std::vector<int> tones;
+    if(pause_->windowTask[0]==PauseMenu::Woken) {
+        const auto r=keyConfig_.tick({widgetPad(0),widgetPad(1)},*system_,*keyAssets_,false,tones);
+        if(r.returnedToPause){pause_->windowReturned();pause_->windowTask[0]=PauseMenu::Asleep;}
+    } else if(pause_->windowTask[1]==PauseMenu::Woken&&skillList_) {
+        auto r=skillList_->tick(widgetPad(pause_->ownerSeat(game)));
+        tones=std::move(r.tones);
+        if(r.event!=SkillListWindow::None){pause_->windowReturned();pause_->windowTask[1]=PauseMenu::Asleep;}
+    }
+    auto tick=pause_->tick(game,pausePlayers_,menuPads);
+    for(int id:tick.sounds)sounds_.sample(-1,id);
+    for(int id:tones)sounds_.sample(-1,id);
+    pauseDraw_=tick.draw;
+    b.matchEnd.field18=game.challengerFreeze;
+    tally_.setPaused(pause_->tallyPaused!=0);
+    if(tick.scene!=PauseScene::None){pauseExit_=tick.scene;pauseExitDone_=false;sceneFade_.begin(false);}
+    // 1392e8 is a one-frame request: this visit's request stops the next update.
+    pauseHold_=pause_->active!=0;
+    return true;
+}
 void NativeMatch::openSoloSelect(unsigned seat) {
     // 1cd348: ARCADE sets mode word 1/2 and sub-mode 1 before scene 128008.
     battle_.gameMode=int(seat)+1;battle_.matchEnd.submodeA0=1;
@@ -1455,6 +1516,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         sounds_.enterBattleScene(battle_.voiceGate5850e0!=0);
         sceneAudioEntered_=true;
     }
+    if(!finished&&!battle_.consoleMenu.active&&tickPause(pads))return;
     if(battle_.matchEnd.submodeA0==2) {
         auto& menu=battle_.consoleMenu;
         menu.samplePads({resultPad(pads[0].held),resultPad(pads[1].held)},

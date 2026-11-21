@@ -844,7 +844,7 @@ public:
                     prompt=match.battle().matchEnd.continue2c?ss6::ConsoleTitlePrompt::Wait:ss6::ConsoleTitlePrompt::Start;
                 const auto white=match.selectWhiteLevel();
                 const auto level=white?white:match.battle().consoleMenu.fadeAlpha;
-                titleArt_->paint(d.modeMenu,d.firstRow,d.scrollDirection,d.scrollTick,d.titleTick,d.idleTick,result_.rgba,prompt,level,white>0);
+                titleArt_->paint(d.modeMenu,d.firstRow,d.scrollDirection,d.scrollTick,d.titleTick,d.idleTick,result_.rgba,prompt,level,white>0,d.unlock);
                 return result_;
             } else if(const auto& preview=match.faceoff()) {
                 const auto picks=match.selectedLineup();

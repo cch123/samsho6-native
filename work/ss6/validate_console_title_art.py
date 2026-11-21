@@ -20,9 +20,9 @@ int main(int argc,char** argv) {
     if(argc!=2)return 2;
     ss6::ConsoleTitleArt art(argv[1]);
     std::vector<uint8_t> pixels(640*480*4);
-    unsigned menu,row,dir,tick,title,idle,prompt,fade,white;
-    while(std::cin>>menu>>row>>dir>>tick>>title>>idle>>prompt>>fade>>white) {
-        art.paint(menu,row,dir,tick,title,idle,pixels,static_cast<ss6::ConsoleTitlePrompt>(prompt),fade,white);
+    unsigned menu,row,dir,tick,title,idle,prompt,fade,white,unlock;
+    while(std::cin>>menu>>row>>dir>>tick>>title>>idle>>prompt>>fade>>white>>unlock) {
+        art.paint(menu,row,dir,tick,title,idle,pixels,static_cast<ss6::ConsoleTitlePrompt>(prompt),fade,white,unlock);
         std::cout.write(reinterpret_cast<const char*>(pixels.data()),pixels.size()).flush();
     }
 }
@@ -120,8 +120,11 @@ def quad(frame,cmd,tex):
     source=np.minimum(255,rgba[vs[:,None],us].astype(np.int32)*mod//128)
     target=frame[y:b,x:r,:3];target[:]=np.clip(target+((source[:,:,:3]-target)*source[:,:,3:]//128),0,255)
 
-def original_frame(p,tex,menu,row,direction,tick,title,idle,prompt,level=0,white=False,cache=None):
+def original_frame(p,tex,menu,row,direction,tick,title,idle,prompt,level=0,white=False,unlock=0,cache=None):
     if cache is None:cache={}
+    # 1cd818 picks the row list from byte 43d0d6 and from 1e3f70's count of
+    # nonzero bytes in the 49 per-character flags at 43d09f.
+    p.write(0x43d0d6,unlock&1,1);p.write(0x43d09f,unlock>>1&1,1)
     if tex.get('fade',(0,False))!=(level,white):
         for addr,value in [(0x3ebf18,2),(0x3ec734,level),(0x3ec730,0xffffffff if white else 0xff000000),
                            (0x3ebf2c,1),(0x3ebf24,0)]:p.write(addr,value,4)
@@ -160,13 +163,14 @@ def main():
     ap.add_argument('--viewer',type=Path);ap.add_argument('--report',type=Path,default=REPORT)
     args=ap.parse_args()
     p,tex=fixture(args.assets);clock=prompt_lifecycle(p);cache={};count=total=0
-    cases=[(0,5,0,0,t,t,prompt,0,0) for t in (0,1,29,30,31,59,60,119,120,719) for prompt in (0,1,2)]
-    cases.extend((1,r,d,t,0,0,0,0,0) for r in range(6) for d in (0,1,2) for t in range(15 if d else 1))
+    cases=[(0,5,0,0,t,t,prompt,0,0,0) for t in (0,1,29,30,31,59,60,119,120,719) for prompt in (0,1,2)]
+    rows=(6,8,8,9)
+    cases.extend((1,r,d,t,0,0,0,0,0,u) for u in range(4) for r in range(rows[u]) for d in (0,1,2) for t in range(15 if d else 1))
     levels=sorted({0,256,*range(0,256,25),*range(256,0,-25)})
     for white in (0,1):
         for level in levels:
-            cases.extend([(1,0,0,0,50,0,0,level,white),(1,3,2,9,50,0,0,level,white),
-                          (0,5,0,0,50,0,1,level,white),(0,5,0,0,50,0,2,level,white)])
+            cases.extend([(1,0,0,0,50,0,0,level,white,0),(1,3,2,9,50,0,0,level,white,0),
+                          (0,5,0,0,50,0,1,level,white,0),(0,5,0,0,50,0,2,level,white,0)])
     with tempfile.TemporaryDirectory() as tmp:
         cpp=Path(tmp)/'title.cpp';cpp.write_text(DRIVER);exe=cpp.with_suffix('')
         subprocess.run(['c++','-std=c++20','-ffp-contract=off','-O2','-I',ROOT/'src',cpp,ROOT/'src/console_title_art.cpp','-o',exe],check=True)
@@ -181,7 +185,7 @@ def main():
                     raise AssertionError((case,int(bad.sum()),x,y,native[y,x].tolist(),expected[y,x].tolist()))
             proc.stdin.close();assert proc.wait()==0
     report=dict(status='passed',elf_sha256=ORIGINAL,identical_640x480_frames=len(cases),original_gs_packets=count,
-                original_draw_routine_instructions=total,menu_rows=6,scroll_ticks_per_direction=15,
+                original_draw_routine_instructions=total,menu_rows_by_unlock=list(rows),scroll_ticks_per_direction=15,
                 black_and_white_fade_levels=levels,original_prompt_clock=clock,
                 resources={s:hashlib.sha256((args.assets/s).read_bytes()).hexdigest() for s in ('bg_title00.tex','bg_title00.pal','obj0_16.tex','font_coin.tex')},
                 scope='Original 118148 with resident 1ba1b0 before input, complete 127a88 idle or 1cd700 mode drawings, final GS colors and UV, original 116588 palette upload/expansion, 113aa8/113b28 forced fullscreen quad and independent resident prompt priority. Both local ports, factory options, hidden/START/WAIT prompts. Includes every intermediate black/white level of the fast title transitions.')

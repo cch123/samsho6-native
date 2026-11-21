@@ -8,8 +8,10 @@
 namespace ss6 {
 namespace {
 constexpr int width=640,height=480;
-constexpr std::array<std::string_view,6> names={
-    "ARCADE MODE","VS MODE","PRACTICE MODE","COLOR EDIT MODE","NETWORK MODE","OPTION MODE"
+// Indexed by ConsoleMode; the strings sit at 656860..656910.
+constexpr std::array<std::string_view,9> names={
+    "ARCADE MODE","VS MODE","PRACTICE MODE","SURVIVAL MODE","SPIRITS EDIT MODE",
+    "COLOR EDIT MODE","GALLERY MODE","NETWORK MODE","OPTION MODE"
 };
 
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size) {
@@ -76,9 +78,9 @@ ConsoleTitleArt::ConsoleTitleArt(const std::filesystem::path& assets) {
     prompts_[1]=makePrompt(wait,124);
 }
 
-void ConsoleTitleArt::label(unsigned item,int y,int intensity,int opacity,std::span<uint8_t> rgba) const {
+void ConsoleTitleArt::label(ConsoleMode item,int y,int intensity,int opacity,std::span<uint8_t> rgba) const {
     int x=240;
-    for(char ch:names.at(item)) {
+    for(char ch:names.at(unsigned(item))) {
         const int cell=ch-32,u=2+17*(cell%30),v=2+17*(cell/30);
         for(int row=0;row<15;++row) {
             auto* dst=rgba.data()+4*((y+row)*width+x);
@@ -95,7 +97,8 @@ void ConsoleTitleArt::label(unsigned item,int y,int intensity,int opacity,std::s
 
 void ConsoleTitleArt::paint(bool modeMenu,unsigned firstRow,int direction,unsigned tick,
                            unsigned,unsigned,std::span<uint8_t> rgba,ConsoleTitlePrompt prompt,
-                           unsigned fadeLevel,bool fadeWhite) const {
+                           unsigned fadeLevel,bool fadeWhite,unsigned unlock) const {
+    const auto rows=consoleModeRows(unlock);
     if(rgba.size()!=width*height*4)throw std::invalid_argument("Expected 640x480 title surface");
     if(fadeLevel>256)throw std::invalid_argument("Invalid title fade level");
     // 116588 interpolates the title CLUT in 5-bit RGB. The same transition
@@ -134,13 +137,13 @@ void ConsoleTitleArt::paint(bool modeMenu,unsigned firstRow,int direction,unsign
         }
         return;
     }
-    if(firstRow>=names.size()||direction<0||direction>2||(direction&&tick>=15))
+    if(firstRow>=rows.count||direction<0||direction>2||(direction&&tick>=15))
         throw std::invalid_argument("Invalid mode menu scroll");
     if(level==256)return;
     if(!direction) {
         for(unsigned row=0;row<3;++row) {
-            const unsigned item=(firstRow+row)%names.size();
-            const int shade=item==4?64:row==1?255:128;
+            const auto item=rows.items[(firstRow+row)%rows.count];
+            const int shade=item==ConsoleMode::Network?64:row==1?255:128;
             label(item,332+24*row,vertex(shade),128,rgba);
         }
         return;
@@ -150,9 +153,9 @@ void ConsoleTitleArt::paint(bool modeMenu,unsigned firstRow,int direction,unsign
     // it already identifies the destination; four rows crossfade around it.
     const int offset=int(tick)*24/15,shade=int(tick)*127/15;
     for(unsigned row=0;row<4;++row) {
-        const unsigned item=(firstRow+row+(direction==2?names.size()-1:0))%names.size();
+        const auto item=rows.items[(firstRow+row+(direction==2?rows.count-1:0))%rows.count];
         const unsigned phaseRow=direction==1?row:3-row;
-        const int rowShade=item==4?64:phaseRow==1?128+shade:phaseRow==2?255-shade:128;
+        const int rowShade=item==ConsoleMode::Network?64:phaseRow==1?128+shade:phaseRow==2?255-shade:128;
         const int alpha=phaseRow==0?17*int(tick):phaseRow==3?255-17*int(tick):255;
         const int y=(direction==1?308+offset:332-offset)+24*int(row);
         label(item,y,vertex(rowShade),(alpha+1)/2,rgba);

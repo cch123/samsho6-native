@@ -65,8 +65,8 @@ void SoundSelection::stop(uint32_t& word) {
 void SoundSelection::cutVoice(uint32_t word) {
     if(word&0x8000)events_.push_back({BattleSoundKind::Stop,0,int(word&7)});
 }
-void SoundSelection::voice(int character,int tone) {
-    events_.push_back({BattleSoundKind::Voice,character,tone});
+void SoundSelection::voice(int character,int tone,int language) {
+    events_.push_back({BattleSoundKind::Voice,character,tone,language});
     // 213378 keys on a short physical channel for character 50 and
     // character 29's first eight spoken lines.
     if(character==50||(character==29&&tone>=0&&tone<8))nextChannel_=nextChannel_==21?14:nextChannel_+1;
@@ -92,6 +92,14 @@ void SoundSelection::stopMusic() {
 }
 void SoundSelection::playMusic(int track,int volume) {
     events_.push_back({BattleSoundKind::MusicPlay,volume,track});
+}
+void SoundSelection::requestMusic(int entry,int variant,int track,int flag) {
+    events_.push_back({BattleSoundKind::MusicRequest,variant,track,entry<<8|(flag&0xff)});
+    // 213ff0 plays track 23 as the resident jingle on the next short voice.
+    if(entry==0&&track==23)nextChannel_=nextChannel_==21?14:nextChannel_+1;
+}
+void SoundSelection::loadBank(int group,int bank) {
+    events_.push_back({BattleSoundKind::LoadBank,group,bank});
 }
 void SoundSelection::enterBattleScene(bool victoryMusicGate) {
     // 139678..139688. The gated stop remains a second IOP command when

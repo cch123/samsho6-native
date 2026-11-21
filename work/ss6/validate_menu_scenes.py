@@ -103,7 +103,7 @@ int main(int,char** argv){
         for(const auto& e:all){
             if(e.kind==GalleryEvent::Scene&&!fade.active()){pending=uint32_t(e.b);fade.begin(true);}
             else if(e.kind==GalleryEvent::EndingChosen)reselect=true;
-            else if(e.kind==GalleryEvent::Music)music=(e.c==0&&(e.a==1||e.a==2||e.a==24||(e.a>=5&&e.a<15)))?0:-1;
+            else if(e.kind==GalleryEvent::Music)music=0; // every track streams since music_streams.bin
             else if(e.kind==GalleryEvent::MusicStop)music=-1;
         }
     };

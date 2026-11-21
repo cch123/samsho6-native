@@ -1,3 +1,4 @@
+#include "audio_routing.hpp"
 #include "practice_art.hpp"
 #include "native_match.hpp"
 #include "arcade_presentation.hpp"
@@ -351,6 +352,8 @@ void NativeMatch::enterGalleryScene(uint32_t scene) {
         m.scene=MenuScene::SoundTest;break;
     case GalleryScene::Ending: {
         m.ending=std::make_unique<EndingViewer>();
+        // 182968 -> 120110: 1e79c8(0, 0x31), the ending scripts' sound bank 49 into group 1.
+        sounds_.loadBank(0,0x31);
         m.ending->enterScene(*m.galleryData,m.chrome,random);
         enterGalleryBackdrop(menuBackdrop_,m.chrome,random,seed);
         // 182ce0 enters the selection 13f4a8 on its first visit.
@@ -377,24 +380,21 @@ void NativeMatch::galleryEvents(const std::vector<GalleryEvent>& events) {
         if(e.a<0||packaged("vs_sounds_",m.banks[size_t(e.a)&1]))sounds_.sample(std::clamp(e.a,-1,1),e.b);
         break;
     case GalleryEvent::LoadBank:
+        // 1e79c8(a, b) -> 212dd8: one group's bank (its voices too below 0x31).
         m.banks[size_t(e.a)&1]=e.b;
-        sounds_.bindPlayers(unsigned(m.banks[0]),unsigned(m.banks[1]));
+        sounds_.loadBank(e.a,e.b);
         break;
     case GalleryEvent::BattleSound:
         // 1e8298: the fighter command path with mode word d/e, which lifts the gate of commands 170..197.
         if(packaged("vs_sounds_",e.c)&&packaged("vs_voice_",e.c))
             sounds_.act(e.b,e.a,e.c,0,battle_.gameMode,0,battle_.random);
         break;
-    case GalleryEvent::Voice:sounds_.voice(e.a,e.b);break;
-    case GalleryEvent::Music: {
-        // 214060(track, flag). The native stream service holds the title,
-        // select, victory and packaged arena tracks of the factory variant.
-        const auto stem=std::string("bgm")+(e.a<10?"0":"")+std::to_string(e.a)+"_l.vb";
-        const bool known=e.a==1||e.a==2||e.a==24||(e.a>=5&&e.a<15);
-        if(known&&e.c==0&&std::filesystem::exists(assets_/stem)){sounds_.playMusic(e.a,0x3200);m.musicAge=0;}
-        else {sounds_.stopMusic();m.musicAge=-1;}
+    case GalleryEvent::Voice:sounds_.voice(e.a,e.b,e.c);break;
+    case GalleryEvent::Music:
+        // 214060(track, flag): the soundtrack byte in force (c), the repeat flag (b)
+        // and the fade-out on the next stop.
+        sounds_.requestMusic(1,e.c!=0,e.a,e.b);m.musicAge=0;
         break;
-    }
     case GalleryEvent::MusicStop:sounds_.stopMusic();m.musicAge=-1;break;
     case GalleryEvent::EffectsStop:sounds_.stopGroup(2);break;
     case GalleryEvent::Scene:
@@ -448,11 +448,8 @@ void NativeMatch::tickGallery(const std::array<MenuPad,2>& pads,const std::array
         if(m.endingPlaying) {
             std::vector<ArcadeSceneSound> requests;
             const bool done=m.endingPlayer->tick(pads[m.ending->seat].pressed,requests);
-            for(const auto& r:requests) {
-                // 1e7b70 of the scripts; the ending music tracks are not packaged.
-                if(r.kind==ArcadeSceneSound::Sound&&r.a<0)sounds_.sample(-1,r.b);
-                else if(r.kind==ArcadeSceneSound::MusicStop)sounds_.stopMusic();
-            }
+            // The scripts' 1e7c00 / 1e7b70 / 1e7ad0 and their objects' 1e8298 (mode word d / e).
+            selectEndingSounds(sounds_,*system_,requests,battle_.gameMode,battle_.random);
             if(!done)break;
             // 182a98 returned: this visit continues into 182858 and 13f4a8 without a yield.
             m.endingPlaying=false;m.reselect=true;

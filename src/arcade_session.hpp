@@ -13,13 +13,17 @@ class ArcadePresentation;
 // Sound requests of the presentation scenes, in call order.
 struct ArcadeSceneSound {
     enum Kind:uint8_t {
-        Music,      // 1e7c00(a, b)
+        Music,      // 1e7c00(a, b): track a, IOP repeat flag b
         MusicStop,  // 1e7ad0()
-        Sound,      // 1e7b70(a, b)
+        Sound,      // 1e7b70(a, b): group a + 1 (-1 = common bank), tone b
         Voice,      // 1e7d60(a, b)
-        ObjectSound // 1e8298 from an ACT record of an ending object: a = sound command, b = object+0x14
+        ObjectSound,// 1e8298(c, a, b) from an ACT record of an ending object: a = sound command,
+                    // b = object+0x14 (character), c = object+0xc; ArcadePresentation also
+                    // emits the Sound / Voice it resolves to
+        LoadBank,   // 1e79c8(a, b): BVOICE2 bank b into group a + 1
+        EffectsStop // 1e7b40()
     } kind{};
-    int32_t a=0,b=0;
+    int32_t a=0,b=0,c=0;
 };
 
 class ArcadeTransitionTask;
@@ -91,5 +95,11 @@ private:
     void enter(ArcadeScene next);
     void frameEnd();
     uint32_t held_=0;
+    // LocalVersus hands presentation->sounds to the mixer after tickScene and
+    // after the fight's fade-out visits of tickTransition. Requests made on
+    // other visits (a scene entered from the select, a fight's end) wait in
+    // the list; only the delivered prefix is dropped on the next visit.
+    size_t soundsDelivered_=0;
+    void dropDeliveredSounds();
 };
 }

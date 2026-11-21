@@ -32,6 +32,8 @@ public:
     const CombatSoundSample* find(unsigned bank, unsigned tone) const;
     const CombatSoundSample* voice(unsigned tone) const;
     const CombatSoundSample* fighterEffect(unsigned id,unsigned tone);
+    // Any BVOICE2 bank 212dd8 can load into a group: 50 is the resident common bank.
+    const CombatSoundSample* bankEffect(unsigned id,unsigned tone);
     const CombatSoundSample* fighterVoice(unsigned id,unsigned tone);
     unsigned voiceCount(unsigned id);
     const CombatSoundSample* residentVoice(unsigned tone) const;

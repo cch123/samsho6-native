@@ -1,0 +1,196 @@
+ARCADE presentation scenes with text: opening, stage dialogue, pre-final demo
+============================================================================
+
+Native port: src/arcade_talk.hpp / .cpp (ArcadeOpening, ArcadeDialogue,
+ArcadePreFinal on the shared base ArcadeTalkScene, the palette-fade model
+ArcadeFade and the compose-over rasteriser ArcadeTalkArt).
+Tables and texts: work/ss6/extract_arcade_talk.py -> arcade_talk.bin
+(manifest outputs/ss6-feasibility/arcade_talk_tables.json).
+Validator: work/ss6/validate_arcade_talk.py ->
+outputs/ss6-feasibility/arcade_talk_validation.json.
+
+This document supersedes the UNKNOWN parts of docs/mode-arcade-flow.txt
+5.1 / 5.4 / 5.5 and docs/mode-arcade-demos.txt "mid-run talk demo" and
+"pre-final demo". Everything below was read from the disassembly and is
+runtime-verified by the validator (whole entries, coroutine visits from the
+yield return address to the next yield, destructors).
+
+Conventions: one native tick() is one coroutine visit. `pressed` is the
+edge word (+4) of the 118128 pad record of seat (G+0 == 1 ? 0 : 1).
+Reveal: before each text draw the coroutine writes 3d3aa0 = visit/4 (signed
+division by 4, i.e. (n + 3*(n<0)) >> 2); 113028 submits and counts glyphs
+while 3d3ab0 < 3d3aa0. A text service returns 1 ("fully revealed") when the
+count stayed below the limit. Fast-forward writes the visit counter 0x2710.
+The common page rule:  if revealed: hold--;  if pressed & 0x607:
+revealed ? hold = 0 : visit = 0x2710.
+
+1. Shared text services (implemented privately in ArcadeTalkScene)
+------------------------------------------------------------------
+  1a3070(character, group, n)   message record of a fighter:
+      table 50d550 (byte 43d052 == 0) / 50d618 (alternate);
+      group 0 -> *(block+0); groups 3..8 -> *(block+0x118+4*(group-3)) + 0x18*n.
+      Returns 0 for character 43 and >= 49. Rows 44..48 of 50d618 are not
+      pointers (0, 0xc, 2, 0x19, 0x1f, 0x24): the original dereferences
+      them; the extractor stores -1 and the port refuses those reads.
+  1a31e0(kind, page)            kind record: *(50d828 / 50d840 + 4*kind) + 0x18*page.
+  Message record (0x18 bytes): {balloon id, unused word, char* line[4]}.
+  1a18e0(side, id)              portrait binding 4eeef0 / 4eeef4; loads
+      demo_%02d.pvr/.pvp into slot 0x21+side when id < 0x31 and changed
+      (1a1928 / 1a19e8; palette 0x40 entries from file entry c0 to resident
+      c0 (side 1) / 1c0 (side 2)).
+  1a22a8 / 1a2380               portrait quads: band 1148f0(c0404040) at the
+      60a050 geometry, then 170x140 of slot 0x22 (left) or slot 0x23
+      mirrored at x 470 (right). id >= 0x31 draws the band only.
+  1a2468 / 1a2540 (+1a25f0)     up to four lines, y = (4-n)*0xe + base + 0x1c*i,
+      x 0xd5 or 0x2b for the upper box (0x2b when the left portrait id
+      >= 0x34), 0x2b with base 0x126 for the lower box.
+  1a2870                        up to three centred lines (x = 0x140 - 6*len,
+      y = (3-n)*0xc + 0x16e + 0x18*i): the pre-final demo.
+  1a26b0 / 1a2948               balloon: record 4eeef8[id] (id >= 6: id-5,
+      mirrored u), sprite depth 60a080 / 60a084, then up to three lines at
+      (textX+x, textY+y+(3-n)*0xe+0x18*i). 1a2948 takes an explicit colour
+      (alpha fade) for sprite and text.
+  Text colours 112f30(colour, shadow) -> 3d3ae0 / 3d3ae4 drive the 16-entry
+  glyph CLUT 116588 builds every frame (alpha (1+17k)>>1).
+  Unification note: src/arcade_map.* (1a26b0 balloon) and src/arcade_results.*
+  carry private copies of the same services; src/versus_result_text.* is the
+  VS win-quote layout (separate routine 1a3168 / GOTH_24 quote path). A shared
+  "ArcadeText" unit should own 1a3070 / 1a31e0 / 1a26b0 / 1a2948 / 113028
+  reveal semantics; the three ports agree on the rules above.
+
+2. Opening 1c60c8
+-----------------
+  Entry order (verified): 1126f0 coroutine 1c6400; 1040a0 (seeds the 90-record
+  effect pool 114ecb0: 9 or 10 C-library draws per record, NOT in the
+  previous spec's draw accounting); 112670 hand-off task 1c1ae8; 118320(1c61b8);
+  1c6328 (modes 1/2: 17a2c8(P[h].char, 1, held); G+98 = 1 in every mode);
+  1c2420; 1c1ec8 (map icon, G.stage clamped to 9); 1c6388 (both 11d488,
+  582528 latch word 58252c = 0); 1c6a68 (map task 1c6b10 at priority 0xa,
+  its camera 6553ac.., 1c1e30 map resources = 17 library draws in 1c2010);
+  camera 655398..; 104510 (disables the effect pool); 1e7c00(0x16, 0).
+  Coroutine 1c6400:
+    start: modes 1/2 create the human's fighter object: 11e2e8 + 11fed0(obj,
+      seat, 0x704, x 0xf0 / 0x190, 0, flags 0 / 0x80000), +20 = P[h].colour;
+      112f30(ffffff, 404040).
+    Wait: 0x22 visits, G+2c = 1 every visit (keeps the challenger out).
+    Dim: 117108(0, level) with level += 0x10 up to 0x80 and 117180(200,200,2)
+      every step: the map palette sinks to half black in 8 visits.
+    Text: 5 lines (4efc10) or 7 lines (4ff6f0, byte 43d052 != 0), centred
+      x = 0x140 - (len/2)*0xc, y = 0xb4 + 0x18*i; hold 0xf0 after the full
+      reveal; common page rule; START (pressed & 8) leaves the loop.
+      On leaving: 117180(200,200,0), G+2c = 0; a START exit hands off
+      (1c1ac0) immediately when G+18 == 0.
+    Object: walk-in until the object's +c0 end flag; START hands off.
+    Balloon: 112f30(0, ffffff) black text; message 1a3070(char, 0, 0), balloon
+      id + 5 for mode 1 (mirrored for seat 0); hold 0xb4; common page rule;
+      the object loops action 0x703 whenever it finishes.
+    Fade: 1a2948 with alpha 0xff falling by 8 per visit (held while G+18 != 0);
+      at alpha <= 0 and G+18 == 0 the hand-off runs once (latch 58252c).
+  Hand-off: 1c1ac0(1c61b8, 1c1b20) -> the task 1c1ae8 runs the destructor and
+    the map entry on the same frame without a fade; P[h]+18 = 1 (1c6a30).
+  Destructor 1c61b8: 1c1de8 / 1c6ae0 frees, 117180(200,200,0), G+2c = 0.
+
+3. Stage dialogue 1c5290
+------------------------
+  Entry: 1a4a98(G.stage) (arena picture task, tag fa1); camera 655350..;
+  1c5438 (1828c0: portraits unbound, balloon sheets, 112f30(ffffff,404040);
+  11d488 both seats); BGM by the human's stage index (655364 jump table):
+  3,4 -> (0x11,1); 5 -> (0x12,1); 6 -> 582528 == 1 ? 0x12 : 0x13; 7 -> 0x13.
+  Coroutine 1c55d8:
+    objects: both seats, actions 655378 / 65537c; in the post-fight variant
+      the CPU seat stands in action 0x401. x 0xf0 / 0x190 (flag 0x80000),
+      +20 = P[k].colour. Each visit: when an object's +c0 flag is set it
+      restarts its action (120390), then 120ce0.
+    1c5490 (stage, 582528) -> {text group, pages}:
+      (3,0) {3,4}  (4,1) {4,3}  (5,0) {5,4}  (6,1) {6,4}  (6,0) {7,4}
+      (7,1) {8,1}  otherwise no page (the post state is entered at once).
+    Boss kind 1c5590 (stage 6 pre-fight and stage 7 post-fight, from the
+      opponent): 0xd -> 2, 0x1a -> 3, 0x1b -> 1, others 0.
+    1c5dc0 page message: stage 6 pre-fight: pages 0..2 from 1a31e0(kind, page),
+      page 3 from 1a3070(player, 7, kind); stage 7 post-fight:
+      1a3070(player, 8, kind); otherwise 1a3070(player, group, page).
+    1c5e58 box type per page: 1 upper (1a2468), 2 lower (1a2540), 0 none:
+      (3,0)/(5,0): pages 1,3 upper, 0,2 lower; (4,1): 0,2 upper, 1 lower;
+      (6,1): 0,2,3 upper, 1 lower; (6,0): 3 upper, 0..2 lower; (7,1): 0 upper.
+    Page: 1a18e0(1, player), 1a18e0(2, opponent); reveal 0, hold 0x10e;
+      both portrait quads (the right one is omitted after the final fight,
+      stage 7 post); common page rule.
+      START with G+18 == 0: pre-fight -> 1252f0(2,0,1c53e0,139760);
+      post-fight stage 7 -> ends the page at once (the pan cannot be skipped);
+      other post-fight -> exit to the map (below).
+    Stage 6 post-fight, page 3 (1c57d0..1c59d4): G+2c = 1; three visits with
+      a full-screen white 1145c0 rectangle (depth 655384), one clear visit,
+      three white visits; then the white-out: 117108(-1, level), level += 8
+      per visit with portraits and objects, the white rectangle from level
+      0xf0; at level > 0x100: 11e3a0/112a70(fa1), 1e7ad0, 1a4a98(10) (the
+      arena is replaced behind the white screen), 0x2d visits at level 0x100
+      with nothing drawn, then the level falls by 8 per visit back to < 0,
+      G+2c = 0, and the page continues where it was.
+    Post state: last page kept fully revealed (3d3aa0 = 0x2710); when G+18 == 0
+      and no exit was issued: pre-fight -> 1252f0(2,0,1c53e0,139760); post
+      stage != 7 -> exit to the map; stage 7 -> camera pan.
+    Exit to the map: 17a548() ? 1252f0(4,1,...,1c1b20) : 1252f0(2,0,...,1c1b20).
+    Pan (stage 7 post-fight): 122ed8(655390, y, 0) with y from 655380 rising
+      by 655388 per visit; once y >= 65538c and G+18 == 0:
+      1252f0(1,1,1c53e0,1c6cc0). Every exit of this scene is latched by s4
+      (one 1252f0 call per scene).
+  Destructor 1c53e0: 582528 = 0, 1e7ad0, 11e3a0/112a70(fa1).
+  Stage background: drawn by the 1a4a98 task, not by the coroutine; the port
+  emits StageBackground(stage) and the validator stubs 1a4a98 on both sides.
+
+4. Pre-final demo 1c6cc0
+------------------------
+  Entry: coroutine 1c6e58; camera 6553c8..; 1c6da8 loads demo_mga.pvr (slot 5,
+  1024x1024 8-bit, palette entry 0 cleared by 1c6e20), moji4.pvr (slot 0xc),
+  moji5.pvr (slot 0xd), demo_mga.pvp; 1c7cb0(0); 1c2420; 1e7c00(0x14, 1).
+  1c7cb0(v) writes ONLY the human seat's +1c (mode 1: 4568ac, mode 2: 4568dc);
+  docs/mode-arcade-flow.txt 5.5 said both seats.
+  Coroutine 1c6e58 (literals 655420..655490, sheet records 4c66a0 / 4c67d8
+  captions, 4c67f0 / 4c6808 backdrop strips):
+    start: 112f30(ffffff,404040); 1e7d60(0x31, 0x35) voice.
+    Captions 0x3c visits: 1170c8(0), 117108(-1, 0x100), 117180(200,200,2)
+      (picture held at full white), backdrop 1c7848(0), captions 117de8.
+    Caption fade 0x3c visits: alpha 0xff - 0xff*k/0x1e for k < 0x1e.
+    Zoom: 1c7a30 over 45 visits (block sp+0).
+    Rest 10 visits; Box 0x1e visits: band alpha k*0xc0/0x1e, scroll advance.
+    Text: three pages 1a31e0(4, page) through 1a2870, hold 0xb4, common page
+      rule, START skip (latched) -> exit.
+    Scroll until 655454, pause 0x1e visits, then the leave move: two 1c7a30
+      blocks; the exit 1252f0(1,2,1c6d70,139760) + 117180(200,200,0) +
+      1c7cb0(1) is issued on the first leave visit; START during the leave
+      issues it again (no latch on that path, 1c77b4).
+  1c7a30: value = to - (to-from) * 30bd00(pi/2 - n*pi/45/2) through the fp-bit
+    double routines 310be0 / 310fa0 / 310f38 / 311510, which TRUNCATE toward
+    zero (soft_double.hpp); the four components share one sine. The 45 sine
+    results are pinned in arcade_talk.bin by executing 30bd00.
+  1c7848 backdrop: two 114118 quads of slot 5 at depth 0, 3db8fc = 0,
+    3db900 = -1; the second strip is quarter-turned (texel v along screen x).
+  Destructor 1c6d70: 1e7ad0, 117180(200,200,0).
+
+5. Palette fade (ArcadeFade)
+----------------------------
+  3ebf18 mode (bit 1 fade, bits 0/2 greyscale), 3ec730 colour, 3ec734 level,
+  3ec738 speed, 3ebf1c / 3ebf20 bounds, 3ebf30 per-entry flags (117180).
+  116588 per entry: greyscale (r*10+g*16+b*6)>>5 when selected, then
+  c = (c*(256-level) + fade*level) >> 8 on 5-bit components; a zero level
+  masks the fade bit. The transition task of 1252f0 drives the same words, so
+  one ArcadeFade must be shared by every scene and the transition.
+
+6. Not ported here
+------------------
+  - Fighter objects: the port issues ObjectCreate / ObjectAction / ObjectStep
+    requests and reads the +c0 end flag through ArcadeTalkObjects; the sprites
+    (resource slots of 11d488, actions 0x703 / 0x704 / 0x401 / 655378) are not
+    rendered by ArcadeTalkArt. The validator gives both sides the same +c0
+    fixture and draws no fighter on either side.
+  - The map picture task 1c6b10 behind the opening (src/arcade_map.*), the
+    arena picture task of 1a4a98 (src/combat_stage*, arenas 0/1 only on this
+    branch) and the transition task of 1252f0.
+  - Sound: requests only (1e7c00 / 1e7ad0 / 1e7d60 arguments).
+  - Page-less dialogue (stage 7 before the fight; reachable after CONTINUE
+    -> map -> walk-in, 1c6068 accepts index 7): the post state draws 1a22a8
+    with portrait -1. slti accepts it, so the original submits a slot 0x22
+    quad that samples whatever the unbound slot (10add8 in 1828c0) leaves in
+    VRAM. The port submits the same queue entry; ArcadeTalkArt paints nothing
+    for it, and the validator's reference painter skips it too (counted as
+    unbound_slot_quads).

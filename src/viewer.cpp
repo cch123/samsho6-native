@@ -960,6 +960,16 @@ public:
             present(r,{},paused);
             return;
         }
+        // The arcade scenes come first: after the single-seat select the
+        // finished select scene stays in the session until the first fight.
+        if(const auto* running=session?session->arcade():nullptr;arcadeScene(running)) {
+            // The ARCADE presentation scenes, CONTINUE and GAME OVER with their objects.
+            running->presentation->paint(*running,scenePixels_);
+            check(SDL_UpdateTexture(texture,nullptr,scenePixels_.data(),640*4));
+            check(SDL_RenderTexture(r,texture,nullptr,nullptr));
+            present(r,{},paused);
+            return;
+        }
         if(match.title() || match.characterSelect()) {
             const auto& image=paint(match);
             check(SDL_UpdateTexture(texture,nullptr,image.rgba.data(),image.width*4));
@@ -1005,14 +1015,6 @@ public:
             return;
         }
         const auto* arcade=session?session->arcade():nullptr;
-        if(arcadeScene(arcade)) {
-            // The ARCADE presentation scenes, CONTINUE and GAME OVER with their objects.
-            arcade->presentation->paint(*arcade,scenePixels_);
-            check(SDL_UpdateTexture(texture,nullptr,scenePixels_.data(),640*4));
-            check(SDL_RenderTexture(r,texture,nullptr,nullptr));
-            present(r,{},paused);
-            return;
-        }
         if(arcade&&(arcade->scene==ss6::ArcadeScene::Continue||arcade->scene==ss6::ArcadeScene::GameOver)) {
             // Task_Continue / Task_GameOver. The stage picture and the
             // loser's fighter object behind the art are not drawn yet.

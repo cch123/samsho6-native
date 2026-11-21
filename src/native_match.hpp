@@ -17,6 +17,7 @@
 #include "system_data.hpp"
 #include "console_option.hpp"
 #include "spirits_edit.hpp"
+#include "arcade_tally.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -40,6 +41,9 @@ struct MatchRules {
     // the human seat's progress count; 158830 raises it to 8 for 33 and 48.
     std::array<int,2> cpuLevel{-1,-1};
     int stage=-1;         // GameData+4 when the caller already chose the stage
+    int32_t score=0;      // GameData+90 carried between arcade fights
+    // The process RNG at scene entry when the caller owns it between scenes.
+    std::optional<GameRandom> random;
 };
 struct MatchFighter {
     explicit MatchFighter(ActionBank& bank):body(bank) {}
@@ -78,6 +82,10 @@ public:
     const SceneFade& sceneFade() const {return sceneFade_;}
     // SPIRITS EDIT MODE (13ad40); the page is driven by one seat.
     const std::optional<SpiritsEdit>& spiritsEdit() const {return spiritsEdit_;}
+    // Arcade: GameData+90 and the state-9 tally task (1c7f08).
+    int32_t arcadeScore() const {return arcadeScore_;}
+    const ArcadeTally& arcadeTally() const {return tally_;}
+    const ArcadeTallyTables* arcadeTables() const {return tallyTables_.get();}
     bool titlePromptVisible() const {return promptClock_<60;}
     void openCharacterSelect(bool boot=false);
     void leaveUnportedFight(const UnportedFighterState&);
@@ -120,6 +128,11 @@ private:
     std::unique_ptr<EditWidgetAssets> editWidgets_;
     std::optional<SpiritsEdit> spiritsEdit_;
     unsigned editSeat_=0;
+    std::unique_ptr<ArcadeTallyTables> tallyTables_;
+    ArcadeTally tally_;
+    int32_t arcadeScore_=0,arcadeFinishBonus_=0;
+    std::array<uint32_t,2> menuPressed_{};
+    ArcadeTallyWorld tallyWorld() const;
     bool editLeaving_=false;
     void tickSpiritsEdit(const std::array<NormalizedPadSample,2>&);
     void returnToModeMenu();

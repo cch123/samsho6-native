@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "round_initialization.hpp"
 #include "input_features.hpp"
 #include "stage_camera.hpp"
@@ -63,6 +64,14 @@ struct BattleRoundState {
     bool skipsIntroduction() const {return gameMode==0||practice()||survival();}
     // The seat whose arcade run this fight belongs to, or -1.
     int arcadeSeat() const {return gameMode==1?0:gameMode==2?1:-1;}
+    // State 9 (1447c0 / 144848): the arcade round tally task 1c7f08, owned
+    // by the scene. tallyUpdate returns 1c87f0 (done).
+    std::function<void()> tallyEnter,tallyLeave;
+    std::function<bool()> tallyUpdate;
+    // 143d6c: rounds the arcade seat won with a qualifying finish (17a718),
+    // and whether state 10 reached 145628 outside the VS menu.
+    int32_t arcadeQualifyingWins=0;
+    bool modeMatchEnded=false;
     // In local versus one displayed count spans 90 normal battle updates.
     static constexpr std::array<int,4> roundTimeLimits{60,90,99,0};
     int remainingSeconds() const;

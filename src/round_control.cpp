@@ -130,6 +130,12 @@ void RoundControl::enterEnding(BattleRoundState& b,const std::array<RoundPlayerR
     BattleGauges::stop(b,players);
     b.match.recordRound({players[0].actor.fieldA30,players[1].actor.fieldA30},
                         {players[0].actor.maximumLifeA34,players[1].actor.maximumLifeA34});
+    // 143d6c: a round the arcade seat wins with a recorded finish other than
+    // kind 5 counts toward the hidden opponent (17a718).
+    if(const int seat=b.arcadeSeat();seat>=0&&b.match.result.winner==seat) {
+        const int kind=b.match.players[unsigned(seat)].outcome1c;
+        if(kind!=-1&&kind!=5)++b.arcadeQualifyingWins;
+    }
     auto ui=b.match.result.ui;const bool knockout=ui==15||ui==18;
     if(b.match.complete()) {
         results.recordFinal(b,players);

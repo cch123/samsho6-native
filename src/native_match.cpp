@@ -95,6 +95,9 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         // take the stage the schedule already stored in GameData+4.
         b.matchEnd.metadataStage04=explicitRules_&&rules_.stage>=0?rules_.stage:selectConsoleVersusStage(b.random,selectedStage_);
     }
+    // A caller that owned the RNG between scenes supplies it; this replaces
+    // the copy inherited from the previous fight.
+    if(rules&&rules->random)b.random=*rules->random;
     for(unsigned arena=0;arena<combatStages_.size();++arena) {
         combatStages_[arena].stage=arena;
         if(rematchFrom)combatStages_[arena].inheritRematch(rematchFrom->combatStages_[arena]);
@@ -177,11 +180,43 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
     // black midpoint the fighters and clock already exist; priority 50
     // can sample the next pad only on the following scheduler dispatch.
     if(mode==VersusMode::Console)initialize_.begin(ground_,players(),b,effects_);
+    if(explicitRules_&&b.arcadeSeat()>=0) {
+        tallyTables_=std::make_unique<ArcadeTallyTables>(path);
+        arcadeScore_=rules_.score;
+        b.tallyEnter=[this] {
+            auto world=tallyWorld();
+            tally_.enter(world);
+            battle_.matchEnd.endFlagA4=world.postMatchMenuA4;arcadeScore_=world.score90;
+        };
+        b.tallyUpdate=[this] {
+            auto world=tallyWorld();
+            const auto tick=tally_.tick(menuPressed_,world);
+            arcadeScore_=world.score90;arcadeFinishBonus_=world.finishBonus582950;
+            for(int i=0;i<tick.sounds;++i)sounds_.sample(-1,0x42);
+            return tally_.done();
+        };
+        b.tallyLeave=[this]{tally_.leave();};
+    }
     for(unsigned i=0;i<2;++i)if(explicitRules_&&rules_.cpuLevel[i]>=0) {
         // 158830: Sugoroku (33) and Kuroko (48) always fight at level 8.
         const auto raw=fighters_[i].actor.characterA14;
         enableCpu(i,raw==0x21||raw==0x30?8:rules_.cpuLevel[i]);
     }
+}
+ArcadeTallyWorld NativeMatch::tallyWorld() const {
+    const auto& b=battle_;
+    ArcadeTallyWorld w;
+    w.clockOption13c=b.timeOption13c;w.roundClock114=b.timers.values[0];w.survival=b.survival();
+    w.timeOption43d05d=uint8_t(rules_.gameTime);
+    for(unsigned i=0;i<2;++i) {
+        // The HUD bar record mirrors the fighter's life once the round has ended.
+        w.life[i].life14=fighters_[i].actor.fieldA30;
+        w.wins28[i]=b.match.players[i].wins;w.required2c[i]=b.match.players[i].requiredWins;
+        w.seatRequired20[i]=rules_.requiredWins[i];
+    }
+    w.score90=arcadeScore_;w.sceneSwitch18=b.matchEnd.field18;w.postMatchMenuA4=b.matchEnd.endFlagA4;
+    w.finishBonus582950=arcadeFinishBonus_;
+    return w;
 }
 std::array<RoundPlayerRef,2> NativeMatch::players() {
     auto ref=[](MatchFighter& f){return RoundPlayerRef{f.body,f.actor,f.input,f.config,f.storage,f.objects};};
@@ -1264,6 +1299,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
     // 118148 visits the global PRESS START task before the scene and even
     // while 2P menus or combat hide its text. It survives scene replacement.
     promptClock_=(promptClock_+1)%120;
+    menuPressed_={resultPad(pads[0].pressed),resultPad(pads[1].pressed)};
     if(option_){tickOption(pads);return;}
     if(spiritsEdit_){tickSpiritsEdit(pads);return;}
     if(title_) {

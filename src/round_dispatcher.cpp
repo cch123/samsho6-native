@@ -25,9 +25,15 @@ bool RoundDispatcher::enter(BattleRoundState& b,const std::array<RoundPlayerRef,
     case 5:case 6:RoundControl::enterEnding(b,p,s.captions,s.results,s.sound);break;
     case 7:RoundControl::enterVictoryCamera(b,p);break;
     case 8:RoundControl::enterVictory(b,p,s.events,s.sound);break;
-    case 9:throw std::runtime_error("Round result-page entry1447c0 is not implemented");
+    case 9:
+        if(b.matchEnd.submodeA0==6||!b.tallyEnter)throw std::runtime_error("Round result-page entry 1447c0 needs the arcade tally");
+        b.tallyEnter(); // 1c7ce8
+        break;
     case 10:
-        if(b.matchEnd.submodeA0==2) {
+        if(b.matchEnd.submodeA0==1||b.gameMode==0||b.practice()) {
+            // 145628 routes arcade to its next scene; the demo and practice do nothing.
+            if(!b.matchEnd.field18)b.modeMatchEnded=true;
+        } else if(b.matchEnd.submodeA0==2) {
             b.consoleMenu.enter(b.matchEnd.winner08,{p[0].config.character,p[1].config.character},!b.matchEnd.field18);
             b.matchEnd.endFlagA4=0; // 1daec0 suspends battle and clears the final-result latch.
         } else if(!b.matchEnd.field18) {
@@ -67,7 +73,13 @@ void RoundDispatcher::update(BattleRoundState& b,const std::array<RoundPlayerRef
         break;
     case 7:RoundControl::victoryCamera(b,p);break;
     case 8:RoundControl::victory(b,p,b.matchEnd.submodeA0);break;
-    case 9:throw std::runtime_error("Round result-page update144848 is not implemented");
+    case 9:
+        if(!b.tallyUpdate)throw std::runtime_error("Round result-page update 144848 needs the arcade tally");
+        if(b.tallyUpdate()) {
+            b.requestedState=b.match.complete()?10:0;
+            b.tallyLeave(); // 1c7d20
+        }
+        break;
     default:break;
     }
     //This also runs when the callback requested a different state, and

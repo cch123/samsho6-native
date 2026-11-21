@@ -117,6 +117,8 @@ def main():
  zan="--zan" in sys.argv
  combinations=[(0,2),(2,0),(1,2),(2,1),(2,2)] if zan else [(0,0),(1,1),(0,1),(1,0)]
  if ten:combinations=[(a,b) for a in range(4) for b in range(4) if 3 in (a,b)]
+ # Makai Gaoh's system 7 (arcade final): stock slot-10 art, Shin's gradient.
+ if "--spirit7" in sys.argv:combinations=[(7,7),(0,7),(7,1),(5,7),(7,2)]
  p=original();total=0; gallery=[]
  with tempfile.TemporaryDirectory() as td:
   td=Path(td);(td/'test.cpp').write_text(SAMPLE_DRIVER);exe=td/'probe'
@@ -148,7 +150,8 @@ def main():
   run.stdin.close();assert run.wait()==0
  report=dict(ticks=len(cases)*len(combinations),spirits=combinations,rage_states=[0,1,2,3],GS_packets=total,compared_RGBA_pixels=len(cases)*len(combinations)*(H-TOP)*W,
   source='SLPS_255.59 full 1be1a8 reset,1c0718,1bff20,1c0d08,1c0fd0,1c02f8,1c0920 plus callees. Original GS queue entries at 108464 / 1058f8, PSMT8+CPSM32 CSM1. Comparison uses software rasterization of both players on a patterned background, including clipped enlarged emblem. No hardware frame capture.')
- (OUT/('ten-hud-validation.json' if ten else 'zan-hud-validation.json' if zan else 'rage-hud-validation.json')).write_text(json.dumps(report,indent=2)+'\n')
- if not (ten or zan):Image.fromarray(np.vstack(gallery)).save(OUT/'rage-hud-phases.png')
+ spirit7='--spirit7' in sys.argv
+ (OUT/('ten-hud-validation.json' if ten else 'zan-hud-validation.json' if zan else 'spirit7-hud-validation.json' if spirit7 else 'rage-hud-validation.json')).write_text(json.dumps(report,indent=2)+'\n')
+ if not (ten or zan or spirit7):Image.fromarray(np.vstack(gallery)).save(OUT/'rage-hud-phases.png')
  print(json.dumps(report))
 if __name__=='__main__':main()

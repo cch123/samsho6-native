@@ -42,11 +42,13 @@ LocalVersus::LocalVersus(const std::filesystem::path& assets,int roundTime,Versu
                          std::array<unsigned,2> spirits,VersusEntry entry,std::array<bool,2> cpuSeats)
     :assets_(assets),roundTime_(roundTime),mode_(mode),spirits_(spirits),entry_(entry),cpuSeats_(cpuSeats),
      system_(std::make_shared<SystemData>(assets)) {
-    // SS6_SUBSTITUTE="seat:character[,seat:character]" (debug harnesses, see substituteCharacter).
+    // SS6_SUBSTITUTE="seat:character[:spirit][,...]" (debug harnesses, see substituteCharacter).
     if(const char* s=std::getenv("SS6_SUBSTITUTE")) {
-        unsigned seat=0,character=0;int used=0;
+        unsigned seat=0,character=0,spirit=0;int used=0;
         while(std::sscanf(s,"%u:%u%n",&seat,&character,&used)==2) {
-            substituteCharacter(seat,character);s+=used;if(*s!=',')break;++s;
+            s+=used;int chosen=-1;
+            if(*s==':'&&std::sscanf(s,":%u%n",&spirit,&used)==1){chosen=int(spirit);s+=used;}
+            substituteCharacter(seat,character,chosen);if(*s!=',')break;++s;
         }
     }
     restart();
@@ -234,7 +236,7 @@ bool LocalVersus::startSurvivalFight(const GameRandom& random,bool confirmed) {
     VersusLineup lineup;
     for(unsigned i=0;i<2;++i) {
         lineup[i]={unsigned(s.setup.character[i]),unsigned(s.setup.spirit[i]),unsigned(s.setup.colour[i])};
-        if(lineup[i].spirit>5&&lineup[i].spirit!=8) {
+        if(lineup[i].spirit>5&&lineup[i].spirit!=7&&lineup[i].spirit!=8) {
             // Spirits 6 and 7 have no native port; the fight runs with spirit 0.
             notice+=(notice.empty()?"":" / ")+std::string(i==h?"YOUR":"OPPONENT")+" SPIRIT "+std::to_string(lineup[i].spirit)+" IS IN DEVELOPMENT (SPIRIT 0 USED)";
             lineup[i].spirit=0;
@@ -418,7 +420,10 @@ void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
     if(match_->faceoff()&&match_->faceoff()->complete) {
         const auto rules=versusRules();
         auto lineup=match_->selectedLineup();
-        for(unsigned seat=0;seat<2;++seat)if(substitute_[seat]>=0)lineup[seat].character=unsigned(substitute_[seat]);
+        for(unsigned seat=0;seat<2;++seat) {
+            if(substitute_[seat]>=0)lineup[seat].character=unsigned(substitute_[seat]);
+            if(substituteSpirit_[seat]>=0)lineup[seat].spirit=unsigned(substituteSpirit_[seat]);
+        }
         auto next=std::make_unique<NativeMatch>(assets_,-1,mode_,match_.get(),std::array<unsigned,2>{},
                                                 lineup,match_->characterSelect()->stage,
                                                 std::array<CpuSeatDecision,2>{},&rules);

@@ -27,7 +27,10 @@ constexpr std::array<SpiritArt,9> spirits{{
     {{245,334,60,64},{350,334,53,53},10,384,{128,128,255},{0,0,255}},
     {{1,269,60,64},{404,334,53,53},8,384,{200,255,255},{255,255,0}},
     {{184,334,60,64},{458,334,53,53},10,385,{255,255,128},{255,255,0}},
-    {},{}, // systems 6 / 7 are option-gated and not offered by the console VS select
+    {}, // system 6 (the custom descriptor) is option-gated and not ported
+    // System 7, Makai Gaoh's in the arcade final: base 0x4c61f0, emblem 0x4c61c0 (slot 10), placement
+    // 654cd8 / 654d28, gradient 654c50 / 654c28 (the same colors as Shin).
+    {{343,442,60,64},{404,442,53,53},9,384,{255,200,0},{255,80,0}},
     {{217,421,60,64},{1,421,53,53},9,384,{128,255,128},{0,255,0},true} // 0x4c5380 / 0x4c53b0; Zan's gradient
 }};
 
@@ -135,7 +138,7 @@ void paintLifeGauge(std::span<uint8_t> dst,const RageGaugePlayer& p,int side) {
         if(to>from)bar(dst,side?366+from:273-to,45,to-from,16,r,g,b,alpha);
     };
     if(p.woundWidth>0)bar(dst,p.woundX,45,p.woundWidth,16,255,0,0,64);
-    if(p.system==0||p.system==1||p.system==3||p.system==8) {
+    if(p.system==0||p.system==1||p.system==3||p.system==7||p.system==8) { // 1be8xx: every system but 2/4/5/6
         // The HUD grows its own geometry one pixel at a time on healing.
         // The actor has already received the full amount at this point.
         bar(dst,p.lifeX,45,p.lifeWidth,16,255,255,32);
@@ -392,7 +395,7 @@ void RageGaugeRenderer::paintRage(const RageGaugeState& state,std::span<uint8_t>
     for(int side=0;side<2;++side) {
         const auto& p=state.players[side];
         const auto& art=spirits.at(p.system);
-        if(p.system==6||p.system==7)throw std::runtime_error("Spirit 6/7 HUD art is not ported");
+        if(p.system==6)throw std::runtime_error("Spirit 6 HUD art is not ported");
         const auto& spiritAtlas=art.slot1?slotOneAtlas_:gaugeAtlas_;
         const bool mu=p.system==4&&p.lifeGauge.phase==3;
         const bool spent=p.system==4&&p.lifeGauge.phase==4;

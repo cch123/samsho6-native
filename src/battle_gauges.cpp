@@ -82,7 +82,7 @@ void BattleGauges::task(BattleRoundState& b,const std::array<RoundPlayerRef,2>& 
     if(b.requestedState!=4||b.timers.lock>0||g.paused46a940)return;
     for(unsigned i=0;i<2;++i) {
         const auto& p=players[i];auto& a=p.actor;
-        if(!playableFighter(a.character)||p.config.character!=a.character||(unsigned(p.config.system)>5&&p.config.system!=8))
+        if(!playableFighter(a.character)||p.config.character!=a.character||(unsigned(p.config.system)>5&&p.config.system!=7&&p.config.system!=8))
             throw std::runtime_error("Gauge task requires supported fighters and an ordinary battle spirit");
         if(p.config.system==4) {
             if(a.systemState13c<3) {

@@ -157,7 +157,7 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         const auto& pick=lineup_[i];
         // 148df0: Purple Nakoruru (42) runs as Nakoruru (a10 = 1); her body keeps resource 42.
         const unsigned logic=logicCharacter(pick.character);
-        if((pick.spirit>5&&pick.spirit!=8)||!playableFighter(logic))throw std::invalid_argument("Unsupported versus selection");
+        if((pick.spirit>5&&pick.spirit!=7&&pick.spirit!=8)||!playableFighter(logic))throw std::invalid_argument("Unsupported versus selection");
         f.config.character=a.character=logic;a.characterA14=int32_t(pick.character);
         cpuSeats_[i]=std::move(cpuSeats[i]);
         if(cpuSeats_[i]){a.controlKindA20=1;a.controlModeC8=35;}
@@ -1547,7 +1547,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
                 // fight starts; the console VS stage page does not run here.
                 const bool challenger=battle_.gameMode==3&&battle_.matchEnd.submodeA0==1;
                 const auto stage=challenger?0u:selectConsoleVersusStage(random,characterSelect_->stage);
-                if(!CombatStageState::supports(stage)||!playableFighter(logicCharacter(characters[0]))||!playableFighter(logicCharacter(characters[1]))||(picks[0].spirit>5&&picks[0].spirit!=8)||(picks[1].spirit>5&&picks[1].spirit!=8)) {
+                if(!CombatStageState::supports(stage)||!playableFighter(logicCharacter(characters[0]))||!playableFighter(logicCharacter(characters[1]))||(picks[0].spirit>5&&picks[0].spirit!=7&&picks[0].spirit!=8)||(picks[1].spirit>5&&picks[1].spirit!=7&&picks[1].spirit!=8)) {
                     unavailable_=true;unavailableStage_=stage;
                 }
                 else {

@@ -41,7 +41,10 @@ public:
     void stageItems(bool enabled) {items_=enabled;restart();}
     // Debug only, not an original path: after a selection, field 'character' for 'seat'
     // instead of the selected one. Makai Gaoh (43) is an arcade boss with no grid cell.
-    void substituteCharacter(unsigned seat,unsigned character) {substitute_.at(seat)=int(character);}
+    // Without an explicit spirit, 139c50's rule applies: Makai Gaoh (43) always fights with system 7.
+    void substituteCharacter(unsigned seat,unsigned character,int spirit=-1) {
+        substitute_.at(seat)=int(character);substituteSpirit_.at(seat)=spirit>=0?spirit:character==43?7:-1;
+    }
     using TickObserver=std::function<void(const NativeMatch&)>;
     void onTick(TickObserver observer) {observer_=std::move(observer);}
     // Sound requests of the ARCADE presentation scenes on this tick.
@@ -56,7 +59,7 @@ private:
     std::array<bool,2> cpuSeats_{};
     int stage_=0;
     bool items_=false;
-    std::array<int,2> substitute_{-1,-1};
+    std::array<int,2> substitute_{-1,-1},substituteSpirit_{-1,-1};
     void configureControllers(NativeMatch&) const;
     MatchRules versusRules() const;
     std::unique_ptr<ArcadeSession> arcade_;

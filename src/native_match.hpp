@@ -16,6 +16,7 @@
 #include "versus_faceoff.hpp"
 #include "system_data.hpp"
 #include "console_option.hpp"
+#include "spirits_edit.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -75,6 +76,8 @@ public:
     // OPTION MODE scenes (1cfa10 and its sub-pages) and their white fade.
     const std::optional<ConsoleOption>& option() const {return option_;}
     const SceneFade& sceneFade() const {return sceneFade_;}
+    // SPIRITS EDIT MODE (13ad40); the page is driven by one seat.
+    const std::optional<SpiritsEdit>& spiritsEdit() const {return spiritsEdit_;}
     bool titlePromptVisible() const {return promptClock_<60;}
     void openCharacterSelect(bool boot=false);
     void leaveUnportedFight(const UnportedFighterState&);
@@ -113,6 +116,13 @@ private:
     MenuPadRepeat menuRepeat_;
     SceneFade sceneFade_;
     int menuRow_=-1;
+    std::unique_ptr<SpiritsEditAssets> spiritsAssets_;
+    std::unique_ptr<EditWidgetAssets> editWidgets_;
+    std::optional<SpiritsEdit> spiritsEdit_;
+    unsigned editSeat_=0;
+    bool editLeaving_=false;
+    void tickSpiritsEdit(const std::array<NormalizedPadSample,2>&);
+    void returnToModeMenu();
     void enterOption(OptionScene);
     void tickOption(const std::array<NormalizedPadSample,2>&);
     bool titleAudioPending_=false;

@@ -1137,16 +1137,28 @@ void NativeMatch::tickOption(const std::array<NormalizedPadSample,2>& pads) {
     }
     // The transition task (priority 3c) runs after the page task (14).
     if(!sceneFade_.tick())return;
-    if(pendingOption_==OptionScene::Title) {
-        // 1cfc88 clears GameData (124d50) before the title scene 127940.
-        option_.reset();
-        battle_.matchEnd={};battle_.matchEnd.winner08=-1;
-        title_.emplace(true,system_->modeMenuUnlock(),menuRow_);
-        titleFadeTick_=0;
-    }
+    if(pendingOption_==OptionScene::Title){option_.reset();returnToModeMenu();}
     // KEY CONFIGURATION (13cdb0) is not ported: its request returns to the top page.
     else enterOption(pendingOption_==OptionScene::KeyConfig?OptionScene::Top:pendingOption_);
     pendingOption_=OptionScene::None;
+}
+void NativeMatch::returnToModeMenu() {
+    // 124d50 clears GameData before the title scene 127940; the mode menu
+    // reopens on the row that started the mode (582af8 is not reset).
+    battle_.matchEnd={};battle_.matchEnd.winner08=-1;battle_.gameMode=4;
+    title_.emplace(true,system_->modeMenuUnlock(),menuRow_);
+    titleFadeTick_=0;
+}
+void NativeMatch::tickSpiritsEdit(const std::array<NormalizedPadSample,2>& pads) {
+    if(titleFadeTick_ && ++titleFadeTick_>=27)titleFadeTick_=0;
+    const auto menuPads=menuRepeat_.sample({resultPad(pads[0].held),resultPad(pads[1].held)},
+                                           {resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
+    const auto result=spiritsEdit_->tick(menuPads[editSeat_]);
+    for(int id:result.sounds)sounds_.sample(-1,id);
+    // 10f158 writes the card only while AUTO SAVE is on.
+    if(result.autoSave && system_->autoSave())system_->saveFile();
+    if(result.exitToTitle && !sceneFade_.active()){editLeaving_=true;sceneFade_.begin(true);}
+    if(sceneFade_.tick() && editLeaving_){editLeaving_=false;spiritsEdit_.reset();returnToModeMenu();}
 }
 void NativeMatch::openTitle(bool returningFromVersus) {
     title_.emplace(returningFromVersus,system_->modeMenuUnlock());
@@ -1253,6 +1265,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
     // while 2P menus or combat hide its text. It survives scene replacement.
     promptClock_=(promptClock_+1)%120;
     if(option_){tickOption(pads);return;}
+    if(spiritsEdit_){tickSpiritsEdit(pads);return;}
     if(title_) {
         auto& menu=battle_.consoleMenu;
         menu.samplePads({resultPad(pads[0].held),resultPad(pads[1].held)},
@@ -1276,6 +1289,16 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             option_->load=[this]{system_->loadFile();};
             option_->resetTopCursor();
             enterOption(OptionScene::Top);
+            return;
+        }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::SpiritsEdit) {
+            // 1cd4f4: mode word f/10, sub-mode 0, next scene 13ad40.
+            menuRow_=int(title_->firstRow());editSeat_=unsigned(title_->confirmingSeat);
+            battle_.gameMode=0xf+title_->confirmingSeat;battle_.matchEnd.submodeA0=0;
+            title_.reset();
+            if(!spiritsAssets_)spiritsAssets_=std::make_unique<SpiritsEditAssets>(assets_);
+            if(!editWidgets_)editWidgets_=std::make_unique<EditWidgetAssets>(assets_);
+            spiritsEdit_.emplace(*system_,*spiritsAssets_,*editWidgets_,battle_.random);
             return;
         }
         if(titleFadeTick_==15) {

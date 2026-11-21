@@ -793,8 +793,17 @@ class VersusScreen {
             check(SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE));
         }
         if(paused){color(r,242,237,218);text(r,272,120,"PAUSED");}
+        // Provisional notices for scenes whose original picture is not ported.
+        if(!overlay.empty()) {
+            color(r,25,24,27);SDL_FRect banner{0,480.f-22.f*overlay.size()-14,640,22.f*overlay.size()+14};check(SDL_RenderFillRect(r,&banner));
+            color(r,255,255,255);
+            for(size_t i=0;i<overlay.size();++i)text(r,20,480.f-22.f*(overlay.size()-i),overlay[i]);
+        }
         check(SDL_RenderPresent(r));
     }
+public:
+    std::vector<std::string> overlay;
+private:
     static void paintJudgments(SDL_Renderer* r,const ss6::NativeMatch& match) {
         const auto& camera=match.battle().camera;
         for(unsigned side=0;side<2;++side) {
@@ -882,6 +891,25 @@ public:
         const auto& battle=match.battle();
         const auto& result=battle.resultScreen;
         const auto& menu=battle.consoleMenu;
+        if(match.option()||match.spiritsEdit()) {
+            // The page frame, fonts and background are not ported yet: list
+            // the original text submissions with the debug font.
+            color(r,18,20,34);check(SDL_RenderClear(r));
+            if(const auto& option=match.option()) {
+                for(const auto& t:option->draw.texts) {
+                    const bool selected=(t.argb&0xffffff)==0xff0000;
+                    if(selected)color(r,255,80,80);else color(r,235,235,235);
+                    text(r,float(t.x),float(t.y),t.text);
+                }
+                color(r,160,160,160);text(r,20,440,"OPTION MODE (PROVISIONAL TEXT VIEW) / MEDIUM: CONFIRM  LIGHT: CANCEL");
+            } else {
+                color(r,235,235,235);text(r,20,220,"SPIRITS EDIT MODE: SCREEN IN DEVELOPMENT");
+                text(r,20,242,"LIGHT: CANCEL / RETURN TO TITLE");
+            }
+            ss6::VersusResultState fade;fade.fadeWhite=true;
+            present(r,fade,paused,match.sceneFade().level());
+            return;
+        }
         if(match.title() || match.characterSelect()) {
             const auto& image=paint(match);
             check(SDL_UpdateTexture(texture,nullptr,image.rgba.data(),image.width*4));
@@ -959,6 +987,25 @@ public:
         present(r,result,paused,menu.fadeAlpha);
     }
 };
+// Text lines for session states that have no ported picture yet.
+std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
+    std::vector<std::string> lines;
+    const auto* arcade=session.arcade();
+    if(!arcade)return lines;
+    const auto& match=session.match();
+    if(!session.arcadeNotice().empty())lines.push_back(session.arcadeNotice());
+    if(arcade->scene==ss6::ArcadeScene::Battle) {
+        const auto& tally=match.arcadeTally();
+        std::string line="ARCADE STAGE "+std::to_string(arcade->run.players[arcade->run.humanSeat()].stageIndex+1)+"  SCORE "+std::to_string(match.arcadeScore());
+        if(tally.active())line+="  FINISH "+std::to_string(tally.draw.finish)+" TIME "+std::to_string(tally.draw.time)+
+            " LIFE "+std::to_string(tally.draw.life)+" TOTAL "+std::to_string(tally.draw.total);
+        lines.push_back(line);
+    } else if(arcade->scene==ss6::ArcadeScene::Continue) {
+        lines.push_back("CONTINUE?  "+std::to_string(arcade->continueScene.draw.seconds)+"   PRESS START");
+    } else if(arcade->scene==ss6::ArcadeScene::GameOver)lines.push_back("GAME OVER");
+    return lines;
+}
+
 int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snapshot,const fs::path& dump,
               const fs::path& stageDump,
               unsigned updates,unsigned smoke,bool boxes,int roundTime,ss6::VersusMode mode,const fs::path& audioOut={},std::array<unsigned,2> spirits={},ss6::VersusEntry entry=ss6::VersusEntry::Fight,
@@ -1036,6 +1083,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
     if(!texture)throw std::runtime_error(SDL_GetError());
     check(SDL_SetTextureScaleMode(texture.get(),SDL_SCALEMODE_NEAREST));
     if(canvas) {
+        screen->overlay=sessionOverlay(session);
         screen->show(renderer.get(),texture.get(),session.match(),false,boxes);
         check(SDL_SaveBMP(canvas.get(),snapshot.string().c_str()));return 0;
     }
@@ -1076,6 +1124,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
         // The original display advances at the battle cadence. Poll input
         // between ticks without rasterizing the same arena several times.
         if(running&&(redraw||smoke)){
+            screen->overlay=sessionOverlay(session);
             screen->show(renderer.get(),texture.get(),session.match(),paused,boxes);
             redraw=false;
             if(smoke&&++shown>=smoke)running=false;
@@ -1133,9 +1182,10 @@ int main(int argc, char** argv) {
             else if (arg == "--smoke-updates") smokeUpdates = unsigned(std::stoul(argv[++i]));
             else if (arg == "--mode") {
                 std::string mode = argv[++i];
-                if (mode != "idle" && mode != "cells" && mode != "contacts" && mode != "trial" && mode!="knockout" && mode!="versus" && mode!="fixed-versus" && mode!="select" && mode!="title")
+                if (mode != "idle" && mode != "cells" && mode != "contacts" && mode != "trial" && mode!="knockout" && mode!="versus" && mode!="fixed-versus" && mode!="select" && mode!="title" && mode!="arcade")
                     throw std::runtime_error("Unknown mode (expected title, select, versus, fixed-versus, idle, cells, contacts, trial or knockout)");
-                entry=mode=="title"?ss6::VersusEntry::Title:mode=="select"?ss6::VersusEntry::CharacterSelect:ss6::VersusEntry::Fight;
+                entry=mode=="title"?ss6::VersusEntry::Title:mode=="select"?ss6::VersusEntry::CharacterSelect:
+                      mode=="arcade"?ss6::VersusEntry::Arcade:ss6::VersusEntry::Fight;
                 versus=entry!=ss6::VersusEntry::Fight||mode=="versus"||mode=="fixed-versus";
                 versusMode=mode=="fixed-versus"?ss6::VersusMode::FixedMatch:ss6::VersusMode::Console;
                 rawRequested = mode == "cells";

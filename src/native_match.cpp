@@ -184,13 +184,17 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         tallyTables_=std::make_unique<ArcadeTallyTables>(path);
         arcadeScore_=rules_.score;
         b.tallyEnter=[this] {
-            auto world=tallyWorld();
+            auto& world=tallyWorld_=tallyWorld();
             tally_.enter(world);
             battle_.matchEnd.endFlagA4=world.postMatchMenuA4;arcadeScore_=world.score90;
         };
         b.tallyUpdate=[this] {
-            auto world=tallyWorld();
+            // The task pays the clock and the life bars out step by step
+            // (1c8360, 1c8488), so its world persists across visits.
+            auto& world=tallyWorld_;
+            world.sceneSwitch18=battle_.matchEnd.field18;
             const auto tick=tally_.tick(menuPressed_,world);
+            battle_.timers.values[0]=world.roundClock114;
             arcadeScore_=world.score90;arcadeFinishBonus_=world.finishBonus582950;
             for(int i=0;i<tick.sounds;++i)sounds_.sample(-1,0x42);
             return tally_.done();

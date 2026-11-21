@@ -133,6 +133,7 @@ private:
     int32_t arcadeScore_=0,arcadeFinishBonus_=0;
     std::array<uint32_t,2> menuPressed_{};
     ArcadeTallyWorld tallyWorld() const;
+    ArcadeTallyWorld tallyWorld_; // the words the task counts down between visits
     bool editLeaving_=false;
     void tickSpiritsEdit(const std::array<NormalizedPadSample,2>&);
     void returnToModeMenu();

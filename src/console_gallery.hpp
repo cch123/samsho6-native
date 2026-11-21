@@ -49,6 +49,14 @@ public:
     std::array<std::vector<LyricLine>,2> lyrics;
 };
 
+// The sub-scenes keep the original stack layout: their lists point at the
+// row map stored beside them, so a live scene object must not be copied.
+struct GalleryPinned {
+    GalleryPinned()=default;
+    GalleryPinned(const GalleryPinned&)=delete;
+    GalleryPinned& operator=(const GalleryPinned&)=delete;
+};
+
 // 1d22f8 / 1d2380: the four-row gallery menu. `row` survives the sub-scenes;
 // only the mode menu clears it (reset).
 struct GalleryTopMenu {
@@ -67,7 +75,7 @@ private:
 
 // 13ed98 / 13edf0: character list plus six fixed pictures; gl_NN image id
 // = character id, or 49..54 for the fixed rows.
-struct IllustrationViewer {
+struct IllustrationViewer : GalleryPinned {
     GuideWindow guide;
     ListWidget list;
     CharacterRows rows{};
@@ -89,7 +97,7 @@ struct IllustrationViewer {
 };
 
 // 13e090 / 13e0e8: category, second level, track list, lyrics overlay.
-struct SoundTest {
+struct SoundTest : GalleryPinned {
     struct LyricDraw {uint16_t code;int x,y;uint8_t r,g,b;};
     GuideWindow guide;
     std::array<ListWidget,3> lists;  // category, second level, tracks
@@ -121,7 +129,7 @@ private:
 // 182968 gallery branch, 182ce0 and the selection UI 13f4a8. The ending
 // script engine (182a98) is outside this class: tick() reports the chosen
 // character and stops; after playback the owner calls beginSelection again.
-struct EndingViewer {
+struct EndingViewer : GalleryPinned {
     GuideWindow guide;
     ListWidget list;
     CharacterRows rows{};

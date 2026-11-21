@@ -133,7 +133,7 @@ KeyConfigDraw KeyConfigWidget::draw(const SystemData& system) const {
             c.x=left+column+(c.glyph<0?0x10c:c.glyph>=0x19&&c.glyph<=0x1c?0x10b:0x108);
             c.y=top+0x19*int(slot);
             c.cursor=selector[seat].current==int(slot);
-            c.cursorX=left+0xfc+column;c.cursorY=top+0x19*int(slot+1)-7;
+            c.cursorX=left+0xfc+column;c.cursorY=top+0x19*int(slot)-7;
             c.cursorColour=seat?0xffc04040u:0xff4040c0u;
         }
     }

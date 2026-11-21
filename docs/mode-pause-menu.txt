@@ -1,0 +1,409 @@
+In-battle pause menu and KEY CONFIGURATION window (SLPS-25559)
+=============================================================
+
+Pinned ELF SHA256: 72420e74e04d7ac39119d1b6ec7d70ed004fc98c5035fade96e87d05d4b9ffbf
+
+Status words used below:
+  OBSERVED  read from the disassembly; lines marked [V] are additionally compared visit by
+            visit against the original code by work/ss6/validate_pause_menu.py or
+            work/ss6/validate_key_config.py.
+  INFERRED  conclusion drawn from OBSERVED facts, not executed.
+  UNKNOWN   not resolved.
+
+Native port: src/pause_menu.*, src/key_config.*; asset pause_menu.bin
+(work/ss6/extract_pause_menu.py, manifest outputs/ss6-feasibility/pause_menu_tables.json).
+This file supersedes section 12 of docs/mode-battle-branches.txt and the UNKNOWN list of
+section 6 of docs/mode-option.txt; corrections to both are collected in section 10.
+
+g = g_GameData 0x4c3808 (mode g+0, sub-mode g+0xa0); P[n] = seat record 0x456890 + 0x30*n.
+pad(n) = 118128(n) = 0x1237cc8 + 12*n: +0 held, +4 pressed edges, +8 edges with the 117fd8
+directional repeat.
+
+
+1  Pad bits
+-----------
+
+OBSERVED (212780 glyph table, legend strings 665208 "BP選択 BOBT決定 SLEX" and the icon
+codes of docs/mode-gallery.txt Part B):
+  0x10 up, 0x20 down, 0x40 left, 0x80 right          (legend icon BP)
+  0x2 icon 0x19 "BO", 0x4 icon 0x1a "BX", 0x400 icon 0x1b "BS", 0x200 icon 0x1c "BT"
+  0x100000 icon 0x1f "L1", 0x200000 icon 0x20 "L2", 0x400000 icon 0x21 "R1",
+  0x800000 icon 0x22 "R2"
+  0x80000 legend icon "SL" (0x1d); 0x8 is the START bit of console_menu.hpp
+  0x1 and 0x100: assignable in KEY CONFIGURATION but without an icon
+INFERRED: BO/BX/BS/BT = circle/cross/square/triangle, SL = SELECT. The pause menu, the
+practice window and the KEY CONFIGURATION exit therefore use SELECT; START (0x8) stays a
+confirm button in menus and the join button of the free arcade seat. 0x1 and 0x100 are
+INFERRED to be the two stick buttons (preset 2 of 178e50 uses both).
+Menu commands: confirm = pressed & 0x20a, cancel = pressed & 0x404.
+
+
+2  Open poll 1d9b50 [V]
+-----------------------
+
+Called by the battle thread 138f48 once per frame (139158), in the paused and in the running
+branch alike. OBSERVED:
+
+  if ((g+0x2c != 0 || g+0x30 != 0) && g+0xa4 != 1) return;
+  if (sub-mode == 3 || sub-mode == 6) return;              // practice (own window), network
+  mode 1, or mode 0xb with 181778() == 0:
+        if (pad(0).pressed & 0x80000 && 181778() == 0) 1d9cd8();
+  else mode 2, or mode 0xc with 181778() == 0:
+        if (pad(1).pressed & 0x80000) 1d9cd8();
+  else mode 3:
+        for seat 0, 1: if (pad(seat).pressed & 0x80000) { word 582f3c = seat; 1d9cd8(); }
+  other modes: nothing.
+
+181778() = (s32 12d4cc8 > 0), the survival fade level.
+
+  mode / sub-mode                      | seat that can open       | rows
+  -------------------------------------+--------------------------+-----------------------------
+  1 / 1  arcade, seat 0 human          | 0                        | 6
+  2 / 1  arcade, seat 1 human          | 1                        | 6
+  3 / 1  arcade challenger match       | 0 or 1 (owner = opener)  | 6
+  3 / 2  VS                            | 0 or 1 (owner = opener)  | 6
+  0xb, 0xc / 4  survival               | 0 / 1, not during a fade | 6
+  1, 2 / 5  (NEOGEO LAND entry)        | 0 / 1                    | 4
+  any / 3  practice                    | never (practice window)  | -
+  any / 6  network                     | never                    | -
+  0 demo, 9, 10, 6, 7, 8 and others    | never                    | -
+
+Notes [V]:
+  - In mode 3 the owner word is written BEFORE 1d9cd8 tests the active flag. If both seats
+    press on the same visit the menu opens once and seat 1 becomes the owner. With g+0xa4 == 1
+    the poll stays open while the menu is shown, so the other seat can take the ownership.
+  - g+0x2c is also set by every 1252f0 scene request (12536c), which closes the poll during
+    the fade of an exit.
+  - Sub-mode 5 does not set g+0x30, so only the active word 582f38 prevents a second open.
+
+1d9cd8 (open) [V]: if (582f38 == 0) {
+    task 112670(0x46, 1d9e10, 0x10, tag 0x178b) -> 582f54;
+    13cd50() -> 582f58 (KEY CONFIGURATION coroutine, tag 0x14b6), task word +4 = 0x21;
+    13d5c8() -> 582f5c (SKILL LIST coroutine, tag 0x151b), task word +4 = 0x21;
+    word 43d048 = 1da4d8 (abort hook, section 6);
+    1d9da0(): 582f30 cursor = 0, 582f38 active = 1, 582f34 state = 0, 582f44 lock = 0,
+              582f40 choice = 1, 1cf798(0xf) (582b38 = 15), 1cf7d8(5) (582b3c = 5),
+              582f4c window = 1, 582f48 delay = 0, 582f50 suspended = 0, 1c9820() (582994 = 1,
+              the arcade tally's pause flag);
+    if (sub-mode != 5) g+0x30 = 1;
+    112f30(0xffffff, 0x404040) (text colours); 1da860() (help line of row 0) }
+Task word +4: 0x21 = sleeping coroutine, 0x20 = runnable coroutine, 0x10 = function task
+(INFERRED from the three values the menu stores).
+
+
+3  Task 1d9e10 [V]
+------------------
+
+One visit:
+  1392e8();                                   // word 123a0c4 = 1, section 7
+  seat = mode 1/0xb -> 0, mode 2/0xc -> 1, mode 3 -> 582f3c, else 0;
+  if (582f50 != 0) return;                    // a child window is open: nothing else, no draw
+  in = (582f44 == 0 && 582f48 >= 10) ? 1dae40(seat) : 0;
+  1dae40: 0x40 = pressed & 0x80000, 0x20 = pressed & 0x404, 0x10 = pressed & 0x20a,
+          1 = repeat & 0x10 (up), 2 = repeat & 0x20 (down), 4 = pressed & 0x80 (right),
+          8 = pressed & 0x40 (left).
+  Priority chain (first match only):
+   in & 0x40          1da110() (close); sound (-1, 0x25).
+   in & 5  (up/right) state 0: cursor = (cursor + rows - 1) % rows; 1da860();
+                      state 2 or 6: 582f40 ^= 1;   state 5: state = 0;   sound (-1, 0x20).
+   in & 0xa (down/left) the same with cursor = (cursor + 1) % rows.
+   in & 0x20 (cancel) state 0: 1da110();  state 2 or 6: state = 0, 582f40 = 1;
+                      state 5: state = 0;   sound (-1, 0x25).
+   in & 0x10 (confirm) 1da508(); 582f48 = 0; sound (-1, 0).
+  Draw (section 8): if (state != 5) the menu; if (state == 6) dialog(choice, 0);
+                    if (state == 2) dialog(choice, 1).
+  if (582f48 < 10) 582f48++.
+
+rows = 4 when sub-mode == 5, else 6. Left/right act as down/up in every state, including the
+row list. Sounds are 1e7b70(-1, id): 0x20 move, 0 confirm, 0x25 cancel/close; the confirm
+tone is requested even when the confirm closes the menu or requests a scene.
+The visit that closes the menu still draws it (the task is released by tag, the running
+visit completes).
+
+State word 582f34: 0 row list, 1 CANCEL chosen (set just before the close), 2 character-select
+question, 5 WINDOW OFF (nothing drawn), 6 title question. 582f40: 0 = yes, 1 = no.
+
+
+4  Rows and their handlers (1da508) [V]
+---------------------------------------
+
+Strings (658ba8, sub-mode 5: 658bd0) and help lines (582f68 / 582f98, records {text, 0}):
+
+  row  label               help line
+  0    CANCEL              ゲームに戻ります
+  1    CHARACTER SELECT    キャラクターセレクト画面に戻ります
+  2    SKILL LIST          キャラクターの必殺技コマンドを表示します
+  3    KEY CONFIGURATION   各種ボタン設定を変更できます
+  4    WINDOW OFF          ウィンドウを非表示にします
+  5    RETURN TO TITLE     ゲームを終了してタイトルに戻ります
+  sub-mode 5: 0 CANCEL, 1 SKILL LIST, 2 KEY CONFIGURATION,
+              3 NEOGEO LAND  "ゲームを終了してネオジオランドに戻ります"
+
+Handlers (jump table 658a18 by cursor; sub-mode 5 uses an if-chain 1da534..):
+  CANCEL             582f34 = 1; 1da110().
+  CHARACTER SELECT   state != 2: state = 2 (question; 582f40 keeps its value, 1 after open or
+                     after a cancelled question).
+                     state == 2, choice 1 (no): state = 0.
+                     state == 2, choice 0 (yes): 1252f0(2, 0, 1da210, 128008); 1da110();
+                       582f44 = 1; 213be8(3); g+0x18 = 1;
+                       if (sub-mode == 1) { P[0]+0x28 = P[0]+0; P[1]+0x28 = P[1]+0; }
+  SKILL LIST         task 582f5c word +4 = 0x20; 582f4c = 3; 582f50 = 1.
+  KEY CONFIGURATION  task 582f58 word +4 = 0x20; 582f4c = 2; 582f50 = 1.
+  WINDOW OFF         state = (state == 5) ? 0 : 5. In state 5 a confirm on the unchanged
+                     cursor restores the menu; up/down/left/right/cancel also restore it
+                     (without moving the cursor); 0x80000 closes the menu.
+  RETURN TO TITLE / NEOGEO LAND
+                     state != 6: state = 6.   state == 6, choice 1: state = 0.
+                     state == 6, choice 0: 1da430(); g+0x18 = 1; 582f44 = 1.
+  1da430: sub-mode 5: 11bd58() (network session cancel), 1252f0(2, 0, 1da210, 1d8290);
+          otherwise 1252f0(2, 0, 1da210, 127940); then 213be8(3); 1da110().
+Questions (1cf598): "キャラクターを選択しなおしますか？" (kind 1), "タイトルに戻りますか？"
+(kind 0), sub-mode 5 "ネオジオランドに戻りますか？"; answers "はい" / "いいえ".
+
+1da110 (close) [V]: releases task tags 0x178b, 0x14b6, 0x151b (112a70); 582f38 = 0;
+  g+0x30 = 0; 582f4c = 0; 1c9810() (582994 = 0).
+1da7e8 (a child window returns) [V]: task 582f54 word +4 = 0x10; 582f30 = 0 (the cursor
+  returns to CANCEL; the help line is NOT refreshed and keeps the text of the row that
+  opened the window until the cursor moves); tasks 582f58 / 582f5c word +4 = 0x21;
+  582f50 = 0. 582f4c keeps 2 or 3 (1da200 returns it to 11d220, network pad code).
+  The confirm that opened the window left 582f48 = 0 and the counter does not run while
+  suspended, so the pads are ignored for 10 visits after the return.
+
+         1d9b50 --SELECT--> 1d9cd8 --> task 1d9e10 (1392e8 every visit)
+                                        |
+            +---------------------------+-----------------------------------+
+            | row list (state 0)                                            |
+            |   SELECT / cancel / CANCEL --------------> 1da110 (resume)    |
+            |   CHARACTER SELECT --> state 2 --yes--> 1252f0(2,0,1da210,128008), 1da110
+            |                                 --no / cancel--> state 0      |
+            |   RETURN TO TITLE  --> state 6 --yes--> 1da430: 1252f0(2,0,1da210,127940
+            |                                 --no / cancel--> state 0       or 1d8290)
+            |   SKILL LIST / KEY CONFIGURATION --> 582f50 = 1, child coroutine woken
+            |                                 <-- 1da7e8 (cursor 0, 10 visits input delay)
+            |   WINDOW OFF <--> state 5 (no draw)                           |
+            +---------------------------------------------------------------+
+
+
+5  Exit executor 1da210 [V]
+---------------------------
+
+Destructor argument of both scene requests; 1252f0 runs it at the fade midpoint (black fade,
+kind 2, speed 0; SceneFade in console_menu.hpp). OBSERVED:
+  oldMode = g+0, oldSub = g+0xa0; 139778() (battle scene teardown; includes 1da8b0);
+  582f34 == 2 (character select), jump table 658998 by oldSub:
+    0        nothing.
+    1        124d50(); mode = oldMode if oldMode is 1 or 2; = 582f3c + 1 if oldMode == 3;
+             otherwise it stays 0; g+0x2c = 1; sub-mode = 1.
+    2        mode = 6; sub-mode = 2 (g is NOT cleared).
+    3        mode = 9 if oldMode == 1, 0xa if oldMode == 2, else unchanged; sub-mode = 3.
+    4        124d50(); mode = oldMode if 0xb or 0xc; g+0x2c = 1; sub-mode = 4.
+    5        124d50(); mode = oldMode if 1 or 2; g+0x2c = 1; sub-mode = 5.
+    >= 6     nothing.
+    then, for every oldSub: P[1]+4 = 0; P[0]+0x10 = 0; P[1]+0x10 = 0; P[0]+0x2c = 0;
+    P[1]+0x2c = 0; P[0]+4 = 0.
+  582f34 == 6 (title): 124d50(); 11d1a8() (both seats: +0, +4, +0x10..+0x1c, +0x24, +0x28,
+    +0x2c = 0, +8 = +0xc = 5; +0x20 is untouched because 111508 sees mode 0);
+    oldSub == 5: mode = 7 if oldMode == 1, 8 if oldMode == 2; sub-mode = 5;
+    g+0x2c = 1 in every case.
+  any other state: only the teardown.
+124d50 clears the 0xa8 bytes of g and sets +8, +0xc, +0x10, +0x14, +0x9c to -1.
+INFERRED: in an arcade challenger match the seat that opened the menu becomes the single
+arcade seat again (mode = owner + 1).
+
+1da8b0 (called by the battle teardown 139778): 112a70(0x178b); 582f38 = 0; 582f4c = 0. It
+does not touch g+0x30 or 582994.
+
+
+6  Other entries
+----------------
+
+1da4d8 [V]: 1da110(); 1da210(); word 43d048 = 0. Installed in 43d048 while the menu exists;
+  the only reader of 43d048 is 1033c4, which calls it after a second hook word 43d20c and
+  before 1e7df0. INFERRED: soft-reset clean-up. UNKNOWN: the exact reset condition.
+1da160 / 1da1b0 (callers 11d320 / 11d338, network pad code): the close of 1da110 without
+  1c9810, logged as "PauseMenuKeyConfigCancel" / "PauseMenuCommandListCancel". Not ported.
+1da838: returns 582f3c == 1; 178f90 uses it in mode 3 as the operating seat of the shared
+  windows.
+The VS result menu 1daec0 / 1db2e0 also clears 43d048 (already ported, console_versus_menu).
+
+
+7  Pause and resume timing
+--------------------------
+
+OBSERVED (battle thread 138f48, 1390fc..1391dc): each frame
+    if (123a0c4 != 0 || 123a0c8 != 0) { paused branch: 11f588(1)/11f5a0(1); 123a0c4 = 0; ... }
+    else { 11f5a0(0); 140270(); ... }                 // 140270 is the match update
+    ...; 1d9b50(); 112a28(0);                         // poll, yield
+  1392e8 only stores 123a0c4 = 1: a request that lasts one battle frame and is consumed by
+  the battle thread itself.
+INFERRED (task priorities: KEY CONFIGURATION / SKILL LIST coroutines 0x28, battle thread
+0x32, pause task 0x46; ascending dispatch order as elsewhere in the project):
+    frame N    battle updates, poll opens the menu; the new task 178b runs its first visit
+               later in the same dispatch and requests the pause
+    frame N+1  battle thread sees the request: first frozen frame
+    ...
+    frame M    the menu closes; this visit has already issued its request
+    frame M+1  last frozen frame
+    frame M+2  140270 runs again
+  A child coroutine woken on frame K (word +4 = 0x20 written by the priority-0x46 task) runs
+  from frame K+1. The frame it calls 1da7e8 the pause task draws the row list again.
+UNKNOWN: whether a task created during a dispatch is visited in that same dispatch (the
+validator calls poll and the first visit back to back on both sides, which does not test it).
+While a scene request is fading, the menu is closed (g+0x30 = 0, no pause requests): the
+battle runs during the fade; g+0x18 = 1 was set by the exit.
+
+
+8  Draw routines of the pause menu [V]
+--------------------------------------
+
+Compared as the argument lists of the primitives. Screen 640 x 448; colours as passed.
+State != 5:
+  1daca8(seat)   box 1145c0(0xb4, 0x78, 0x118, H, 0xc0000000), H = 0xd0 (sub-mode 5: 0xa0);
+                 four edges 1c1528(x, y, w, h, c1, c2, 582f60, 582f64, 0x78):
+                   (0xb0, 0x74, 0x120, 4), (0xb0, H + 0x78, 0x120, 4), (0xb0, 0x78, 4, H),
+                   (0x1cc, 0x78, 4, H); seat 0: c1 = 0xc00000ff, c2 = 0xc0000040;
+                   seat 1: c1 = 0xc0ff0000, c2 = 0xc0400000.
+  1da918()       title sprite 113f98(slot 0x2e; x 204, y 130, z -350; u, v, w, h from 4c7660 + 0x78,
+                 INFERRED = record 5, MenuWidgetData::titleRects[5]).
+  1da9c0(cursor) rows 1135e8(text, 0xcc, 0xb4 + 0x18 * i, colour): cursor row 0xffff0000,
+                 others 0xffffffff.
+  1dab38(cursor) help bar 1145c0(0, 0x174, 0x280, 0x24, 0xc0000000); text 10a460(help,
+                 x, 0x17a, 0xff, 0xff, 0xff, 0xff) with x = 1ceb10(flag 0, length, 0) = 0x10
+                 (no line scrolls: every record flag is 0), drawn while x < 0x280.
+  1dae00()       legend box 1145c0(0x14c, 0x19a, 0x134, 0x1c, 0xc0000000); 1ced08(0, 0x19d)
+                 (the shared button legend of the option pages, fade counter 582b3c = 5).
+State 2 or 6:
+  1cf598(choice, kind)  box 1145c0(0, 0x64, 0x280, 0xf0, 0xc0000000); question
+                 109f08(text, x, 0xc8, 0xff, 0xff, 0xff, 0xff) with x = 0x9a (sub-mode 5),
+                 0x80 (kind 1) or 0xbe (kind 0); answers 109f08(text, 0xf0 / 0x154, 0xf8,
+                 0xff, c, c, 0xff) with c = 0 for the selected answer and 0xff for the other.
+UNKNOWN: Z values other than the float arguments above (-350, -320, -379), the texture
+of 1c1528 (words 582f60 / 582f64 are zero in the image and filled at run time), and the
+contents of the 1ced08 legend. No fade-in: the menu is complete on its first visit.
+
+
+9  KEY CONFIGURATION
+--------------------
+
+9.1 Key masks [V]
+  0x4eaac0 = save image +0x63bc: 2 players x 8 words. Word i is the pad mask 177310 tests for
+  fighter button i (any intersection); 0 = unassigned. Row labels 59cfb8:
+    0 LIGHT, 1 MIDDLE, 2 STRONG, 3 KICK, 4 SPECIAL, 5 THROW, 6 SPIRIT USE, 7 ITEM USE.
+  178e50(player, preset): byte 12d26b0 + player = preset; then
+    0: {0x400, 0x200, 0x2, 0x4, 0x400000, 0x800000, 0x100000, 0x200000}
+       = square, triangle, circle, cross, R1, R2, L1, L2
+    1: {0x4, 0x2, 0x400, 0x200, 0x20000, 0, 0, 0}
+    2: {0x400, 0x200, 0x100, 0x4, 0x1, 0, 0, 0}
+    other ids: only the byte. 178d38(player) = preset 0. Presets 1 and 2 have no caller in
+    the windows of this file (INFERRED: other controller types; UNKNOWN reader of 12d26b0).
+  178d50(player, slot, mask): mask == 0: slot = 0. Otherwise the FIRST slot of that player
+    (scan 0..7) holding `mask` receives the old content of `slot` and the scan stops; then
+    slot = mask. Later duplicates are left alone; when `slot` itself is the first match the
+    result is unchanged.
+  177140(): 1 when both players hold the preset-0 masks in slots 0..4.
+  Saving: neither the widget nor the coroutine calls the memory-card code. The masks are the
+  live block that 1b8cf0 packs into the save image; they reach the card with the next
+  SAVE / auto-save of another scene (docs/mode-option.txt section 7). Natively the block is
+  SystemData::keyMasks itself, so a change is in the image immediately.
+
+9.2 Widget 212110 / 2121c8 / 212478 [V]
+  Layout: +0 shown, +4 active (owner-written, not read by the update), +0xc slide panel
+  (17f308 layout), +0x40 and +0x5c one 20dff8 selector per seat, +0x78 message bar of the
+  owner's guide window.
+  212110(widget, bar): both selectors: range 0..10 step 1, page -1 (no paging), flags
+    5 | bits 4, 5, 6, 8 = 0x175: vertical, wrap, confirm and cancel refused, tones of
+    refusals silent. Rows 0..7 = the eight slots, 8 DEFAULT SETTING, 9 EXIT.
+  2121c8(widget) -> 4 to leave, else 0:
+    m = 17f330(panel); m == 0 (closed): shown = active = 0; m != 1: return 0.
+    pass 1, seat 0 then 1: leave = pad.pressed & 0x80000; else confirm[seat] =
+      (pad.pressed & 0x20a) != 0; if (confirm[seat] && cursor[seat] == 9) leave;
+      if (leave) { sound (-1, 0); return 4; }
+    pass 2, seat 0 then 1:
+      row < 8:  pressed & 0xc0 (left/right): 178d50(seat, row, 0);
+                else the first set bit in the order 4, 2, 1, 0x400, 0x200, 0x100, 0x100000,
+                0x200000, 0x400000, 0x800000: 178d50(seat, row, bit);
+                either case ends the seat's turn (the cursor does not move that visit).
+      row == 8 and confirm[seat]: sound (-1, 0); 178d38(seat); end of turn.
+      otherwise 20e128(selector, seat); when it moved (tone 0x20):
+                182268(bar, 0x20, row) = message record (key 0x20, sub row).
+  Both pads are always live, whatever the game mode: each seat edits its own column with
+  its own cursor. Capture is immediate: there is no "press a button" sub-state, no repeat
+  and no cancel; the cancel buttons 0x4 / 0x400 are themselves assignable. START (0x8), SELECT
+  and the directions cannot be assigned. A button is released from every other slot of the
+  same seat only through the swap rule of 178d50.
+  212478(widget) (nothing when shown == 0), panel position (x, y):
+    box 17c718: (x - 0x18, y - 8), 528 x 286, colour 0xc0000000;
+    legend 17e428(665208, 1, 0) at (x + 0xe0, y + 0xf2);
+    labels 17e228(row label, x + 0xc, y + 0x10 + 0x19 * row (+6 for EXIT), 0) with colour
+      17db28: 0xff0000ff seat 0's cursor, 0xffff0000 seat 1's cursor, 0xffff00ff both,
+      0xffffffff neither;
+    seat column c = 100 * seat, slot rows 0..7 at Y = y + 0x10 + 0x19 * slot:
+      icon 17e038(212780(mask)) at (x + 0xc + c + 0x10b, Y) for the four face buttons,
+      (x + 0xc + c + 0x108, Y) for L1..R2; masks without an icon: text "-" (665220) at
+      (x + 0xc + c + 0x10c, Y), white;
+      cursor frame 17d790 at (x + 0xc + 0xfc + c, Y - 7), 48 x 29, colour 0xff4040c0
+      (seat 0) / 0xffc04040 (seat 1), second colour 0xffffffff. Rows 8 and 9 have no frame.
+  UNKNOWN: anchor conventions of 17c718 / 17d790 (the pairs above are their struct words
+  +0x14/+0x18 and +0xc/+0x10), icon rectangles 0x1f..0x22.
+
+9.3 Coroutine 13ce08 (task 13cd50: 1126f0(0x28, 13ce08, stack 12721c0, 0x2000, 0x20,
+    tag 0x14b6)) [V]
+  seat = 178f90(); guide window: 1822a0, 182318(layout 0), 182648 (open);
+  212110(widget, guide + 0x60); panel 17f428(closed (seat ? -0x230 : 0x2d0, 0x58),
+  open (0x50, 0x58), 16 frames); 17f468 (open); active = shown = 1;
+  loop: 17c210(); 1825b8(guide); r = 2121c8(widget);
+        finished: draw only.
+        closing: when 17f400(panel): 17ea48() != 0 (option scene, mode 0x11 etc.):
+                   1252f0(1, 0, 13cdc8, 1cfa10); finished = 1.
+                 else 1da7e8(1); panel 17f468; shown = 1; 182648(guide); active = 1
+                   (re-armed, then the task sleeps with word +4 = 0x21; its next wake-up
+                   continues here and slides in again with the cursors and guide state kept).
+        else r == 4 or 5: 17f4b0(panel); closing = 1; active = 0; 1826b0(guide).
+        182600(guide); 212478(widget); 112a28(0).
+  The slide takes 16 visits each way; input is read only at rest in the open position.
+  178f90: mode 3 -> 582f3c == 1; modes 0xd/0xe -> word 12d35c4; modes 2, 5, 8, 0xa, 0xc, 0x10,
+  0x12 -> 1; others 0. It selects the side the window slides in from and the guide layout.
+  In the pause menu the coroutine is created anew with every open (1da110 frees tag 0x14b6),
+  so cursors restart at row 0 per pause, not per visit of the window.
+  The practice window owns a second instance of the widget (17f648 / 17f7f4 / 17f9d4,
+  docs/mode-practice.txt); it is not covered here.
+
+
+10  Corrections to earlier documents
+------------------------------------
+
+docs/mode-battle-branches.txt section 12:
+  - Mode 2 opens without the 181778() test; mode 1 has it only after the pad test.
+  - Left/right are accepted as down/up everywhere, also in the row list.
+  - CHARACTER SELECT / RETURN TO TITLE need two confirms: the first only enters the question
+    (states 2 / 6), with "no" preselected.
+  - The fourth row of sub-mode 5 is NEOGEO LAND with its own question and help line.
+  - 1da7e8 resets the cursor to row 0; 582f4c is not reset by it.
+  - Up/down/cancel leave WINDOW OFF as well; the cursor does not move on that press.
+docs/mode-option.txt section 6:
+  - 178d50 swaps with the first matching slot only.
+  - There is no preset selector and no capture sub-state; rows 8/9 are DEFAULT SETTING (seat
+    preset 0) and EXIT. Both seats are edited at once.
+  - The window is left by 0x80000 or by confirm on EXIT, not by cancel.
+docs/mode-gallery.txt / mode-edit.txt: bit 0x80000 as "SL" is consistent with this file.
+
+
+11  Validation
+--------------
+
+work/ss6/validate_pause_menu.py -> outputs/ss6-feasibility/pause_menu_validation.json:
+  20 sessions (8 randomised, 12 scripted sweeps over every row of modes 1, 2, 3, 0xb, 0xc with
+  sub-modes 0, 1, 2, 4, 5 and both seats) and 5 sweeps of 1da210 over states 0, 1, 2, 5, 6 x
+  10 modes x 8 sub-modes x 2 owners with arbitrary game data; 33,229 snapshots, 491 opens,
+  52 scene requests, 74 child-window round trips, 852 exit executions, 1,059,519,210
+  instructions. Each snapshot compares words 582f30..582f50, 582994, the hook word, both
+  child task words, the chrome words, all 0xa8 bytes of g, both seat records, the pause
+  request, sounds, scene/music/network requests and the draw list of section 8.
+work/ss6/validate_key_config.py -> outputs/ss6-feasibility/key_config_validation.json:
+  7 sessions of coroutine 13ce08 on its own stack (17,500 visits, 1,484 mask changes,
+  88 returns to the pause menu, 24 option exits) and 20,432 direct calls of 178d50, 178e50,
+  177140, 212780, 178f90; 37,993 snapshots, 42,046,727 instructions. Each visit compares the
+  guide window, the widget (panel, both selectors), the 16 masks, the preset bytes, the
+  coroutine's closing/finished registers, sounds, requests and the draw list of section 9.2.
+Replaced callees are listed in the "stubs" and "scope" fields of both reports: rendering
+primitives, sound requests, 1252f0, 11bd58, debug print, and 1126f0 (kernel thread creation).

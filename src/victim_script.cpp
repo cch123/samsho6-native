@@ -558,6 +558,25 @@ void enterRow(Script& s) {
         break;
     }
     case 0x4d:battle().pause.request(2,0);break; // 167ec0: 139290(2, 0)
+    case 0x30: { // 16777c: the attacker 1 ahead of the victim on the floor, then two attacker effects 0x262 / 0x263
+        const ScalarFloat vx{std::bit_cast<uint32_t>(s.body.timeline.motion().x)},one=ScalarFloat::integer(1);
+        const bool attackerMirrored=s.sourceBody.timeline.clock().objectFlags&0x80000;
+        s.sourceBody.timeline.setPosition(std::bit_cast<float>((attackerMirrored?vx.add(one):vx.sub(one)).bits),0.0f);
+        a.flags244|=0x20000;
+        for(unsigned act:{0x262u,0x263u}) { // 16c408(cb, act, 0, 1), 108 |= 0x20000, 11dff8(o, A.b0 + 1.0)
+            auto& o=*attackerEffect(act,false);o[0x108/4]|=0x20000;
+            o[0xb0/4]=ScalarFloat{s.sourceBody.childParentWords()[0xb0/4]}.add(one).bits;o[0x104/4]|=0x20000;
+        }
+        break;
+    }
+    case 0x2f: { // 167704: the victim 35 ahead of the attacker and 75 up; attacker 248 |= 0x100
+        const auto am=s.sourceBody.timeline.motion();
+        const ScalarFloat ax{std::bit_cast<uint32_t>(am.x)},ay{std::bit_cast<uint32_t>(am.y)};
+        const auto x=(s.sourceBody.timeline.clock().objectFlags&0x80000)?ax.sub(ScalarFloat::integer(35)):ax.add(ScalarFloat::integer(35));
+        s.body.timeline.setPosition(std::bit_cast<float>(x.bits),std::bit_cast<float>(ay.add(ScalarFloat::integer(75)).bits));
+        a.flags248|=0x100;
+        break;
+    }
     case 0x1b:case 0x1c: { // 16728c / 1672a4: stop the victim; the child (V.body.124, no null check) moves onto it
         s.body.timeline.stopMotion();
         auto* c=s.child();

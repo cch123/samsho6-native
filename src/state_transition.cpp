@@ -131,6 +131,7 @@ void StateEntryRules::enter(StateEntryActor& a,ActorCommandInput& input,const In
     }
     a.registry28c.fill(0);a.registry28c[2]=0xffffffff; //163450 releases the registry after flagging its object.
 }
+void (*stateEntryObserver)(const StateEntryActor&,int,int)=nullptr;
 StateEntryPlan StateEntryRules::transition(StateEntryActor& a,ActorCommandInput& input,const InputSystemConfig& config,StateEntryContext& context) const {
     const bool carried=a.flags23c&0x800000;
     const auto plan=prepareStateEntry(a);
@@ -140,6 +141,7 @@ StateEntryPlan StateEntryRules::transition(StateEntryActor& a,ActorCommandInput&
         if(child[0x24/4]!=776) {child[0xc4/4]=776;child[0xc0/4]=0;child[0x104/4]|=1;}
     }
     if(plan.required) {
+        if(stateEntryObserver)stateEntryObserver(a,plan.table,plan.index);
         enter(a,input,config,context,unsigned(plan.table),unsigned(plan.index));
         if(plan.finishAttackAfterEntry)a.swordWait130=20; //14f1a0, after all14a348 effects.
     }

@@ -67,7 +67,7 @@ void UnportedFighterState::traceOrigin() {
 bool GroundStateRuntime::supports(int table,int index) {
     if(table==0)return (index>=0&&index<=60)||index==62||index==63;
     if(table==1)return (index>=0&&index<=24)||index==26||index==29||index==31||index==33||(index>=35&&index<=54)||(index>=64&&index<96);
-    return table==2&&((index>=0&&index<=7)||(index>=10&&index<=16)||(index>=20&&index<=26)||
+    return table==2&&((index>=0&&index<=7)||(index>=10&&index<=16)||index==18||index==19||(index>=20&&index<=26)||
         index==30||index==31||(index>=32&&index<=49)||(index>=52&&index<=58)||KnockdownPlayback::supportsFall(index)||index==61||index==74||index==75||(index>=80&&index<=87)||index==96);
 }
 void GroundStateRuntime::prepareInput(StateEntryActor& a,const PermissionActor& opponent,
@@ -414,8 +414,8 @@ void GroundStateRuntime::beginDamage(PlayerObject& o,StateEntryActor& a,const Ac
         a.callbacks260[0]=0x170890;
         // From state 50 onward, each reaction has one fixed ACT row (bomb
         // recoil uses rows 8 and 9), instead of three strengths per row.
-        a.callbacks260[3]=state>=50?0:unsigned(state-32)%3;
-        a.callbacks260[6]=state>=50?unsigned(state-50)+6:unsigned(state-32)/3;
+        a.callbacks260[3]=(state>=50||state<32)?0:unsigned(state-32)%3;
+        a.callbacks260[6]=state<32?unsigned(state-4):state>=50?unsigned(state-50)+6:unsigned(state-32)/3; // 18 / 19: rows 14 / 15
     }
     a.callbacks260[1]=2;a.callbacks260[2]=0xffffffff;
 }

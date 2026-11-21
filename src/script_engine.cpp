@@ -203,6 +203,22 @@ void ScriptEngine::entryEvent(PlayerObject& b,StateEntryActor& a,const GroundSta
         return;
     }
     case 0:stopAtGround(b);b.pendingFlags&=~8u;return; // 1697d0(cb); body.fe &= ~8
+    case 2: { // tail 11db88(body): toggle the facing
+        const auto k=b.timeline.clock();b.timeline.setObjectFlags(k.objectFlags^0x80000u,k.flags104,k.flags108);
+        return;
+    }
+    case 52: { // 16d2b0(cb, 0xa6, 0), then the object's x = the opponent's body x (no null check)
+        if(!f.spawnDescriptor||!f.pools||!f.weaponLock)throw std::runtime_error("Script event 52 spawns descriptor 0xa6");
+        const auto h=f.spawnDescriptor(0xa6,0);
+        if(!h)throw std::runtime_error("Original script event 52 writes through a null object");
+        f.pools->objects.at(h-1)[0x40/4]=std::bit_cast<uint32_t>(f.weaponLock->opponentBody.timeline.motion().x);
+        return;
+    }
+    case 24: { // Kazuki: 1f7628 (companion+134 != 0); otherwise the fire level f15 becomes 3
+        if(!a.auxiliaryObject04||!f.pools)throw std::runtime_error("Script event 24 reads the companion (actor+4)");
+        if(!f.pools->objects.at(a.auxiliaryObject04-1)[0x134/4])a.characterBytesF14[1]=3;
+        return;
+    }
     case 63: { // Kuroko: pin the opponent 88 ahead, 1494c0(opp, 0x591, 0x592), clear its body latches 128..134
         if(!f.weaponLock)throw std::runtime_error("Script event 63 moves the opponent");
         auto& w=*f.weaponLock;

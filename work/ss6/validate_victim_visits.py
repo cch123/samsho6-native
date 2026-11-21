@@ -21,7 +21,8 @@ import tempfile
 
 from validate_selected_combat import BUILD, ROOT, prefix
 from validate_weapon_handling import setup
-from probe_fighter_gaps import pads as move_pads, PLAYABLE, MOTIONS
+from probe_fighter_gaps import pads as move_pads, PLAYABLE, MOTIONS, slot_pads, slot_selection
+SLOT_RUNS=[]
 
 RES=ROOT/'work/ss6/extracted/resources'
 ACTOR=[(0x194,4),(0x23c,4),(0x244,4),(0x248,4),(0x19a,1),(0x18c,4),(0x190,2),(0x192,2),(0xa3c,4),(0xa30,4),(0xa38,4),(0x254,1),
@@ -160,11 +161,23 @@ class Original:
 # Spirit lineups found by probe_fighter_gaps.py --spirits (seat of the source, opponent, spirits).
 SPIRIT_CASES={4:((1,21,(0,0)),(0,12,(1,1)),(1,12,(1,1)),(1,21,(4,4)),(1,40,(4,4))),
               48:((0,21,(3,3)),(1,15,(1,1)),(0,24,(3,3)))}
+# Rage scenarios found by probe_fighter_gaps.py --rage (seat of the source, opponent, motion).
+RAGE_CASES={20:((1,26,'RAGE:214BC'),(0,26,'RAGE:214BC'))}
 
 def run(job):
     exe,seat,other,move,source=job[:5];spirits=job[5] if len(job)>5 else None
     lineup=(source,other) if seat==0 else (other,source)
-    if move:
+    if move and move.startswith('SLOTSEL'):
+        lineup,seat,c,mv,sp=SLOT_RUNS[int(move[7:])]
+        seq=prefix(lineup,sp)+[[0,0]]*330+[[x,0] if seat==0 else [0,x] for x in slot_pads(seat,mv)]
+        cpu=[c] if c!='none' else []
+    elif move and move.startswith('RAGE:'):
+        # The CPU opponent beats the source into rage while it repeats the motion every 150 ticks.
+        seq=prefix(lineup)+[[0,0]]*330;cpu=['p2' if seat==0 else 'p1']
+        for _ in range(60):
+            seq+=[[0,0]]*150
+            for x in move_pads(seat,move[5:]):seq.append([x,0] if seat==0 else [0,x])
+    elif move:
         seq=prefix(lineup)+[[0,0]]*330;cpu=[]
         for x in move_pads(seat,move):seq.append([x,0] if seat==0 else [0,x])
     else:seq=prefix(lineup,spirits)+[[0,0]]*12000;cpu=['both']
@@ -204,6 +217,10 @@ def main():
         # against a fixed opponent sample, both seats with the same spirit.
         jobs+=[(exe,s,o,None,n,(sp,sp)) for sp in range(5) for s in (0,1) for o in PLAYABLE[::6]]
         jobs+=[(exe,s,o,None,n,sp) for s,o,sp in SPIRIT_CASES.get(n,())]
+        jobs+=[(exe,s,o,m,n) for s,o,m in RAGE_CASES.get(n,())]
+        global SLOT_RUNS
+        SLOT_RUNS=slot_selection(n)
+        jobs+=[(exe,r[1],r[0][1-r[1]],f'SLOTSEL{i}',n) for i,r in enumerate(SLOT_RUNS)]
         with ThreadPoolExecutor(6) as pool:results=list(pool.map(run,jobs))
     wrong=[w for _,ws in results for w in ws]
     total=Counter()

@@ -15,7 +15,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from validate_selected_combat import prefix, ROOT, BUILD
+from validate_selected_combat import prefix, ROOT, BUILD, substitute_env
 
 U,D,A,B,C,K,E=0x10,0x20,0x100,0x200,0x400,0x800,0x1000
 from fighter_roster import PLAYABLE
@@ -222,7 +222,7 @@ def run(job):
     elif move:
         for x in pads(seat,move):seq.append([x,0] if seat==0 else [0,x])
     else:seq+=[[0,0]]*12000
-    r=subprocess.run([exe,ROOT/'work/ss6/extracted/resources',cpu],input=''.join(f'{a} {b}\n' for a,b in seq),text=True,capture_output=True)
+    r=subprocess.run([exe,ROOT/'work/ss6/extracted/resources',cpu],input=''.join(f'{a} {b}\n' for a,b in seq),text=True,capture_output=True,env=substitute_env(lineup))
     if r.returncode not in (0,1,2):return dict(lineup=lineup,seat=seat,cpu=cpu,move=move,spirits=spirits,result=f'CRASH {r.returncode} {r.stderr[-200:]}',states=[],acts=[])
     lines=r.stdout.splitlines()
     head=lines[0] if lines else r.stderr[-300:]

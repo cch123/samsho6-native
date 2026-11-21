@@ -19,7 +19,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from validate_selected_combat import BUILD, ROOT, prefix
+from validate_selected_combat import BUILD, ROOT, prefix, substitute_env
 from validate_weapon_handling import setup
 from probe_fighter_gaps import pads as move_pads, PLAYABLE, MOTIONS, slot_pads, slot_selection
 SLOT_RUNS=[]
@@ -181,7 +181,7 @@ def run(job):
         seq=prefix(lineup)+[[0,0]]*330;cpu=[]
         for x in move_pads(seat,move):seq.append([x,0] if seat==0 else [0,x])
     else:seq=prefix(lineup,spirits)+[[0,0]]*12000;cpu=['both']
-    r=subprocess.run([exe,RES,*cpu],input=''.join(f'{a} {b}\n' for a,b in seq),text=True,capture_output=True)
+    r=subprocess.run([exe,RES,*cpu],input=''.join(f'{a} {b}\n' for a,b in seq),text=True,capture_output=True,env=substitute_env(lineup))
     if r.returncode:raise RuntimeError((lineup,move,r.stderr[-300:]))
     wrong=[];originals={};visits=Counter()
     for line in r.stdout.splitlines():

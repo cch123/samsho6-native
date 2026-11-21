@@ -1904,12 +1904,44 @@ Visit flameVisit(Ctx& c) {
     return Visit::Continue;
 }
 
+// ---- Makai Gaoh (43, arcade boss): the stub 208830 sends selector 8 to 208978 instead of 169810 ----
+constexpr uint32_t mgRush=0x208a08,mgArrive=0x208a90;
+bool makaiGaohEntry(Ctx& c,uint32_t s) {
+    if(s!=8)return false;
+    // 208978(cb, 0): face, 1699f8, 26c = 0, 140630(2), 244 |= 0x20000, ACT 0x236, then 208a08.
+    face(c);consumeHold(c.o,c.a);c.a.callbacks260[3]=0;markBattle4(c);c.a.flags244|=0x20000;
+    queueForced(c,0x236);bind(c.a,mgRush);
+    return true;
+}
+Visit makaiGaohVisit(Ctx& c) {
+    switch(c.a.callbacks260[0]) {
+    case mgRush: // 208a08: at 60 inside the edge behind, land (y = 0) and continue with ACT 0x237
+        consumeHold(c.o,c.a);markBattle4(c);
+        if(atEdge(c,-60,true)) {
+            c.o.timeline.setPosition(c.o.timeline.motion().x,0.f);
+            queueForced(c,0x237);bind(c.a,mgArrive);
+        }
+        return Visit::Continue;
+    case mgArrive: { // 208a90: 200 past the facing edge, snap to that camera edge, camera command (3, 30), ACT 0x238
+        consumeHold(c.o,c.a);markBattle4(c);
+        if(!atEdge(c,-200,false))return Visit::Continue;
+        const auto& cam=c.f.weaponLock->camera;
+        c.o.timeline.setPosition(float((c.o.timeline.clock().objectFlags&0x80000)?cam.left:cam.right),c.o.timeline.motion().y);
+        if(!c.f.battle)throw std::runtime_error("1414f8 needs the battle camera");
+        c.f.battle->camera.appendCommand(3,0x1e);
+        queueForced(c,0x238);recoverLater(c.a,1);
+        return Visit::Continue;
+    }
+    default:return Visit::NotMine;
+    }
+}
+
 struct Branch {unsigned character;bool(*entry)(Ctx&,uint32_t);Visit(*visit)(Ctx&);};
 constexpr Branch branches[]{{6,ukyoEntry,ukyoVisit},{7,genjuroEntry,genjuroVisit},{8,basaraEntry,basaraVisit},{12,jubeiEntry,jubeiVisit},{13,zankuroEntry,zankuroVisit},
                             {14,charlotteEntry,charlotteVisit},{15,tamtamEntry,tamtamVisit},{17,sogetsuEntry,sogetsuVisit},{22,yoshitoraEntry,yoshitoraVisit},{23,yunfeiEntry,yunfeiVisit},
                             {25,gedoEntry,gedoVisit},{28,yumejiEntry,yumejiVisit},{29,sankuroEntry,sankuroVisit},
                             {37,siegerEntry,siegerVisit},
-                            {20,enjaEntry,flameVisit},{21,suijaEntry,suijaVisit},{5,kyoshiroEntry,kyoshiroVisit},{9,shizumaruEntry,shizumaruVisit},{11,amakusaEntry,amakusaVisit},{27,mizukiEntry,mizukiVisit},{31,irohaEntry,irohaVisit},{35,genanEntry,genanVisit},{39,nicotineEntry,nicotineVisit},{4,galfordEntry,galfordVisit},{16,kazukiEntry,kazukiVisit},{32,karakuriEntry,karakuriVisit},{33,ofudaEntry,ofudaVisit},{19,reraEntry,reraVisit},{46,champleEntry,champleVisit},{44,poppyEntry,poppyVisit},{41,rasetsuGalfordEntry,rasetsuGalfordVisit},{48,kurokoEntry,kurokoVisit},{45,shikuruEntry,shikuruVisit}};
+                            {20,enjaEntry,flameVisit},{21,suijaEntry,suijaVisit},{5,kyoshiroEntry,kyoshiroVisit},{9,shizumaruEntry,shizumaruVisit},{11,amakusaEntry,amakusaVisit},{27,mizukiEntry,mizukiVisit},{31,irohaEntry,irohaVisit},{35,genanEntry,genanVisit},{39,nicotineEntry,nicotineVisit},{4,galfordEntry,galfordVisit},{16,kazukiEntry,kazukiVisit},{32,karakuriEntry,karakuriVisit},{33,ofudaEntry,ofudaVisit},{19,reraEntry,reraVisit},{46,champleEntry,champleVisit},{44,poppyEntry,poppyVisit},{41,rasetsuGalfordEntry,rasetsuGalfordVisit},{48,kurokoEntry,kurokoVisit},{45,shikuruEntry,shikuruVisit},{43,makaiGaohEntry,makaiGaohVisit}};
 const Branch* branchOf(unsigned character) {
     for(const auto& b:branches)if(b.character==character)return &b;
     return nullptr;
@@ -1962,6 +1994,7 @@ bool isScriptFighterAttack(const FighterTables& tables,unsigned character,uint32
     case 22:return handler==yoshitoraSecond||handler==yoshitoraThird||handler==yoshitoraLast;
     case 23:return handler==yunfeiDive||handler==yunfeiBounce||handler==yunfeiDrop;
     case 25:return handler==gedoWait;
+    case 43:return handler==mgRush||handler==mgArrive;
     case 28:return handler==yumejiFollow;
     default:return false;
     }

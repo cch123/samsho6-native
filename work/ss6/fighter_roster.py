@@ -33,6 +33,9 @@ PLAYABLE = tuple(c for c in FIGHTERS if c in GRID or c == KUROKO)
 LOGIC = {42: 1}
 # Grid ids whose logic is ported; their own resource banks (graphics, voices) are packaged.
 SELECTABLE = tuple(c for c in (*GRID, KUROKO) if c != 53 and LOGIC.get(c, c) in FIGHTERS)
+# Admitted fighters whose banks are packaged: the selectable ones plus fighters without a grid cell
+# (Makai Gaoh 43, an arcade boss), which only the debug substitution fields.
+PACKAGED = SELECTABLE + tuple(c for c in FIGHTERS if c not in SELECTABLE)
 SCRIPT_STUBS = tuple(c for c, d in FIGHTERS.items() if d['port'] == 'ScriptStubs')
 def cursor_path(character, start=2):
     """Shortest column/row moves from the initial cell to the fighter's cell:

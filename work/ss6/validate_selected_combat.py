@@ -47,9 +47,17 @@ int main(int argc,char** argv){try{
 '''
 from fighter_roster import cursor_path
 
+# Fighters without a grid cell, fielded by selecting the proxy cell and SS6_SUBSTITUTE (LocalVersus).
+SUBSTITUTE_PROXY={43:26}  # Makai Gaoh (arcade boss) through Gaoh's cell
+def substitute_env(lineup):
+    import os
+    pairs=[f'{seat}:{c}' for seat,c in enumerate(lineup) if c in SUBSTITUTE_PROXY]
+    return dict(os.environ,SS6_SUBSTITUTE=','.join(pairs)) if pairs else None
+
 def prefix(lineup,spirits=None):
     pads=[[0,0] for _ in range(1250)];ends=[]
     for side,resource in enumerate(lineup):
+        resource=SUBSTITUTE_PROXY.get(resource,resource)
         # From cell 2, cell 3 is one down. Cell 12 is two columns and two
         # rows up. The horizontal scroll direction mirrors for the second seat.
         forward=(128,64)[side]

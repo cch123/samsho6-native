@@ -22,6 +22,9 @@ public:
     // are not offered by the VS selector.
     void fixedStage(int stage) {stage_=stage;restart();}
     void stageItems(bool enabled) {items_=enabled;restart();}
+    // Debug only, not an original path: after a selection, field 'character' for 'seat'
+    // instead of the selected one. Makai Gaoh (43) is an arcade boss with no grid cell.
+    void substituteCharacter(unsigned seat,unsigned character) {substitute_.at(seat)=int(character);}
     using TickObserver=std::function<void(const NativeMatch&)>;
     void onTick(TickObserver observer) {observer_=std::move(observer);}
 private:
@@ -33,6 +36,7 @@ private:
     std::array<bool,2> cpuSeats_{};
     int stage_=0;
     bool items_=false;
+    std::array<int,2> substitute_{-1,-1};
     void configureControllers(NativeMatch&) const;
     unsigned matchNumber_=1;
     std::unique_ptr<NativeMatch> match_;

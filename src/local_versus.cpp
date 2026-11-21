@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <cstdio>
 #include "local_versus.hpp"
 #include "console_versus_session.hpp"
 #include <istream>
@@ -35,7 +37,16 @@ LocalVersus::LocalVersus(const std::filesystem::path& assets,int roundTime,Versu
 
 LocalVersus::LocalVersus(const std::filesystem::path& assets,int roundTime,VersusMode mode,
                          std::array<unsigned,2> spirits,VersusEntry entry,std::array<bool,2> cpuSeats)
-    :assets_(assets),roundTime_(roundTime),mode_(mode),spirits_(spirits),entry_(entry),cpuSeats_(cpuSeats) {restart();}
+    :assets_(assets),roundTime_(roundTime),mode_(mode),spirits_(spirits),entry_(entry),cpuSeats_(cpuSeats) {
+    // SS6_SUBSTITUTE="seat:character[,seat:character]" (debug harnesses, see substituteCharacter).
+    if(const char* s=std::getenv("SS6_SUBSTITUTE")) {
+        unsigned seat=0,character=0;int used=0;
+        while(std::sscanf(s,"%u:%u%n",&seat,&character,&used)==2) {
+            substituteCharacter(seat,character);s+=used;if(*s!=',')break;++s;
+        }
+    }
+    restart();
+}
 
 void LocalVersus::configureControllers(NativeMatch& match) const {
     for(unsigned seat=0;seat<2;++seat)if(cpuSeats_[seat])match.enableCpu(seat);
@@ -57,8 +68,10 @@ void LocalVersus::tick(const std::array<NormalizedPadSample,2>& pads) {
     // Deliver the old match's last sound requests before its state is replaced.
     if(observer_)observer_(*match_);
     if(match_->faceoff()&&match_->faceoff()->complete) {
+        auto lineup=match_->selectedLineup();
+        for(unsigned seat=0;seat<2;++seat)if(substitute_[seat]>=0)lineup[seat].character=unsigned(substitute_[seat]);
         auto next=std::make_unique<NativeMatch>(assets_,-1,mode_,match_.get(),std::array<unsigned,2>{},
-                                                match_->selectedLineup(),match_->characterSelect()->stage);
+                                                lineup,match_->characterSelect()->stage);
         configureControllers(*next);
         if(entry_==VersusEntry::Fight || match_->updates!=0)++matchNumber_;
         match_=std::move(next);

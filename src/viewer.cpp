@@ -1113,6 +1113,15 @@ int main(int argc, char** argv) {
                 if(i+1==argc)throw std::invalid_argument(arg+" requires a spirit name");
                 spirits[arg=="--p2-spirit"]=ss6::versusSpirit(argv[++i]);
             }
+            else if (arg=="--p1-character" || arg=="--p2-character") {
+                // Debug, not an original path: the fighter chosen on the select screen is replaced by this
+                // id (e.g. Makai Gaoh 43, an arcade boss without a grid cell). See LocalVersus::substituteCharacter.
+                const unsigned character=unsigned(std::stoul(argv[++i]));
+                if(!ss6::playableFighter(character))throw std::invalid_argument(arg+" expects a ported fighter id");
+                const std::string pair=std::to_string(arg=="--p2-character")+":"+std::to_string(character);
+                const char* old=std::getenv("SS6_SUBSTITUTE");
+                setenv("SS6_SUBSTITUTE",(old&&*old?std::string(old)+","+pair:pair).c_str(),1);
+            }
             else if (arg == "--audio-out") audioOut=argv[++i];
             else if (arg == "--dump-stage") stageDump=argv[++i];
             else if (arg == "--items") stageItems=std::stoul(argv[++i])!=0;

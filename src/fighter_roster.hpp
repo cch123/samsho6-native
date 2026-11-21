@@ -53,6 +53,8 @@ inline constexpr FighterDescriptor fighterDescriptors[]{
     {23,"YUNFEI",FighterPort::ScriptStubs,{{{0,165},{185,445},{489,507},{529,880}}},noRange},
     {25,"KUSAREGEDO",FighterPort::ScriptStubs,{{{0,165},{185,445},{489,507},{529,618}}},noRange},
     {26,"GAOH",FighterPort::ScriptStubs,{{{0,165},{185,445},{489,507},{529,579}}},noRange},
+    // Makai Gaoh: the arcade boss. No grid cell; debug harnesses field it with SS6_SUBSTITUTE.
+    {43,"MAKAIGAOH",FighterPort::ScriptStubs,{{{0,165},{185,445},{489,508},{529,880}}},noRange},
     {27,"MIZUKI",FighterPort::ScriptStubs,{{{0,165},{185,445},{489,508},{529,880}}},noRange},
     {28,"YUMEJI",FighterPort::ScriptStubs,{{{0,165},{185,445},{489,528},{529,615}}},{507,507}},
     {29,"SANKURO",FighterPort::ScriptStubs,{{{0,165},{185,445},{489,514},{529,752}}},{611,613}},

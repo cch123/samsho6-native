@@ -23,7 +23,7 @@ import tempfile
 
 from character_tiles_oracle import ROOT,ASSETS,fixture
 from validate_mamahaha import BATTLE,ACTORS,BODY,TASK
-from validate_selected_combat import prefix,BUILD
+from validate_selected_combat import prefix,BUILD,substitute_env
 from extract_collision_tables import SOURCE_HASH
 
 OBJECT=0xb10000
@@ -120,7 +120,8 @@ def run(job):
         # CPU-vs-CPU after selection reaches moves public input does not.
         other=int(move[3:]);seq=prefix((FIGHTER,other) if seat==0 else (other,FIGHTER))+[[0,0]]*12000;cpu=['both']
     else:seq=pads(seat,move);cpu=[]
-    r=subprocess.run([exe,ASSETS,*cpu],input=''.join(f'{x} {y}\n' for x,y in seq),text=True,capture_output=True)
+    r=subprocess.run([exe,ASSETS,*cpu],input=''.join(f'{x} {y}\n' for x,y in seq),text=True,capture_output=True,
+                     env=substitute_env((FIGHTER,0) if seat==0 else (0,FIGHTER)))
     if r.returncode:raise RuntimeError((seat,move,r.stderr))
     calls=[];frames=[];spawns=[]
     for line in r.stdout.splitlines():

@@ -1,0 +1,1655 @@
+GALLERY MODE (menu item 6) AND SHARED MENU INFRASTRUCTURE -- SLPS-25559
+========================================================================
+Static reverse-engineering specification. Source: work/ss6/extracted/SLPS_255.59
+(.text 0x100000..0x32cd70, .data 0x32ce00..0x5d3744, .rodata 0x5d3c00..0x67bc84,
+.bss from 0x67bd80). Nothing here was executed unless a paragraph says so.
+
+Labels: OBSERVED = read from instructions/data at the cited address.
+        INFERRED = interpretation of observed code.  UNKNOWN = not resolved.
+
+Document layout
+  PART A    gallery scenes (top menu, ending viewer, sound test, illustration viewer),
+            unlock storage, interaction with battle code
+  PART A.W  widget library used by the three gallery sub-scenes (list widget,
+            sliding panel, message window, sound/BGM calls)
+  PART B    infrastructure shared by all non-battle menus (scene transition, quad
+            submit, text, pad structure, menu background, help ticker)
+
+Glossary
+  seat      pad/port index 0 or 1 (P1/P2)
+  GS        Graphics Synthesizer (PS2 rasteriser)
+  SJIS      Shift_JIS text encoding
+  W / P / M list widget / sliding panel embedded in W at W+0x1c / message window
+            (all specified in PART A.W)
+
+
+PART A -- GALLERY
+=================
+
+A.0 Summary
+-----------
+The gallery is NOT an image-thumbnail browser. It is a four-row text menu
+(scene 0x1d22f8) that leads to three independent sub-scenes:
+
+  row 0  エンディング鑑賞  ending viewer      scene 0x182968 (shared with the arcade ending)
+  row 1  ＢＧＭ鑑賞        sound test         scene 0x13e090 (BGM / voice+SE / narration)
+  row 2  イラスト鑑賞      illustration viewer scene 0x13ed98 (55 images gl_00..gl_54)
+  row 3  EXIT              back to title/mode menu scene 0x127940
+
+    mode menu 0x1ccfd0 item 6
+          | mode word 0x4c3808 = 0xd (P1) / 0xe (P2); 1d2610(): [0x582d88]=0
+          v
+   +--------------------+  cancel / row 3   +---------------------------+
+   | gallery top menu   |------------------>| title + mode menu 0x127940|
+   | 0x1d22f8 task 1d2380|                  +---------------------------+
+   +--------------------+
+      | row 0        | row 1            | row 2
+      v              v                  v
+  +-----------+  +--------------+  +------------------+
+  | 0x182968  |  | 0x13e090     |  | 0x13ed98         |
+  | ending    |  | sound test   |  | illustration     |
+  | select +  |  | task 13e0e8  |  | viewer task      |
+  | playback  |  |              |  | 13edf0           |
+  +-----------+  +--------------+  +------------------+
+      | cancel       | cancel           | cancel
+      +--------------+------------------+----> 0x1d22f8 (row cursor preserved)
+
+There is no movie player and no per-thumbnail page navigation. There is no
+gallery viewer that runs fighter actions; the battle sound special case for
+modes 13/14 exists because the sound test replays battle voice/SE command
+numbers through the battle sound entry 0x1e8298 (section A.7).
+
+
+A.1 Entry from the mode menu and exit paths
+-------------------------------------------
+OBSERVED (brief + 0x1d2610): mode-menu item 6 writes mode word 0x4c3808 = 0xd/0xe,
+0x4c38a8 = 0, calls 0x1d2610 ([0x582d88] = 0, the top-menu row cursor) and
+requests scene 0x1d22f8.
+
+Scene entry 0x1d22f8 (OBSERVED, in call order):
+  112670(priority 0x14, handler 0x1d2380, 0x10, tag 0x1783)
+  118320(0x1d24f0)            register scene destructor
+  1ce478()                    shared menu-background setup (PART B)
+  1d2370()                    [0x582d8c] = 0   (exit-requested latch)
+  s = 1d28d0([0x582d88])      = [0x582d90 + 8*row].text
+  1cebb0(1ceb90(s))           install help-ticker string (PART B)
+  112f30(0x00ffffff, 0x00404040)
+  tail call 1e7b40()
+Destructor 0x1d24f0: 112a70(0x1783).
+
+Exit paths of the top menu:
+  cancel, or confirm on row 3 -> 0x1d2508:
+        124d50(); 1252f0(1, 0, 0x1d24f0, 0x127940); [0x582d8c] = 1
+        (124d50 clears the whole g_GameData block, so the mode word becomes 0 here)
+        (0x127940 is the title/mode-menu scene already ported in console_title.*)
+  confirm on row 0 -> 1252f0(1, 0, 0x1d24f0, 0x182968); [0x582d8c] = 1
+  confirm on row 1 -> 1252f0(1, 0, 0x1d24f0, 0x13e090); [0x582d8c] = 1
+  confirm on row 2 -> 1252f0(1, 0, 0x1d24f0, 0x13ed98); [0x582d8c] = 1
+  After every confirm (all four rows): 178f70(seat): [0x12d35c4] = (seat==1) ? 1 : 0.
+The mode word is not changed by any gallery scene. Each sub-scene returns with
+1252f0(1, 0, <its destructor>, 0x1d22f8); the row cursor [0x582d88] is preserved.
+
+Operating seat (OBSERVED 0x178f90, "active seat" getter used by all sub-scenes):
+  mode 3            -> ([0x582f3c] == 1)            (0x1da838)
+  mode 13 or 14     -> [0x12d35c4]                  (seat that confirmed in the top menu)
+  mode 2,5,8,10,12,16 -> 1
+  otherwise         -> (mode == 0x12)
+Consequence: in the top menu BOTH pads are polled; in a sub-scene only the pad
+that pressed confirm in the top menu is polled, independent of whether the mode
+word is 0xd or 0xe.
+
+
+A.2 State (globals)
+-------------------
+  0x4c3808  u32  game mode word; 0xd/0xe while in any gallery scene
+  0x582d88  s32  top-menu row cursor 0..3. Init 0 by 1d2610 (mode menu only)
+  0x582d8c  s32  top-menu exit latch; 0 at scene entry, 1 after any scene request;
+                 while 1 the pad is not sampled (0x1d23b4)
+  0x582d90  {char* text; s32 scroll}[4]  help-ticker rows (.data, decoded in A.3)
+  0x657630  char*[4]  row labels (.rodata)
+  0x12d35c4 s32  gallery operating seat (0x178f70 / 0x178f90)
+  0x12d3854 s32  illustration id currently resident in texture slot 5; -1 = none
+                 (0x17ed90 writes -1; 0x17eda0 loads on mismatch)
+  0x128a1c0 s16[]  sound-test "id per list row" scratch array (bss)
+  0x1373830 s16[55] character-list row -> character id map (0x20eae0, PART A.W)
+  0x4ef0c4  s32  ending engine: seat whose pad may skip/abort (0x182cfc, 0x182da0)
+  0x4ef0c8  s32  ending engine: written 0 by the gallery task (0x182d18); arcade writes
+                 playerConfig[seat]+4 (0x182de8)
+  0x4eefd4  s32  written after each gallery ending: character id, except 0x30 -> 0x2b
+                 (0x182c54..0x182c74). Reader UNKNOWN.
+  0x4eefd0, 0x4eefe0  s32 zeroed by 0x182968 in gallery mode. Meaning UNKNOWN.
+  0x4c3838  s32  1 while the ending scene is alive (0x182988), 0 in its destructor
+  0x12ba2c0 s32  selection memory of the non-gallery "endingThread" 0x13f478 (A.4.4)
+  0x43d058  system/save block "g_GameSetting" (.data, file image is all zero):
+      +0x16+c (0x43d06e+c) u8  character lock byte, c = 0..48. 0 = selectable
+      +0x47+c (0x43d09f+c) u8  ending-seen flag, c = character id 0..48
+      +0x81+k (0x43d0d9+k) u8  spirit-cleared flag, k = 0..8 (count taken over 9 bytes
+                               by 0x1e3fa0)
+      +0x7e..0x80 (0x43d0d6..d8) u8 unlock flags for spirits 6/7/8 (existing knowledge)
+      +0x8a..0x8c (0x43d0e2..e4) u8 mode_lock[0], mode_lock[MODE_CUSTOM],
+                               mode_lock[MODE_SURVIVAL] (names from debug strings
+                               0x65bfd0, 0x65c010, 0x65c040)
+      +0x90 (0x43d0e8) u32     counter compared against 0x2bf1f (179999) by every
+                               unlock predicate. INFERRED: accumulated play time in frames
+      +0x94 (0x43d0ec) u8      ex_chr_lock (string 0x65c168); non-zero adds the four EX
+                               rows to character lists (0x20ebe0)
+      +0x95 (0x43d0ed) u8      matsuri_gauge_lock (string 0x65c188)
+      -0x03 (0x43d055) u8      narration language option (0 Japanese, 1 English)
+      -0x02 (0x43d056) u8      BGM variant option (0 original, 1 arranged)
+      -0x06 (0x43d052) u8      character/text version; non-zero suppresses ending
+                               playback (0x182b78)
+  0x456890 + 0x30*seat   per-seat player configuration: +0 character, +4 (copied to
+                 0x4ef0c8), +8 index into the spirit-cleared flags
+
+
+A.3 Top menu task 0x1d2380 (priority 0x14, tag 0x1783)
+------------------------------------------------------
+Data (OBSERVED, .rodata/.data):
+  labels 0x657630[4]: "エンディング鑑賞", "ＢＧＭ鑑賞", "イラスト鑑賞", "EXIT"
+  help   0x582d90[4] = {text, scroll}:
+    0 {0x657540 "クリアしたキャラクターのエンディングを再生できます", 0}
+    1 {0x657578 "ゲーム中に使用されているＢＧＭを再生できます", 0}
+    2 {0x6575a8 "各種イラストを鑑賞できます", 0}
+    3 {0x6575c8 "タイトル画面に戻ります", 0}
+    (entries 7..9 of the same array belong to the NETWORK menu 0x1d2910, tag 0x1784.)
+  title sprite rectangle 0x4c7720 (= 0x4c7660+0xc0) s32[4] = {1, 419, 205, 28}
+  floats 0x6575e0 = 16.0, 0x6575e4 = 28.0, 0x6575e8 = -350.0, 0x657640 = -350.0,
+         0x657644 = -350.0
+
+Input decode 0x1d28e8(seat) -> bit mask (OBSERVED):
+  pad = 118128(seat); pressed = pad[+4]; repeat = pad[+8]
+  v = (pressed & 0x404) ? 8 : 0          cancel
+  if (pressed & 0x20a) v |= 4            confirm
+  if (repeat & 0x10)   v |= 1            up
+  if (repeat & 0x20)   v |= 2            down
+
+Per update (one task visit), in instruction order:
+
+  for seat in 0, 1:                                  # 0x1d2398 loop, s0 = seat
+      v = 0
+      if 1cf750() != 0:                              # menu background/fade ready (PART B)
+          if [0x582d8c] == 0: v = 1d28e8(seat)
+      if v & 1:        row = (row + 3) mod 4         # 0x1d23cc, C signed remainder
+      elif v & 2:      row = (row + 1) mod 4         # 0x1d2484
+      elif v & 0x18:   1d2508()                      # cancel (bit 8); bit 0x10 never set
+                       1e7b70(-1, 0x25); continue
+      elif v & 4:      1d2550(seat)                  # confirm, A.1
+                       1e7b70(-1, 0); continue
+      else:            continue
+      # only for up/down:
+      [0x582d88] = row
+      1cebb0(1ceb90(1d28d0(row)))                    # new help string
+      1e7b70(-1, 0x20)
+  1ce570()                                           # menu background update/draw
+  1ce660(0, 0, 0)
+  a = 1cf738()                                       # current menu alpha 0..255
+  1d2620(a)                                          # title sprite
+  1d26d0(row, a)                                     # four labels
+  1d27c8(row, a)                                     # help ticker        (tail call)
+
+  Priority inside one seat: up > down > cancel > confirm (else-if chain above).
+  Up then down by the two seats in one update both apply and both play sound 0x20.
+
+Sounds (1e7b70(-1, id)): 0x20 cursor move, 0x25 cancel, 0x00 confirm.
+
+Draw 0x1d2620(a): saved = [0x3db900]; [0x3db900] = (a << 24) | 0x00ffffff;
+  [0x3db8fc] = 1; 113f98(texture slot 0x2e, x 16.0, y 28.0, z -350.0,
+  f15 = 205.0, f16 = 28.0 (src w,h as float), f17 = 1.0, f18 = 419.0 (src x,y),
+  stack arg 28.0); [0x3db900] = saved.
+  OBSERVED register assignment: f17 <- [0x4c7720] (1), f18 <- [0x4c7724] (419),
+  f15 = f19 <- [0x4c7728] (205), f16 = f0 = stack <- [0x4c772c] (28). INFERRED:
+  source rectangle (1,419) size 205x28 of texture slot 0x2e drawn unscaled. The
+  texture bound to slot 0x2e is loaded by the menu background setup (PART B).
+
+Draw 0x1d26d0(row, a): saved = [0x348a8c]; [0x348a8c] = int(114d88(-350.0));
+  for i in 0..3: 10a460(label[i], x 0x44, y 0x58 + 0x18*i, 0xff,
+                        (i == row) ? 0 : 0xff, (i == row) ? 0 : 0xff, a)
+  restore [0x348a8c].   (selected row red (255,0,0), others white; alpha a)
+
+Draw 0x1d27c8(row, a): [0x348a8c] = int(114d88(-350.0));
+  e = 0x582d90 + 8*row; n = 318358(e.text)
+  x = 1ceb10(e.scroll, n, 0); if x < 0x280: 10a460(e.text, x, 0x198, 255,255,255, a)
+  if e.scroll == 1: x = 1ceb10(1, n, 1); if x < 0x280: 10a460(e.text, x, 0x198, ...)
+  restore [0x348a8c].   (all four gallery rows have scroll = 0: static text)
+
+
+A.4 Ending viewer (row 0)
+-------------------------
+A.4.1 Scene entry 0x182968 (shared with the arcade ending; gallery branch only)
+  1828c0()         [0x4eeef0] = [0x4eeef4] = -1; 114cb8();
+                   10add8(0x10000,0x10); 10add8(0x10001,0x10); 10add8(0x10002,0x10);
+                   10add8(0x22,0); 10add8(0x23,0x10);
+                   1142d8(0x1f, "hukidasi.pvr"); 1142d8(0x20, "hukidasi2.pvr");
+                   10add8(0x1f,0); 10add8(0x20,0); 182858()
+  [0x4c3838] = 1;  120110()
+  if mode in {13,14}:
+      1126f0(0x14, 0x182ce0, stack 0x12d4f80, 0x1000, 0x20, tag 0x1b5d)
+      [0x4eefd0] = 0; [0x4eefd4] = 0; [0x4eefe0] = 0
+      1ce478()                              # menu background
+      1cebb0(1ceb90([0x4eefd8]))            # 0x1a3060; .data value 0x5f3f38 =
+                                            # "クリアしたキャラクターのエンディングを見ることが出来ます。"
+      [0x3d3aa0] = -1
+  else: 1126f0(0x14, 0x182d30, 0x12d4f80, 0x1000, 0x20, 0x1b5d)   # arcade ending task
+  118320(0x182a48)
+  Destructor 0x182a48: 11e3a0(0x1b5d); 112a70(0x1b5d); 112a70(0xfa1);
+      116268(0xc,0x10); 116268(0x1c,0x20); [0x4c3838] = 0; 1bc1a8(); 1c4e08().
+
+A.4.2 Gallery ending task 0x182ce0 (coroutine, never returns)
+  [0x4ef0c4] = 178f90()                 # operating seat
+  c = 0
+  loop:
+      182858()                          # reset ending objects, palettes, fade colour
+      c = 13f4a8(c, 1)                  # blocking selection UI, returns character id
+      [0x4ef0c8] = 0
+      182a98(c)                         # play that ending, returns when finished/aborted
+
+A.4.3 Selection UI 0x13f4a8(previousCharacter, fromGallery) -> character id
+  Frame-yielding coroutine (112a28(0) once per frame). Locals: M (message window,
+  sp+0), W (list widget, sp+0x170), P = W+0x1c, state s1 (0 list, -1 leaving,
+  -2 scene requested), prev s3 = -1, countdown s2 = 0x10.
+  Setup:
+      seat = 178f90(); 1822a0(M); 182318(M, 0xa)
+      20e570(W); 20e0a0(W+0x50, 0x10, 1)        # bit 16: large (20-pixel) text rows
+      20eae0(W, rows 9, first 0, includeEx 0, includeAll 0, endingFilter 1)
+      17f428(P, xClosed, yClosed, xOpen, yOpen, frames):
+             seat 0: (-0x180, 0x50, 0x10, 0x50, 0x10)
+             seat 1: ( 0x2ea, 0x50, 0x15a, 0x50, 0x10)
+      20ed70(W, previousCharacter)      # put cursor on the previous character
+  Each frame:
+      17c210(); 1825b8(M); r = 20ee70(W, seat); 1e7ad0()
+      if state != prev:                               # state entry
+          state == -1: 17f4b0(P); W[+0x18] = 0; 1826b0(M)
+          state ==  0: 182648(M); 182318(M, 0xa); 1827c0(M, 0x39, 0); 17f468(P);
+                       W[+0x14] = 1; W[+0x18] = 1
+          prev = state
+      else:                                           # state update
+          state == -1: if 17f400(P): 1252f0(1, 0, fromGallery ? 0x182a48 : 0x13f438,
+                                            0x1d22f8); state = -2
+          state ==  0: if r == 4: return 20ee20(W)    # confirm -> character id
+                       if r == 5: state = -1          # cancel
+          if state != prev: W[+0x18] = 0
+      182600(M); 20ef38(W)
+      if s2 > 0: s2 -= 1; if s2 == 0: 1e7ad0()
+      112a28(0)
+  List contents (0x20eae0 with endingFilter = 1, OBSERVED 0x20eb94..0x20ed58):
+      for i in 0..48: c = order[i] (u8 table 0x59cd20);
+          c == 0x2b : excluded (includeAll == 0)
+          otherwise : included iff byte[0x43d09f + c] != 0   (ending-seen flag)
+      row text = name[c] (char* table 0x4d4bb0, 49 entries); row -> c map at 0x1373830.
+  Message window: layout 0xa (title rect 10, key help "BP選択 BOBT決定 BXBS戻る"),
+      message 0x39 "キャラクターのエンディングを見ることが出来ます".
+  Confirm = pad pressed 0x202 or 0x8 (START), cancel = 0x404 (selector 0x20e128,
+      PART A.W); the widget itself requests tones 0x20 / 0 / 0x24.
+  Zero unlocked endings (OBSERVED, no guard anywhere): 20e5d8 forces the row count
+      to 1, the single row shows the placeholder "UNDEFINED" (0x6647f0), confirm
+      returns 4, 20ee20 returns map[0] = -1, and 182a98(-1) calls the pointer stored
+      at 0x4eefe4, whose .data value is 0 (unless byte[0x43d052] != 0, which skips
+      the call). INFERRED: original defect; a native port must refuse confirm when
+      the list is empty rather than reproduce a null call.
+
+A.4.4 Playback 0x182a98(character) (gallery-relevant parts only)
+  memset(0x3ebf30, 0, 0x800); [0x3ebf1c] = 0x100; [0x4eeef4] = -1; six words zeroed;
+  [0x4eeef0] = -1; 182858()
+  if setjmp(0x4efb40) (0x317598) == 0:
+      if byte[0x43d052] == 0: call ending function table 0x4eefe8[character]()
+      1a1830(0, 4); 1a1740(0x40)
+  (abort path lands here) memset/reset again; 182858(); [0x3d3aa0] = -1;
+  112a70(0xfa1); 1e7ad0()
+  if mode in {13,14}: 1ce478(); [0x4eefd4] = (character == 0x30) ? 0x2b : character
+  Ending function table 0x4eefe8: 50 code pointers (.data), index = character id:
+      0x182e90, 0x183630, 0x184360, ... 0x1a0a18 (index 49). Each is a hand-written
+      coroutine script. Their content belongs to the arcade-ending slice and is NOT
+      specified here.
+  Abort/skip input 0x1a2218 (called by the ending engine every frame):
+      pad = 118128([0x4ef0c4]); 1a2158()
+      if [0x582a68] != 0: return
+      if mode in {13,14}: if pad.pressed & 0x404: 1e7b70(-1, 0x25); longjmp(0x4efb40, 1)
+      else:               if pad.pressed & 0x008: longjmp(0x4efb40, 1)   (0x3175f0)
+      Gallery: cancel buttons abort with sound 0x25; START does nothing.
+      Arcade: START skips silently.
+  After 182a98 returns, the task loops to the selection UI with the same character
+  preselected.
+
+  A second, non-gallery user of the selection UI exists: 0x13f420 -> 0x13f3b8 creates
+  task (0x32, 0x13f478, stack 0x12ba300 size 0x6000, 0x20, tag 0x1b5d) whose body is
+  [0x12ba2c0] = 13f4a8([0x12ba2c0], 0); destructor 0x13f438 frees tags 0x1580..0x15e3.
+  No direct jal/j to 0x13f420 exists in .text and no .data/.rodata word equals it
+  (full scan). INFERRED: unreferenced debug entry.
+
+A.4.5 Where the ending-seen flags are SET (OBSERVED 0x182d30..0x182df0, arcade
+ending task, i.e. NOT in gallery mode)
+      seat = (mode == 1) ? 0 : 1
+      cfg = 0x456890 + 0x30*seat
+      byte[0x43d0d9 + cfg[+8]] = 1          # spirit-cleared flag
+      [0x4ef0c8] = cfg[+4]
+      byte[0x43d09f + cfg[+0]] = 1          # ending-seen flag of the played character
+      1c9830()                              # INFERRED: save-data/unlock bookkeeping
+      182a98(cfg[+0]) ...
+  These two stores are the only `sb` instructions in .text that write the +0x47 and
+  +0x81 arrays through the 0x43d058 base (scan of all sb with those offsets).
+
+A.4.6 Unlock evaluation driven by those flags (summary; owner: arcade/unlock slice)
+  Counters: endingCount = number of non-zero bytes in 0x43d09f[0..48] (0x1e3f70),
+            spiritCount = number of non-zero bytes in 0x43d0d9[0..8]  (0x1e3fa0).
+  Predicate table 0x584f78[16] (code pointers) and setter table 0x584fb8[16]:
+      i  predicate  setter    target byte            setter(1) writes
+      0  0x1e3918   0x1e4598  0x43d098 lock char 42   0   (setter(other) writes 1)
+      1  0x1e3980   0x1e45c0  0x43d097 lock char 41   0
+      2  0x1e39e8   0x1e45e8  0x43d096 lock char 40   0
+      3  0x1e3a50   0x1e4610  0x43d09a lock char 44   0
+      4  0x1e3ad0   0x1e4638  0x43d09b lock char 45   0
+      5  0x1e3b50   0x1e4660  0x43d09d lock char 47   0
+      6  0x1e3be0   0x1e4688  0x43d09c lock char 46   0
+      7  0x1e3cb8   0x1e46b0  0x43d09e lock char 48   0
+      8  0x1e3d38   0x1e46d8  0x43d0d8                1   (setter(other) writes 0)
+      9  0x1e3db0   0x1e4700  0x43d0d7                1
+      10 0x1e3ed0   0x1e4728  0x43d0d6                1
+      11 0x1e4480   0x1e4750  0x43d0ed matsuri_gauge  1
+      12 0x1e36f0   0x1e4520  0x43d0e2 mode_lock[0]   1
+      13 0x1e3790   0x1e4548  0x43d0e3 MODE_CUSTOM    1
+      14 0x1e3878   0x1e4570  0x43d0e4 MODE_SURVIVAL  1
+      15 0x1e43e0   0x1e4778  0x43d0ec ex_chr_lock    1
+  Predicate signature: p(endingCount, spiritCount, force). Users:
+      ~0x1e3640: for i in 0..15: setter[i](p[i](ec, sc, 1))       (recompute all)
+      ~0x1e61e0: returns 1 if any p[i](ec, sc, 0) != 0            ("SecretAppearCheck")
+      0x1e62b8(out[], &n): for each i with p[i](ec, sc, 0) != 0: setter[i](1);
+                           out[n++] = i                            ("SecretAppearTableCount")
+  Predicates 0..2 decoded (OBSERVED 0x1e3918..0x1e3a48):
+      if lock byte == 0 and force != 1: return 0
+      return ending-seen[c0] != 0 || endingCount >= N || [session flag] != 0
+             || [0x43d0e8] > 0x2bf1f
+      i=0: c0 = 1,  N = 3, session flag 0x13430b0
+      i=1: c0 = 4,  N = 6, session flag 0x13430b4
+      i=2: c0 = 10, N = 9, session flag 0x13430b8
+  Predicates 3..6 (OBSERVED 0x1e3a50..0x1e3cb4): same early-out, then
+      (lock[42] == 0 && lock[40] == 0 && lock[41] == 0 && E) || [session flag] != 0
+      || [0x43d0e8] > 0x2bf1f
+      i=3: E = seen[4] != 0;                    flag 0x13430bc
+      i=4: E = seen[19] != 0;                   flag 0x13430c0
+      i=5: E = seen[15] != 0 && seen[34] != 0;  flag 0x13430c4
+      i=6: E = seen[24] == 1;                   flag 0x13430c8
+      (the lock[40], lock[41] test is `(u32[0x43d094] & 0xffff0000) == 0`)
+  Predicates 7..15: constants read (thresholds 0x28/0x20/0x18/0x10 on endingCount,
+      8 on spiritCount, seen[] bytes +0x52,+0x54,+0x61,+0x62,+0x65..0x68,+0x6e,
+      +0x73..0x76, flag 0x13430cc, same 0x2bf1f comparison) but branch polarity NOT
+      verified. UNKNOWN until traced with Probe.
+  Session flags 0x13430b0..0x13430cc are set by 0x1e3fd0 (survival modes 0xb/0xc,
+      player character 0x2a,0x29,0x28,0x2c,0x2d,0x2f,0x2e while the matching lock byte
+      is still non-zero; 0x13430cc when its argument >= 0x31). Owner: survival slice.
+  Factory initialisation of the lock bytes (which code writes the non-zero defaults
+      for characters 40..48): UNKNOWN. The file image of 0x43d058.. is all zero.
+
+
+A.5 Sound test (row 1): scene 0x13e090, task 0x13e0e8
+-----------------------------------------------------
+A.5.1 Entry/exit
+  0x13e090 -> 0x13e028: printf(0x5e99a8, 0x6000); memset(0x128a2c0, 0, 0x18000);
+      1126f0(priority 0x32, handler 0x13e0e8, stack 0x128a2c0, size 0x6000, 0x20,
+             tag 0x1580)
+  NOTE: 0x13e028 does not call 118320. The destructor is passed explicitly at exit.
+  Exit: state -1 (A.5.3) -> 213180(); 1252f0(1, 0, 0x13e0a8, 0x1d22f8)
+  Destructor 0x13e0a8: 1e7ad0(); for tag in 0x1580..0x15e3: 11e3a0(tag); 112a70(tag).
+
+A.5.2 Locals of the coroutine (stack frame 0x1b70)
+  M   sp+0x000   message window (1822a0; 182318(M, 6))
+  W1  sp+0x170   category list, 3 rows from char* table 0x4d2de0:
+                 "ＢＧＭ", "ボイス／効果音", "ナレーション"
+  W2  sp+0x9e0   second-level list (contents depend on W1 row)
+  W3  sp+0x1250  track list
+  P1/P2/P3 = W1/W2/W3 + 0x1c (sliding panels)
+  obj sp+0x1ac0  20dff8(obj); 20e028(obj, 0, 0x15f, 1, 0)   (PART A.W)
+  state fp (init 0), prev s3 (init -1), seat s6 = 178f90()
+  lyricAlpha [sp+0x1af8] = 0, lyricCounter [sp+0x1afc] = 0, lyricSet [sp+0x1b00] = -1,
+  timer [sp+0x1b04] = 0 (only ever written 0: the `timer > 0` branch at 0x13e2cc that
+  sets selector flag bit 18 (cursor lock) on W3 is unreachable; OBSERVED)
+  Setup calls: 20e570(Wn); 20e0a0(Wn+0x50, 0x10, 1) for n=1..3 (large text);
+               20e738(W1, 0x4d2de0, 3);
+               20e0a0(W3+0x50, 9, 1)   # selector flag 0x200: W3 confirm is silent,
+                                       # so the menu tone does not mask the sample
+  Panel parameters 17f428(P, xClosed, yClosed, xOpen, yOpen, frames):
+               seat 0                          seat 1
+      P1  (-0x180, 0x50, 0x10,  0x50, 0x10)   (0x34c, 0x50, 0x1bc, 0x50, 0x10)
+      P2  (-0x180, 0xae, 0x10,  0xae, 0x10)   (0x2f8, 0xae, 0x168, 0xae, 0x10)
+      P3  ( 0x2d0, 0x50, 0x140, 0x50, 0x10)   (-0x180, 0x50, 0x10, 0x50, 0x10)
+  For seat 1 the lists additionally get their panel x positions overwritten when
+  filled, (W[+0x48] = xOpen, W[+0x40] = xClosed):
+      W2 BGM or narration: 0x1d4, 0x364     W2 voice: 0x15a, 0x2ea
+      W3 BGM: 0xa8, -0xe8     W3 voice: 0x86, -0x10a     W3 narration: 0x40, -0x150
+  (seat 1 mirrors the layout: category list on the right, track list on the left.)
+  Message window layout 6: title rect 14, key help "BP選択 BOBT決定 BXBS戻る".
+
+A.5.3 State machine
+
+      -1 leaving  <--cancel--  0 category  --confirm-->  1 second level
+                                   ^                        |  ^
+                                   +--------cancel----------+  | cancel
+                                                    confirm |  |
+                                                            v  |
+                               3 lyrics view <--0x80000-- 2 track list
+                                      |  (only when lyricSet != -1)   ^
+                                      +---- any of 0x8060e -----------+
+
+  Per frame, in order (0x13e264):
+      17c210(); 1825b8(M)
+      r1 = 20ee70(W1, seat); r2 = 20ee70(W2, seat)
+      sel2 = W2[+0x64]; cat = W1[+0x64]; ch = 20ee20(W2)
+      last2 = (sel2 == W2[+0x5c] - 1)
+      20e0a0(W3+0x50, 0x12, 0)
+      r3 = 20ee70(W3, seat)
+      if state != prev: run ENTRY[state]; prev = state
+      else:             run UPDATE[state]; if state != prev: W1/W2/W3[+0x18] = 0
+      182600(M); 20ef38(W1); 20ef38(W2); 20ef38(W3)
+      lyricCounter = (213d70() != 0) ? lyricCounter + 1 : 0
+      lyricAlpha += (prev == 3) ? 8 : -8, clamped to 0..0xff
+      if 13dc98(lyricSet, lyricCounter, lyricAlpha, prev == 3) != 0: lyricCounter = 0
+      if lyricSet != -1:                       # debug output only
+          pad = 118128(seat)
+          if pad.pressed & 0x80000:  printf("count=%d\n", lyricCounter)
+          if pad.pressed & 0x100000: puts("----------------")
+      112a28(0)
+  All three list widgets are updated every frame regardless of state; a widget only
+  reacts to the pad while its W[+0x18] flag is 1 (PART A.W).
+
+  ENTRY (jump table 0x5e99f8, index state+1):
+   -1: 17f4b0(P1); 17f4b0(P2); W1[+0x18] = 0; W2[+0x18] = 0; 1826b0(M)
+    0: 182648(M); 17f468(P1); W1[+0x18] = 1; W1[+0x14] = 1; 17f4b0(P2); W2[+0x18] = 0;
+       17f4b0(P3); W3[+0x18] = 0; 1827c0(M, 0x2c, cat)
+    1: if prev < 1:                              # arriving from the category list
+           cat 0: 20e738(W2, 0x4d31a8, 2)        # "オリジナル", "アレンジ"
+           cat 1: 20eae0(W2, rows 8, 0, includeEx 0, includeAll 1, endingFilter 0);
+                  append row "共通" (0x5e99f0): W2[+0x6c + 4*count] = ptr; count += 1
+           cat 2: 20e738(W2, 0x4d3198, 2)        # "日本語", "英語"
+           seat-1 position overrides (A.5.2); 20ed70(W2, 0); 1e7ad0()
+       1827c0(M, 0x2d, cat); 182648(M); W1[+0x18] = 0; 17f468(P2);
+       W2[+0x18] = 1; W2[+0x14] = 1; 17f4b0(P3); W3[+0x18] = 0
+    2: if prev < 2:                              # arriving from the second level
+           1e7a50(); lyricAlpha = 0; lyricSet = -1
+           fill W3 and ids[] (A.5.4); seat-1 overrides
+           20e0d0(W3+0x50, 0); W3[+0x10] = 17f560(W3[+0x64], W3[+0xc], W3[+0x10], W3[+0x5c])
+           1827c0(M, 0x2d, cat)
+       182648(M); 17f468(P1); W1[+0x14] = 1; 17f468(P2); W1[+0x18] = 0  (see note);
+       W2[+0x14] = 1; 17f468(P3); W2[+0x18] = 0; W3[+0x18] = 1; W3[+0x14] = 1
+       Note: 0x13e6dc..0x13e6f0 writes W1[+0x18] = 1 and then 0 before any widget
+       update can observe it; the net state is W1, W2 visible and inactive, W3 active.
+    3: 1826b0(M); 17f4b0(P1); 17f4b0(P2); W1[+0x18] = 0; W2[+0x18] = 0; 17f4b0(P3);
+       W3[+0x18] = 0
+    4: nothing (state 4 is never assigned; OBSERVED no store of 4 to fp)
+
+  UPDATE (jump table 0x5e9a10, index state+1):
+   -1: if 17f400(P1): 213180(); state = -2; 1252f0(1, 0, 0x13e0a8, 0x1d22f8)
+    0: r1 == 4: state = 1.   r1 == 5: state = -1.
+       else if (r1 - 1) < 3 unsigned: 1827c0(M, 0x2c, cat)     # cursor moved
+    1: r2 == 4: state = 2.   r2 == 5: state = 0.
+    2: r3 == 4 -> PLAY (A.5.5)
+       r3 == 5 -> state = 1
+       else if (pad.pressed & 0x80000) && lyricSet != -1: 1e7b70(-1, 0); state = 3
+    3: if lyricAlpha >= 0xff && (pad.pressed & 0x8060e): 1e7b70(-1, 0); state = 2
+  pad = 118128(seat) sampled at the start of UPDATE.
+
+A.5.4 Track-list construction (state 2 entry)
+  Sound lists are arrays of 6-byte records {s16 key; u8 type; u8 pad; u16 id},
+  terminated by key == -2:
+      0x4cef58  common voice/SE list (57 records)      getter 0x13dbe8
+      0x4cf0b8  BGM list (27 records)                   getter 0x13dbf8
+      0x4cf160  narration list (84 records)             getter 0x13dc08
+      0x4cf360  per-character voice/SE lists, concatenated; the first record of a
+                character block has key = character id, the rest key = -1
+                (0x13dc18(key) returns the first record whose key == key; no bound
+                check, the scan relies on the key existing)
+  count 0x13dc50(list, key): number of leading records whose key is `key` or -1
+      (returns 0 when the first record's key is neither).
+  Extraction: file offset = e.offset(address); read records until key == -2
+      (0x4cf360: read up to the next -2 or to the following table).
+  Row label tables (char*[], .data): 0x4d3110 "ＢＧＭ０１".., 0x4d2f80 "ＶＯＩＣＥ０１"..
+      (99), 0x4d2df0 "ＳＥ０１".. (99), 0x4d31b8 "ＮＡＲＲＡＴＩＯＮ０１".. (99).
+  visible rows = (n < 0xb) ? n : 0xa -> 20e5d8(W3, n, visible)   (0x13e5f4..0x13e60c)
+
+  cat 0 (BGM): list = 0x4cf0b8; n = count(list, 0)
+      for i < n: 20e7f8(W3, i, 0x4d3110[i]);
+                 ids[i] = (rec.type == 1) ? rec.id + 0x64 : rec.id
+  cat 1 (voice/SE):
+      if last2 ("共通" row): 1e79c8(0, 0); list = 0x4cef58; n = count(list, 0); rows = n
+      else: 1e79c8(0, ch); 1e79c8(1, ch < 0x14 ? 0x33 : 0x34);
+            list = 13dc18(ch); n = count(list, ch); rows = (ch != 0x2b) ? n + 1 : n
+      20e5d8(W3, rows, min(rows, 10)); k = 0
+      if !last2 && ch != 0x2b: ids[0] = -1; 20e7f8(W3, 0, 0x4d2f80[0]); k = 1
+      pass 1, records with type == 0 in list order:
+            20e7f8(W3, k, 0x4d2f80[k]); ids[k] = rec.id; k += 1
+      pass 2, records with type == 1 in list order, j = 0..:
+            20e7f8(W3, k + j, 0x4d2df0[j]); ids[k + j] = rec.id
+      (voices are numbered ＶＯＩＣＥ01.. first, then effects ＳＥ01..)
+  cat 2 (narration): list = 0x4cf160; n = count(list, 0)
+      for i < n: 20e7f8(W3, i, 0x4d31b8[i]); ids[i] = rec.id
+
+A.5.5 PLAY (state 2, r3 == 4); row = W3[+0x64]; id = ids[row]
+  cat 0: saved = byte[0x43d056]; byte[0x43d056] = (sel2 != 0)        # arranged?
+         if id >= 0x64: 214060(id - 0x64, 0) else 214060(id, 1)
+         lyricCounter = 0
+         if row == 5: lyricSet = sel2; 1827c0(M, 0x30, cat)
+         else:        lyricSet = -1;   1827c0(M, 0x2d, cat)
+         timer = 0; byte[0x43d056] = saved
+  cat 1: if id == -1: 1e7ba0(1, ch < 0x14 ? ch + 3 : ch - 0x14)
+         else:        1e8298(0, id, last2 ? 0 : ch)      # battle sound entry, A.7
+  cat 2: saved = byte[0x43d055]; byte[0x43d055] = (sel2 != 0)        # English?
+         if (id - 2) < 0x2a unsigned: 1e79c8(0, id - 2) else 213238()
+         1e7d60(0x31, id); byte[0x43d055] = saved
+  No confirm tone is requested in state 2 (selector flag 0x200 on W3). Cursor tone
+  0x20 and cancel tone 0x24 still come from the selector.
+  Messages (table 0x4ee870): (0x2c, cat) "ＢＧＭを再生します" / "ＳＥ／ＶＯＩＣＥを再生します"
+  / "ＮＡＲＲＡＴＩＯＮを再生します"; (0x2d, cat) "再生するＢＧＭを選択します" /
+  "再生するＳＥ／ＶＯＩＣＥを選択します" / "再生するＮＡＲＲＡＴＩＯＮを選択します";
+  0x30 "再生するＢＧＭを選択します （SLで歌詞の表示）". The last one names pad bit
+  0x80000 as SELECT ("SL").
+
+A.5.6 Lyrics overlay 0x13dc98(set, counter, alpha, unused) -> wrap flag
+  Called every frame; draws only when alpha != 0 and set is 0 or 1.
+  set 0: line table 0x4d3bf8 (19 lines), first column x = 0x230, group gap 0x14,
+         returns 1 when counter >= 0x33ae
+  set 1: line table 0x4d3c98 (12 lines), first column x = 0x1e0, group gap 0x48,
+         returns 1 when counter >= 0x23c8
+  (set = W2 row at PLAY time: 0 original, 1 arranged; BGM row 5 only.)
+  Line table: {GlyphRec* recs; s32 baseTime}[] terminated by recs == NULL.
+  GlyphRec (8 bytes): {u8* sjis (two bytes, big-endian code = b0<<8|b1); s32 time};
+      a line ends at the record whose time == -1.
+  Draw order (OBSERVED 0x13dce0..0x13df78):
+      [0x348a8c] = int(114d88([0x4ee54c] - 1000.0))
+      1145c0(0, 0, 0x280, 0x1c0, ((alpha/8) << 24) + 0x00ffffff) with
+            f12 = 17c228([0x4ee54c] - 700.0)        # full-screen dim rectangle
+      x = first column; for line L = 0..: y = 0x48
+          for glyph g in line:
+              start = base + rec[g].time
+              end   = (rec[g+1].time != -1) ? base + rec[g+1].time : 0
+              (r,g,b) = (0x20, 0x10, 0x10)                         if counter < start
+                        (0x30, 0x40, 0x60)                         if counter > end
+                        else: dur = end - start; half = dur / 2 (toward zero);
+                              el = counter - start
+                              dur <= 0      -> (0, 0, 0)
+                              el < half     -> (0xff, 0, 0)
+                              else d2 = dur - half; e2 = el - half
+                                   gb = (e2*64/d2) & 0xff
+                                   r  = ((d2 - e2)*0xcf/d2 + 0x30) & 0xff
+                                   -> (r, gb, gb)
+              10a710(code, x, y, r, g, b, alpha); y += 0x12
+          x -= 0x1a; if (L+1) % 7 == 0: x -= group gap
+      if alpha > 0: 17db28(-1);
+          17eed8(f12 = 440.0, f13 = (0xff - alpha) + 0x188, f14 = 17c228([0x4ee54c] - 700.0),
+                 f15 = 172.0, f16 = 30.0)
+          17e428(0x5e9980, 1, 0) with f12 = 460.0, f13 = (0xff - alpha) + 0x18c
+          # 0x5e9980 = "BOBXBTBS戻る": four button-icon tokens (circle, cross,
+          # triangle, square) + "back"; token decoding in PART A.W (W.6)
+      restore [0x348a8c]
+  Extraction: walk 0x4d3bf8 / 0x4d3c98 as above; glyph pointers point into .rodata
+      0x5e96xx..0x5e98xx two-byte SJIS strings.
+  lyricCounter advances only while 213d70() != 0 (INFERRED: BGM stream playing) and
+  is reset to 0 at PLAY and whenever 13dc98 returns 1.
+
+
+A.6 Illustration viewer (row 2): scene 0x13ed98, task 0x13edf0
+--------------------------------------------------------------
+A.6.1 Entry/exit
+  0x13ed98 -> 0x13ed30: printf("galleryThread:STACK_SIZE=%X\n", 0x6000);
+      memset(0x12a22c0, 0, 0x18000);
+      1126f0(0x32, 0x13edf0, stack 0x12a22c0, size 0x6000, 0x20, tag 0x1580)
+  Exit: 1252f0(1, 0, 0x13edb0, 0x1d22f8).
+  Destructor 0x13edb0: for tag in 0x1580..0x15e3: 11e3a0(tag); 112a70(tag).
+
+A.6.2 Items and resources
+  List W (rows visible 9) = 20eae0(W, 9, 0, includeEx 0, includeAll 1, endingFilter 0):
+      for i in 0..48: c = order[i] (0x59cd20);
+          c == 0x2b: included (includeAll)
+          else: included iff byte[0x43d06e + c] == 0     (character not locked)
+      then six fixed rows appended (char* 0x5e9a48..):
+          "ポスター画像１", "ポスター画像２", "広告イラスト１", "広告イラスト２",
+          "広告イラスト３", "広告イラスト４"
+      nChar = W[+0x5c] before appending (s7); W[+0x5c] = nChar + 6
+  Image id for the selected row:
+      row < nChar : 20ee20(W) = character id (0..48)
+      else        : row - nChar + 0x31          (49..54)
+  Unlock rule: character illustrations follow the character-select lock bytes
+      0x43d06e+c (with every hidden character unlocked, all 49 are listed); the six
+      extra images are always available. No separate gallery unlock bits exist.
+  Order table 0x59cd20 (u8[53], OBSERVED):
+      0,1,3,4,5,6,12,14,15,35,36,38,7,34,37,39,9,2,8,10,16,17,22,24,23,25,18,19,20,21,
+      28,29,30,31,33,32,11,27,13,26,42,41,40,45,44,46,47,48,43, then EX ids 72,74,73,75
+  Name table 0x4d4bb0 (char*[49]) index = character id: 覇王丸, ナコルル, リムルル, ...
+      黒子 (48). EX ids (>= 0x32): id-0x32 == 0x16 "徳川慶寅（ＥＸ）", 0x17 "劉雲飛（ＥＸ）",
+      0x18 "真鏡名ミナ（ＥＸ）", 0x19 "妖怪腐れ外道（ＥＸ）", other "ＥＸキャラ".
+  Image loader/draw 0x17eda0(id, size, f12 x, f13 y, f14 z):
+      if id != [0x12d3854]:
+          1142d8(texture slot 5, sprintf("gl_%02d.pvr", id))
+          1163c0(sprintf("gl_%02d.pvp", id), &hdr); 116478(0x300, hdr.count(s16 at +0xa),
+                 hdr.data) with first palette word forced to 0 (sh 0 at data[0])
+          10add8(5, 0x30); [0x12d3854] = id
+      1142c8(); [0x3db900] = 0xffffffff
+      113f98(5, x, y, z, f15 = size, f16 = size, f17 = 0, f18 = 0, f19 = stack = 1024.0)
+      INFERRED: whole 1024x1024 texture (source origin 0,0, source extent 1024) scaled to
+      size x size screen units.
+  Disc/extracted files: work/ss6/extracted/resources/gl_00.tex .. gl_54.tex (1,048,576
+      bytes each = 1024x1024 8-bit indices) and gl_NN.pal (512 bytes = 256 16-bit
+      entries). These are the already-extracted forms of gl_NN.pvr/.pvp; see PART B for
+      the .tex/.pal convention used by the existing extract_*art*.py scripts.
+      The image is loaded synchronously inside the draw call on first display.
+
+A.6.3 Locals
+  M (sp+0; 182318(M, 8)), W (sp+0x170), P = W+0x1c
+      17f428(P, xClosed, yClosed, xOpen, yOpen, frames):
+             seat 0: (-0x180, 0x50, 0x10, 0x50, 0x10); seat 1: (0x2ea, 0x50, 0x15a, 0x50, 0x10)
+  Message layouts: 8 in the list state (key help "BP選択 BOBT決定 BXBS戻る"), 9 in the
+      full view (key help "BOBTデフォルト BXBS戻る"); both use title rect 15.
+  Messages: 0x37 "キャラクターのイラストを見ることが出来ます",
+            0x38 "BP画像の移動　R1L1拡大縮小　SLウィンドウＯＦＦ".
+  state s4 (0 list, 1 full view, -1 leaving, -2 requested), prev s3 = -1
+  hideUi [sp+0x9e0] = 0; cx [sp+0x9e4] = 0x140; cy [sp+0x9e8] = 0xe0; size fp = 0x1b8
+  17ed90() at start ([0x12d3854] = -1).
+
+A.6.4 Per frame (0x13ef54)
+      17c210(); 1825b8(M); r = 20ee70(W, seat)
+      if state != prev:                                   # ENTRY
+           0: 182648(M); 182318(M, 8); 1827c0(M, 0x37, 0); 17f468(P);
+              W[+0x18] = 1; W[+0x14] = 1
+           1: if prev <= 0: hideUi = 0; cx = 0x140; cy = 0xe0; size = 0x1b8
+              182648(M); 182318(M, 9); 1827c0(M, 0x38, 0); 17f4b0(P); W[+0x18] = 0
+          -1: 17f4b0(P); W[+0x18] = 0; 1826b0(M)
+          prev = state
+      else:                                               # UPDATE
+          pad = 118128(seat); pressed = pad[+4]; held = pad[+0]
+          reset = (pressed & 0x202) != 0 || (pressed & 8) != 0
+          back  = (pressed & 0x404) != 0
+          prev ==  0: r == 4 -> state = 1;  r == 5 -> state = -1
+          prev == -1: if 17f400(P): 1252f0(1, 0, 0x13edb0, 0x1d22f8); state = -2
+          prev ==  1:
+              if reset: cx = 0x140; cy = 0xe0; size = 0x1b8; 1e7b70(-1, 0)
+              elif back: 1e7b70(-1, 0x24); state = 0
+              else:
+                  step = size / 0xa0 + 4                  # signed integer division
+                  if held & 0x80: cx -= step   elif held & 0x40: cx += step
+                  if held & 0x20: cy -= step   elif held & 0x10: cy += step
+                  half = size / 2                          # toward zero
+                  if cx + half < 0x80: cx = 0x80 - half
+                  elif cx - half >= 0x201: cx = half + 0x200
+                  if cy + half < 0x80: cy = 0x80 - half
+                  elif cy - half >= 0x141: cy = half + 0x140
+                  if held & 0x100000:   size += 8; if size >= 0x709: size = 0x708
+                  elif held & 0x400000: size -= 8; if size < 0x1b8: size = 0x1b8
+                  if pressed & 0x80000: hideUi = !hideUi
+          if state != prev: W[+0x18] = 0
+      # DRAW
+      if prev == 1:
+          id = image id of the selected row (A.6.2); half = size / 2
+          1145c0(cx - half - 3, cy - half - 3, size + 6, size + 6, 0x40000000)
+                with f12 = 17c228([0x4ee54c] - 520.0)     # translucent black backing
+          17eda0(id, size, cx - half, cy - half, 17c228([0x4ee54c] - 700.0))
+      if hideUi != 0 && prev == 1: 1817f0(M + 8)
+      else: 182600(M); 20ef38(W)
+      112a28(0)
+  Zoom range: size 440 (0x1b8) .. 1800 (0x708) in steps of 8 per frame.
+  Pan: the image centre is kept so that the image always overlaps the rectangle
+  x 0x80..0x200, y 0x80..0x140 (clamps above), pan speed grows with zoom.
+  Sounds: 1e7b70(-1, 0) view reset, 1e7b70(-1, 0x24) back to list.
+  Pad bits: 0x10 up, 0x20 down, 0x40 left, 0x80 right (note the viewer maps held
+  0x80 to cx -= step and 0x40 to cx += step, 0x20 to cy -= step, 0x10 to cy += step:
+  the picture moves opposite to the direction pressed, OBSERVED 0x13f234..0x13f374);
+  0x100000 enlarge / 0x400000 shrink (INFERRED R1 / L1 from message 0x38; which
+  shoulder button is which bit is not established), 0x80000 SELECT (window off),
+  0x202 or 0x8 (confirm set or START) reset view, 0x404 (cancel set) back.
+
+
+A.7 Interaction with battle code
+--------------------------------
+Complete scan of .text for `addiu r, r, -0xd` followed within five instructions by
+`sltiu r, r, 2` gives eight sites; six test the mode word:
+  0x178fa8  active-seat getter (A.1)
+  0x18299c  ending scene entry: choose task 0x182ce0 vs 0x182d30 (A.4.1)
+  0x182c3c  ending playback epilogue: menu background + [0x4eefd4] (A.4.4)
+  0x1a2250  ending abort input: cancel buttons instead of START (A.4.4)
+  0x1e8314  battle sound entry 0x1e8298 (below)
+  (0x14c978/0x14c988 and 0x1731d4 match the pattern but operate on a slot number
+   in s1, not the mode word; they are unrelated.)
+
+0x1e8298(a0, command, a2) (the function ported as SoundSelection::act):
+      id = command & 0xfff; actor = 140090(); picked = 1e83c0(id)
+      if picked == 0 || picked == 0x103: return 0
+      if picked != -1: id = picked
+      if mode not in {13,14} && actor != NULL && (actor[+0x23c] & 0x80)
+             && 0xaa <= id < 0xc6: return 0
+      id >= 0x12c: 1e7b70(a0, id - 0x12c)
+      id >= 0x104: 1e7d60(a2, id - 0x104)       # character voice, a2 = character
+      id >= 0xaa:  1e7b70(a0, id - 0xaa)
+      id >= 0x64:  1e7b70(a0, id - 0x64)
+      else:        1e7b70(-1, id - 1)
+  Why modes 13/14 are special-cased: the sound test calls this function directly
+  (A.5.5, cat 1) with a0 = 0 and the raw command ids stored in the lists at
+  0x4cef58/0x4cf360 (170..218, 261..272). No fighter exists in the gallery, so
+  140090() returns whatever actor pointer is current (stale or NULL); the mode test
+  bypasses the "actor flag 0x80 mutes weapon sounds 170..197" rule so that every
+  listed command is audible. src/sound_selection.cpp line ~115 already reproduces the
+  condition; a native sound test must call act() with gameMode 13/14, seat 0,
+  character = `ch` (or 0 for the common list) and must have loaded the sample banks
+  selected by 1e79c8(0, ch) and 1e79c8(1, 0x33/0x34) first (PART A.W).
+  Random selection inside 1e83c0 (shared anti-repeat state, GameRandom draws) still
+  applies to commands that have a selection record: the sound test consumes the
+  shared RNG exactly like battle code does.
+
+No other battle/round/match function branches on modes 13/14. The gallery never
+enters the battle dispatcher (0x4c38a8 = 0).
+
+
+A.8 UNKNOWN / not read, and suggested Probe experiments
+-------------------------------------------------------
+ 1. Ending scripts 0x4eefe8[0..49] and the ending engine 0x1a1xxx (arcade-ending
+    slice). Gallery needs only: entry A.4.4, abort A.4.4, table index = character id.
+ 2. Empty ending list (A.4.3) is a null call in the original; decide the native guard.
+ 3. Unlock predicates 7..15 branch polarity; factory values of the lock bytes; callers
+    of the three evaluator loops. Probe: call each predicate over (endingCount 0..49,
+    spiritCount 0..9, force 0/1) with controlled flag bytes and tabulate.
+ 4. 1c9830 (called when an arcade ending starts) and readers of 0x4eefd0/d4/e0.
+ 5. Texture bound to slot 0x2e (top-menu title strip, source rect 1,419,205,28):
+    confirm against the loader in PART B and compare a rendered frame.
+ 6. Physical button behind pad bits 0x100000/0x400000/0x200000/0x800000.
+ 7. The sound-driver task that consumes the 214060 request block and sets 0x5a9e6c
+    (PART A.W, W.8); the BGM list ids (0..27; +0x64 when record type 1, which selects
+    214060(id, 0) instead of 214060(id, 1)) to disc stream mapping, and the meaning of
+    the 214060 flag argument.
+ 8. 1e7d60 -> 213378 beyond its first branches (narration playback, cat 2).
+ 9. GS-level blending/filtering of the scaled 1024x1024 illustration quad.
+Suggested oracle fixtures (same style as validate_console_versus_menu.py):
+  * top menu: run 0x1d2380 with stubbed 118128/1e7b70/1252f0/draw callees over all
+    (row, pad bits for both seats, latch) combinations; compare row, latch, sound list.
+  * illustration viewer: because 0x13edf0 is a coroutine with its own stack, drive it
+    through the scheduler 0x112838 as validate_character_select.py does, stub 20ee70
+    return codes and 118128, and compare (state, cx, cy, size, hideUi) per frame.
+  * sound test: same harness; record the ordered calls to 1e79c8/1e7ba0/1e8298/1e7d60/
+    214060/213238 and the ids[] array for every (cat, sel2, character).
+
+
+PART A.W — WIDGET LIBRARY USED BY THE GALLERY SUB-SCENES
+========================================================
+
+Callers: sound-test task 0x13e0e8, illustration task 0x13edf0, ending-select
+0x13f4a8. Everything below was read statically from SLPS_255.59 unless marked
+INFERRED or UNKNOWN. All coordinates are integer screen pixels in the 640x448
+frame. "seat()" means 0x178f90() (in game modes 13/14 it returns the word
+0x12d35c4 written by 0x178f70: 0 = P1 opened the gallery, 1 = P2).
+
+Layering overview
+
+  per frame (caller order):
+    17c210()                       reset depth cursor
+    1825b8(G)                      tick guide-window panels
+    r = 20ee70(Wn, seat)  (xN)     tick list panels + read pad
+    ... caller state machine ...
+    182600(G)                      draw backdrop, title bar, message bar, key bar
+    20ef38(Wn)            (xN)     draw lists
+    112a28(0)                      yield
+
+W.1 Depth cursor (0x17c210 / 0x17c228 / 0x17c250)
+-------------------------------------------------
+  0x4ee54c  float zBase      (17c250(f12) stores it; 17c210 clears it to 0.0)
+  0x12d3850 float zCursor    (17c210 clears it to 0.0)
+  17c228(f12 = z): returns z - zCursor, then zCursor += 0.1 (constant 0x5f1f08).
+Every primitive of this library calls 17c228(zBase - K) for its Z, with K a
+per-primitive constant (500, 700, 800, 900, 1000 below). Consequence
+(OBSERVED arithmetic, INFERRED meaning): larger K is nearer the viewer, and
+within one K later submissions are 0.1 nearer than earlier ones.
+Primitives: 1145c0(a0=x, a1=y, a2=w, a3=h, t0=colour32; f12=z) flat rectangle
+(already used by src/rage_gauge.cpp); 1147d8 flat quad from four float points
+(not reached by the gallery path); 113f98(a0=texture slot; f12=x, f13=y,
+f14=z, f15=w, f16=h, f17=u, f18=v, f19=uw, stack float=vh) textured sprite,
+modulated by the colour word 0x3db900.
+Colour words are written here as raw 32-bit values 0xAARRGGBB-or-AABBGGRR;
+the channel order is NOT resolved by this slice (UNKNOWN; the title-art
+extractor's 1145c0/113f98 fixtures settle it).
+
+W.2 Slide panel P (0x34 bytes; embedded in every widget)
+--------------------------------------------------------
+  +0x00 x current      +0x04 y current
+  +0x08 frames left    +0x0c duration (frames)
+  +0x10 x start        +0x14 y start
+  +0x18 x target       +0x1c y target
+  +0x20 closing flag (1 = target is the closed position)
+  +0x24 x closed       +0x28 y closed
+  +0x2c x open         +0x30 y open
+
+  17f410(P, xClosed, yClosed, xOpen, yOpen, duration)   store +24,+28,+2c,+30,+0c only
+  17f428(P, same five)   17f410, then 17f3a0(P, xClosed, yClosed), +20 = 1
+  17f308(P)              17f428(P, 0,0,0,0, 1)
+  17f3a0(P, x, y)        snap: cur = start = target = (x,y); frames left = 0
+  17f508(P)              17f3a0(P, xClosed, yClosed)
+  17f3c0(P, x, y, n)     start = cur; target = (x,y); +0c = +08 = n;
+                         if cur == target then +08 = 0;  +20 = 0
+  17f468(P)  OPEN        if target != open:   17f3c0(P, open, duration)   (+20 = 0)
+  17f4b0(P)  CLOSE       if target != closed: 17f3c0(P, closed, duration); +20 = 1
+  17f3f8(P)              +08 = 0
+  17f400(P)              returns (+08 < 1): 1 when no animation is running
+  17f330(P)  TICK, called once per frame:
+      if (+08 > 0) {
+          t = +08 - 1;  +08 = t;
+          x = (t*xStart + (dur - t)*xTarget) / dur     // signed 32-bit, C division
+          y = (t*yStart + (dur - t)*yTarget) / dur
+          if (t > 0) return 2;                         // moving
+      }
+      return (+20 == 0) ? 1 : 0;                       // 1 = open/at rest, 0 = closed
+  Linear interpolation; the frame on which t reaches 0 already returns 1/0.
+  All panels in this part use duration 0x10 (16 frames).
+
+W.3 Selector S (0x1c bytes; cursor + pad reader)
+------------------------------------------------
+  +0x00 flags    +0x04 disabled-item bitmap pointer (valid when flag 0x800)
+  +0x08 min      +0x0c max (exclusive)     +0x10 step
+  +0x14 current  +0x18 page size (0 = paging off)
+
+  flag bits (20e0a0(S, bit, value) sets/clears 1<<bit; 20e088(S, bit) tests):
+    bit 0  0x1      up/down move the cursor (pad repeat 0x10 / 0x20)
+    bit 1  0x2      left/right move the cursor (pad repeat 0x40 / 0x80); tested first
+    bit 2  0x4      wrap at both ends (otherwise clamp)
+    bit 3  0x8      negate the movement delta
+    bit 4  0x10     confirm is refused (returns 6)
+    bit 5  0x20     cancel is refused (returns 6)
+    bit 7  0x80     no sound on cursor movement
+    bit 8/9 0x300   no sound on confirm / refusal
+    bit 8/10 0x500  no sound on cancel
+    bit 11 0x800    +4 points to a bitmap of disabled items (20e480 sets it;
+                    20e498 tests, 20e4e0 sets, 20e528 clears one bit)
+    bit 17 0x20000  confirm mask is 0x202 only (pad bit 0x8 is not a confirm)
+    bit 18 0x40000  movement delta forced to 0 (cursor locked)
+    bits 12, 13, 15, 16 are not read by the selector; the list widget uses
+    them as its own mode bits (W.4).
+
+  20dff8(S)  init: flags = 5 (up/down + wrap), cur = 0, then 20e028(S,0,1,1,0).
+  20e028(S, min, max, step, page): if min == max then max += 1; if max < min
+      swap; step 0 becomes 1; page kept only if page < max, else 0; then
+      20e0d0(S, cur).
+  20e0d0(S, v) set cursor with range fix-up:
+      v <  min: cur = (flags&4) ? max-1 : min
+      v >= max: cur = (flags&4) ? min   : max-1
+      else cur = v
+
+  20e128(S, seat) -> code.  pad = 118128(seat); pressed = pad[+4]; rep = pad[+8].
+      old = cur
+      confirm = (flags&0x20000) ? (pressed & 0x202) : (pressed & 0x8 || pressed & 0x202)
+      cancel  = !confirm && (pressed & 0x404)
+      if confirm:
+          if (flags & 0x10) or item 'cur' is disabled (bitmap):
+              if !(flags & 0x300) 1e7b70(-1, 0x24);   return 6
+          if !(flags & 0x300) 1e7b70(-1, 0);          return 4
+      if cancel:
+          if (flags & 0x20): if !(flags & 0x300) 1e7b70(-1, 0x24);  return 6
+          if !(flags & 0x500) 1e7b70(-1, 0x24);       return 5
+      d = 0
+      if flags&2: if rep&0x40 d = -step; else if rep&0x80 d = +step
+      if flags&1 and d == 0: if rep&0x10 d = -step; else if rep&0x20 d = +step
+      if flags&8 d = -d;   if flags&0x40000 d = 0
+      cur = old + d
+      if cur >= max: cur = (flags&4) ? min   : max-1
+      else if cur < min: cur = (flags&4) ? max-1 : min
+      if cur != old: if !(flags&0x80) 1e7b70(-1, 0x20);  return 1
+      page = +0x18;  if page < 0 return 0
+      if page > 0 and rep & 0x100000:  [sound 0x20 unless flag 0x80]
+              cur = max(cur - page*step, 0);      return cur != old ? 2 : 0
+      if page > 0 and rep & 0x400000:  [sound]
+              cur = min(cur + page*step, max-1);  return cur != old ? 3 : 0
+      if rep & 0x200000:               [sound]  cur = 0;      return cur != old ? 1 : 0
+      if rep & 0x800000:               [sound]  cur = max-1;  return cur != old ? 1 : 0
+      return 0
+  The four paging/home/end branches request sound 0x20 even when the cursor
+  does not change. Return codes: 0 idle, 1 moved, 2 page back, 3 page
+  forward, 4 confirm, 5 cancel, 6 refused. The gallery tasks test 4, 5 and
+  (code-1) < 3 unsigned (= any cursor change).
+  Pad bit meaning (INFERRED from use): pressed 0x202 / 0x8 confirm, 0x404
+  cancel; repeat 0x10 up, 0x20 down, 0x40 left, 0x80 right, 0x100000 /
+  0x400000 page back / forward, 0x200000 / 0x800000 first / last. The
+  0x118128 pad structure itself is specified in Part B.
+
+W.4 List widget W (0x870 bytes)
+-------------------------------
+  +0x00 width      +0x04 height
+  +0x08 pointer 0x6647e8 (empty string; UNKNOWN use)
+  +0x0c visible rows
+  +0x10 top row (scroll position)
+  +0x14 shown flag  (draw gate; caller writes 1/0; cleared when panel closed)
+  +0x18 active flag (input gate and focus colours; caller writes 1/0)
+  +0x1c panel P     (so W+0x40 / W+0x44 = closed x / y, W+0x48 / W+0x4c = open x / y)
+  +0x50 selector S  (so W+0x5c = item count, W+0x64 = current row)
+  +0x6c char* item[0x200]
+
+  list-mode bits stored in S.flags:
+    bit 12  rows are mapped through the mode-menu id table 0x1373818 (20e8c0)
+    bit 13  rows are mapped through the character id table 0x1373830 (20eae0)
+    bit 15  medium text style (1135e8 font, 17-pixel rows)
+    bit 16  large text style (10a460 font, 21-pixel rows) — every gallery
+            list sets this with 20e0a0(W+0x50, 0x10, 1) right after init
+    neither 15 nor 16: small fixed font 17db70 (9-pixel rows)
+
+  20e570(W) init: +8 = 0x6647e8, +0xc = 1, +0 = 0x80, +0x10 = +0x14 = +0x18 = 0,
+      17f308(P), 20dff8(S), 20e5d8(W, 1, 1).
+  20e5d8(W, count, visible): clear bits 12 and 13; count = max(count, 1);
+      visible = (visible == -1) ? count : min(visible, count);
+      +0xc = visible; 20e028(S, 0, count, 1, visible) (so paging is active
+      only when visible < count); 20e0d0(S, cur); +0x10 = 17f560(...);
+      all 0x200 items = "UNDEFINED" (0x6647f0);
+      size:  bit16: width 0x92, height visible*21 + 0x1a
+             bit15: width 0x7a, height visible*17 + 0x18
+             else : width 0x74, height visible*9  + 0x16
+  20e7f8(W, i, text): if i < 0x200 (unsigned) item[i] = text; if text != 0:
+      need = bit16: (strlen/2)*20 + 0x1c;  bit15: strlen*16 + 0x1c;
+             else : strlen*10 + 0x1a;      width = max(width, need).
+      (strlen = 0x318358, byte count of the Shift-JIS string.)
+  20e738(W, char** table, visible): count the non-null leading pointers; if
+      count > 0: 20e5d8(W, count, visible == -1 ? count : visible), then
+      20e7f8 for i = count-1 down to 0.
+  20eae0(W, visible, first, withExtra, withKuroko, byClearFlag) character list:
+      set bit 16; fill 0x1373830[0x37] (s16) with -1; n = 0;
+      for k in 0..0x30: c = u8 0x59cd20[k];
+          keep = (c == 0x2b) ? (withKuroko != 0)
+               : byClearFlag ? (u8 0x43d058[0x47 + c] != 0)
+                             : (u8 0x43d058[0x16 + c] == 0)
+          if keep: map[first + n++] = c
+      if withExtra: for k in 0..3: if u8 0x43d0ec != 0: map[first + n++] = u8 0x59cd20[0x31 + k]
+      20e5d8(W, first + n, visible)
+      for j in 0..n-1: id = map[first + j];
+          text = id < 0x32 ? char* 0x4d4bb0[id]
+               : id-0x32 == 0x16 ? "徳川慶寅（ＥＸ）"   (0x664820)
+               : id-0x32 == 0x17 ? "劉雲飛（ＥＸ）"     (0x664810)
+               : id-0x32 == 0x18 ? "真鏡名ミナ（ＥＸ）" (0x664850)
+               : id-0x32 == 0x19 ? "妖怪腐れ外道（ＥＸ）"(0x664838)
+               : "ＥＸキャラ" (0x664800)
+          20e7f8(W, first + j, text)
+      set bit 13.
+      Sound test call: 20eae0(W2, 8, 0, 0, 1, 0) -> all characters whose byte
+      0x43d058+0x16+c is zero, plus id 0x2b, 8 visible rows. The caller then
+      appends one row by hand: item[count] = 0x5e99f0 "共通", count += 1
+      (it writes W+0x6c+4*count and W+0x5c directly; S.max is that same word).
+      INFERRED: 0x43d058+0x16+c is a per-character "locked" byte and
+      0x43d058+0x47+c a per-character "cleared" byte (0x182de0 sets +0x47 on
+      an arcade ending).
+  20e8c0(W, visible) builds the 9-entry mode-menu list through 0x1373818
+      (unlock bytes 0x43d058+0x7e/+0x7f/+0x80, +0x42..+0x45); not called by
+      the gallery tasks. 20ea88(W) returns its mapped id + 1.
+  20ed70(W, id) select by id: if bit 13, row = first index in map[0..0x36]
+      equal to id (row = id if absent), else row = id; 20e0d0(S, row);
+      +0x10 = 17f560(cur, visible, top, count).
+  20ee20(W) -> bit 13 ? s16 map[cur] : cur.
+  20e0d0(W+0x50, row) is also called directly by callers to reset a cursor.
+
+  20ee70(W, seat) per-frame update -> code:
+      r = 17f330(P)
+      if r == 0 { +0x14 = 0; +0x18 = 0; return 0 }       // fully closed: hide
+      if r != 1 return 0                                  // sliding: no input
+      if +0x14 == 0 or +0x18 == 0 return 0
+      code = 20e128(S, seat)
+      +0x10 = 17f528(code, cur, visible, top, count)
+      +0x10 = 17f560(cur, visible, top, count)
+      return code
+  17f528(code, cur, visible, top, count): v = top; if code == 3 v = top +
+      visible; if code == 2 v = top - visible; if v < 0 return 0;
+      return min(v, count - visible).
+  17f560(cur, visible, top, count): v = min(top, cur); if count < v + visible
+      v = count - visible; if cur >= v + visible v = cur - visible + 1;
+      if v < 0 v = 0; return v.
+
+  20ef38(W) draw (nothing when +0x14 == 0):
+      bit16 -> 20f1c8(W, 1);  bit15 -> 20f1c8(W, 0);  else 20f050(W)
+      if visible < count: scroll bar (below)
+    Body (20f1c8 / 20f050):
+      frame F (W.5): 17c260(F); 17c2d0(F, +0x18); F.style = 1;
+          F.x = P.x, F.y = P.y, F.w = width, F.h = height;
+          17c718(F, gutter = (visible < count) ? 10 : 0)
+      rows r = 0 .. min(count, visible)-1, item index i = top + r:
+          colour: 17db38(active = +0x18, selected = (i == cur)) stores the
+              text colour word 0x4ee548:
+                  active  & selected   0xffff0000
+                  active  & unselected 0xffffffff
+                  inactive & selected  0xffa00000
+                  inactive & unselected 0xffb0b0b0
+          if item[i] != 0:
+              bit16: 17e228(text, x = (int)(P.x + 14), y = (int)(P.y + 14) + 21*r, 1)
+              bit15: 17e228(text, x = (int)(P.x + 14), y = (int)(P.y + 14) + 17*r, 0)
+              else : 17db70(x = (int)(P.x + 12), y = (int)(P.y + 12) + 9*r, "%s", text)
+      There is no separate cursor sprite or highlight bar: selection is shown
+      only by the row text colour.
+    Scroll bar: second frame F2: 17c260; 17c2d0(F2, +0x18);
+          F2.w = 14, F2.h = height - 6, F2.x = P.x + width - 9, F2.y = P.y + 3;
+          17f090(F2, count, visible, top, 1):
+        rect(F2.x+2, F2.y+2, F2.w-4, F2.h-4, colour F2+0x20)   z = zBase-800
+        rect(F2.x+4, F2.y+4, F2.w-8, F2.h-8, 0xff000000)       z = zBase-800
+        track = (int)(F2.h - 8)
+        thumb = max(track*visible/count, 2)                    (integer division)
+        off   = track - thumb                                   // list end
+        if top + visible < count:
+            o = track*top/count;  off = (track < o + thumb) ? track - thumb : o
+        rect((int)(F2.x+6), (int)(F2.y+4+off), (int)(F2.w-12), thumb, colour F2+0x20)
+      No arrow sprites are drawn.
+  20f360(W) is a further draw variant (20ef38 plus extra per-row output); not
+  called by the gallery tasks; UNKNOWN.
+
+W.5 Window frame F (0x30 bytes) — 0x17c260 / 0x17c2d0 / 0x17c718
+-----------------------------------------------------------------
+  +0x00 style (0, 1, 2)   +0x0c float w   +0x10 float h   +0x14 float x   +0x18 float y
+  +0x1c colour A (outer/border)   +0x20 colour B (inner line)   +0x24 colour C (fill)
+  +0x28, +0x2c further colours (not used by style 1)
+  17c260(F): zero; w = h = 1.0; A = 0xff000000; B = 0xffffffff;
+      C = 0x80ffffff; +0x28 = 0xffffffff; +0x2c = 0xff808080.
+  17c2d0(F, focused):
+      focused:   C = 0xc0101010; B = 0xffffffff; A = seat()==1 ? 0xff800000 : 0xff000080
+      unfocused: C = 0xc0000000; B = 0xffa0a0a0; A = seat()==1 ? 0xff600000 : 0xff000060
+      (INFERRED: a per-player tint, low byte for P1 and third byte for P2.)
+  17c370(F, focused) is an alternative colour set (A = 0xff4040c0 / 0xffc04040
+      / 0xff404040, B = -1); not used by the list widget.
+  17c3d8(colour; f12=x, f13=y, f14=w, f15=h, f16=t) hollow border of thickness
+      t = four 1145c0 rectangles, each with z = 17c228(zBase - 800), in order
+      left (x, y, t, h), top (x, y, w, t), right (x+w-t, y, t, h),
+      bottom (x, y+h-t, w, t).
+  17c718(F, gutter):
+      if gutter > 0: rect((int)(x + w), y, gutter, h, A)  z = zBase-800
+          (a strip to the right of the frame, behind the scroll bar)
+      style 1: border(A; x,   y,   w,    h,    5)
+               border(B; x+5, y+5, w-10, h-10, 2)
+               border(A; x+7, y+7, w-14, h-14, 2)
+               fill rect(x+9, y+9, w-18, h-18, C)        z = zBase-800
+      style 0: border(A; x, y, w, h, 5); fill rect(x+5, y+5, w-10, h-10, C)
+      style 2: border(A; x,y,w,h,5); border(B; +5, -10, 5); border(A; +10,
+               -20, 2); border(B; +12, -24, 1); border(A; +13, -26, 1);
+               fill rect(x+14, y+14, w-28, h-28, C)
+  17cb50(F) is a different (quad-based) frame renderer; not reached here.
+
+W.6 Text helpers
+----------------
+  0x4ee548 current text colour word; 17db28(c) stores it; 17db38 see W.4.
+  17e228(text, x, y, mode): layer = 114d88(zBase - K) stored in 0x348a8c for
+      the call and restored after, K = 1000 if word 0x4ee85c != 0, else 520
+      if word 0x4ee860 != 0, else 900 (17e1f0 / 17e200 set those words to 1,
+      17e210 clears both; the gallery tasks do not call them, so K = 900);
+      113828(17c228(zBase - K)); then
+        mode 0: 1135e8(text, x, y, colourWord)
+        mode 1: 10a460(text, x, y, a3 = byte2, t0 = byte1, t1 = byte0, t2 = byte3 of colourWord)
+        other : 109f08(text, x, y, same four colour bytes)
+      113838(). The three string routines are the menu fonts of Part B.
+  17db70(x, y, fmt, ...): vsprintf (0x31c360) into a 0x400-byte stack buffer;
+      0x3db900 = colourWord for the call; 17dbf8(buf, x, y).
+  17dbf8(text, x, y): 1142c8(); per byte: 0x0a -> x = start x, y += 8;
+      otherwise 17dc90(c, x, y) and x += 10.
+  17dc90(c, x, y): c < 0x20 draws nothing; i = c - 0x20; col = i % 30;
+      row = i / 30; 113f98(slot 1; x, y, z = 17c228(zBase - 900), w = 12,
+      h = 7, u = col*17 + 2, v = row*17 + 2, uw = 14, vh = 15).
+      (Small fixed font: a 30-column atlas in texture slot 1 with a 17-texel
+      cell; which file occupies slot 1 is UNKNOWN in this slice.)
+  17e428(text, mode, plain; f12 = x, f13 = y) markup line renderer used by the
+      guide window. advance = (mode == 1) ? 0x14 : 0x18. Layer K: 1000 / 520
+      / 900 exactly as 17e228. The string is read in 2-byte units (b0, b1);
+      a zero in either position ends the line and returns 0:
+        "CR"                   return pointer to the text after it (line break
+                               handled by the caller)
+        "MS"                   if u8 0x43d0d6 == 0: skip every later unit
+        b0 >= 0x80             Shift-JIS glyph (b0<<8)+b1: mode 1 ->
+                               10a710(code, (int)x, (int)(y + 2), colour bytes),
+                               else 10a1c0(code, (int)x, (int)y, colour bytes);
+                               x += advance
+        b0 == 0x20             17e228(" ", x, y, mode==1 ? 1 : 2); x += advance/2;
+                               consumes ONE byte
+        "EX" (plain == 0)      17e228("EXIT", x+1, y+3, mode==1 ? 1 : 2);
+                               x += 2*advance + 1; consumes one byte
+        icon tokens (plain == 0): icon n, offsets (dx, dy):
+            "I1".."I9" -> 0..8,  "IA".."IE" -> 9..0xd,  "IW" 0xe,  "IH" 0xf,  "IZ" 0x27
+            "G1".."G9" -> 0x10..0x18 (dx -1, dy -2)
+            "L1","L2"  -> 0x1f,0x20 (0, 5)      "R1","R2" -> 0x21,0x22 (0, 5)
+            "SC" 0x2d (0,0)   "ST" 0x1e (3,2)   "SL" 0x1d (3,4)
+            "BO" 0x19 (2,3)   "BX" 0x1a (2,3)   "BT" 0x1c (2,3)   "BS" 0x1b (2,3)
+            "BP" 0x23 (2,1)   "OR" 0x2a (0,0)   "PL" 0x29 (0,0)
+          wIcon = 17e038(n; f12 = x + 1 + dx, f13 = y + dy, f14 = 17c228(zBase - 900));
+          x += wIcon + dx + 3
+        any other ASCII byte   nothing drawn, consumes ONE byte
+  17e038(n; x, y, z) -> width: n == -1 or 0x5d -> 0; n == 0x2d and u8
+      0x43d0d6 == 0 -> 0; rect = pointer table 0x4ee6b8[n]; slot = (n < 0x33)
+      ? 0x2e : 5; 17df90(slot, rect; x, y, z); returns rect.w.
+  17df90(slot, rect; x, y, z) -> rect.w: 1142c8(); 0x3db900 = 0xffffffff;
+      113f98(slot; x, y, z, w = rect[2], h = rect[3], u = rect[0], v = rect[1],
+      uw = rect[2], vh = rect[3]).  rect = six s32 {u, v, w, h, 0, 6}.
+      Icon rectangles used by the gallery strings (all in slot 0x2e):
+        BO 0x19 {42,76,18,18}   BX 0x1a {61,76,18,18}   BS 0x1b {80,76,18,18}
+        BT 0x1c {99,76,18,18}   SL 0x1d {468,107,43,19} ST 0x1e {426,107,41,19}
+        BP 0x23 {164,76,22,22}
+      (table 0x4ee6b8: 4-byte pointers into the 0x18-byte rect records around
+      0x4c7270..0x4c7660; extract by following each pointer.)
+      INFERRED: BO/BX/BS/BT = circle/cross/square/triangle, BP = direction
+      pad, SL/ST = SELECT/START, L1..R2 = shoulder buttons.
+  17eed8(f12 = x, f13 = y, f14 = z, f15 = w, f16 = h) soft-edged black bar.
+      alpha table u8 0x4ee868 = {16, 32, 64, 128, 160, 192}; colour = alpha<<24.
+      for i in 0..5: d = 3 - i; X = (int)(x - d); Y = (int)(y - d);
+                     Wd = (int)(w + 2d); Hd = (int)(h + 2d)
+          i < 5 : rect(X, Y, Wd, 1), rect(X, Y+Hd, Wd, 1),
+                  rect(X, Y+1, 1, Hd-1), rect(X+Wd, Y+1, 1, Hd-1)
+          i == 5: rect(X, Y, Wd+1, Hd+1)            (d = -2: the body)
+      every rectangle uses the caller's z unchanged.
+  17ed90(): word 0x12d3854 = -1 (forget the cached illustration).
+  17eda0(index, size; f12 = x, f13 = y, f14 = z) illustration sprite:
+      if index != word 0x12d3854:
+          1142d8(5, sprintf("gl_%02d.pvr", index))            texture slot 5
+          1163c0(sprintf("gl_%02d.pvp", index), &pal)         palette file
+          first palette entry (16-bit) forced to 0
+          116478(0x300, pal.count (s16 at +0xa), pal.data)    CLUT base 0x300
+          10add8(5, 0x30)
+          0x12d3854 = index
+      1142c8(); 0x3db900 = 0xffffffff;
+      113f98(5; x, y, z, w = size, h = size, u = 0, v = 0, uw = 1024, vh = 1024)
+      i.e. a square 1024x1024-texel image scaled to size x size pixels.
+  17ea48() -> 0 when the game-mode word 0x4c3808 is 1, 2, 3, 6, 7, 8, 9, 10,
+      11 or 12 (modes that have a battle scene behind the window), else 1.
+
+W.7 Guide window G (0x164 bytes): 0x1822a0 .. 0x182828
+------------------------------------------------------
+  G+0x00 initialised flag     G+0x04 layout id (-1 none)
+  G+0x08 backdrop A   { +0 kind, +4 }
+  G+0x10 title bar B  (0x50)  { +0 shown, +4 open, +8 panel-initialised,
+                                +0xc panel P, +0x40 layout, +0x44, +0x48 title
+                                rect index, +0x4c optional text }
+  G+0x60 message bar C (0x4c) { same head; +0x40 layout, +0x48 text pointer }
+  G+0xac key-help bar D (0x5c){ same head; +0x40 layout, +0x48 w, +0x4c h,
+                                +0x50 text dx, +0x54 text dy, +0x58 text }
+  G+0x108 extra bar E  (0x5c) same type as D
+
+  1822a0(G) init: if 17ea48() != 0 then 1ce478() (menu background set-up,
+      Part B); zero G; init A (kind -1), B, C, D, E (17f308 on each panel,
+      layout -1); G+4 = -1.
+  182318(G, layout) (no-op when unchanged; layout 0..10 via table 0x5f3f08):
+      A.kind (1817c8): layouts 0,6,8,9,10 -> 1; 1,2,3,5 -> 0; 4,7 -> -1
+      B: 181d70(B, layout)   C: 182010(C, layout)   D: 181910(D, layout)
+      first call only (G+0 == 0): 182770(G) snaps all four panels to their
+      closed positions and clears the four "open" words; G+0 = 1
+      E: 181910(E, 0xb)
+    Layouts used: sound test 6; illustration viewer 8 (list) and 9 (full view);
+    ending select 0xa. (G is the object called M in PART A.)
+  B, 181d70: panel closed (0, -0x90), open (0, 0x10), 16 frames. Title rect
+      index by layout (table 0x5f2380): 0->2, 1->7, 2->0xc, 3->0xc, 4->6,
+      5->9, 6->0xe, 7->0xd, 8->0xf, 9->0xf, 10->0xa. B+0x4c = 0.
+      Title rect records: 0x4c7660 + index*0x18, {u, v, w, h, 0, 6}:
+        0 {1,158,182,28}  1 {1,187,182,28}  2 {1,216,278,28}  3 {1,245,216,28}
+        4 {1,274,182,28}  5 {1,303,86,28}   6 {1,332,215,28}  7 {1,390,249,28}
+        8 {1,419,205,28}  9 {196,477,164,28} 10 {185,187,180,28} 11 {280,216,169,28}
+        12 {251,390,249,28} 13 {217,332,214,28} 14 {266,361,165,28}
+        15 {211,448,192,28} 16 {1,448,209,28}
+      (Layout 6 -> record 14. Record 8 is the one 0x1d2620 draws for the
+      gallery top menu.)
+  C, 182010 (table 0x5f3ec8): layouts 4 and 7: closed (0, 0x1f6), open
+      (0, 0x156); all others: closed (0, 0x21c), open (0, 0x17c); 16 frames.
+      C.text = 1821f8(0x22, layout).
+  D, 181910 (table 0x5f2340, layouts 0..13). Layout 6 (case 0x181ae0, shared
+      by 5, 8, 9, 10): w = 0x140, h = 0x1c, dx = 0x1a, dy = 2;
+      text = layout 9 ? "BOBTデフォルト BXBS戻る" (0x5f22e0)
+                      : "BP選択 BOBT決定 BXBS戻る" (0x5f22c0);
+      panel: seat() == 1: closed (-0x190, 0x158), open (0, 0x158)
+             else       : closed (0x2d0, 0x158),  open (0x140, 0x158); 16 frames.
+      Layouts 0xb/0xc/0xd (used for E): w 0x140, h 0x1c, dx 0x1a, dy 2, closed
+      (0x2d0, 0x13c), open (0x140, 0x13c); text 0xb "SLデフォルトカラーに戻す",
+      0xc "SL色のコピー＆ペースト", 0xd "SLキャンセル". Other layouts: not
+      needed by the gallery (cases 0x181960, 0x1819f0, 0x181a54 read above:
+      same w/h/dx/dy, different y 0x192 / 0x158).
+      When the sub-object's +8 word is already 1 the panel parameters are
+      replaced with 17f410 (no snap); the first time 17f428 snaps it closed.
+  1825b8(G) tick: 17f330 on the B, C, D, E panels (A has no state).
+  182648(G) OPEN: 17f468 on B, C, D panels and their shown/open words = 1;
+      17f4b0 on E, E.open = 0.
+  1826b0(G) CLOSE: 17f4b0 on B, C, D, E; their open words = 0.
+  1827c0(G, key, sub): C.text = 1821f8(key, sub).
+  1827d8(G, layout): 181910(E, layout).  1827f0(G): open E.  182828(G): close E.
+      (None of the three E functions is called by 0x13e0e8.)
+  181c10(D, text) / 181e68(B, text) / 1820f8(C, text): direct text setters.
+  182600(G) DRAW, in this order:
+    A (1817f0): kind -1 nothing. If 17ea48() == 0: 109de8() (UNKNOWN; battle
+        scene present). Else kind 0 -> 1ce628(); kind 1 -> 1ce570() (menu
+        background draw, Part B); kind 2 -> rect(0, 0, 0x280, 0x1c0,
+        0xff000040) at z = 17c228(zBase - 500).
+    B (181e88, skipped when layout == -1): x = P.x, y = P.y:
+        17eed8(x, y, 17c228(zBase - 700), 640, 48)
+        17df90(0x2e, &titleRect[B+0x48]; x + 0x10, y + 0xc, 17c228(zBase - 800))
+        if B+0x4c: colour 0xffffffff; 17e428(text, 2, 0; x + 0x168, y + 0x24)
+    C (182118, skipped when layout == -1):
+        17eed8(P.x, P.y, 17c228(zBase - 700), 640, 48)
+        if text: colour 0xffffffff; 17e428(text, 1, 0; P.x + 0x10, P.y + 0xc)
+    D then E (181c30; skipped when layout == -1, or layout == 0 while game
+        mode == 0x11): 17eed8(P.x, P.y, 17c228(zBase - 700), w, h);
+        if text: colour 0xffffffff; 17e428(text, 1, 0; P.x + dx, P.y + dy)
+    The bars are drawn at their current panel position whether open or not;
+    a closed bar is simply off-screen.
+
+  Message table 0x4ee870 (used by 1821f8): 8-byte records {u8 key, 3 pad,
+  char* text}, terminated by key 0xff; continuation records carry key 0xfe.
+  1821f8(key, sub): k = index of the first record whose key byte == key;
+  returns record[k + sub].text (no bound check on sub); if the table's first
+  key is 0xff or the key is absent returns 0x5f3f00 (""). 207 records; to
+  extract, walk from file offset of 0x4ee870 until key 0xff and decode each
+  text as Shift-JIS. Records relevant to the gallery:
+     161 key 0x22 (layout defaults; +6 = record 167
+         "基本操作と必殺技コマンドの確認をします" is the text 182318(G,6) installs)
+     183 key 0x2c sub 0 "ＢＧＭを再生します"
+     184           sub 1 "ＳＥ／ＶＯＩＣＥを再生します"
+     185           sub 2 "ＮＡＲＲＡＴＩＯＮを再生します"
+     186 key 0x2d sub 0 "再生するＢＧＭを選択します"
+     187 key 0x2e       "再生するＳＥ／ＶＯＩＣＥを選択します"   (= 0x2d sub 1)
+     188 key 0x2f       "再生するＮＡＲＲＡＴＩＯＮを選択します" (= 0x2d sub 2)
+     189 key 0x30       "再生するＢＧＭを選択します （SLで歌詞の表示）"
+     190 key 0x31 "対戦条件を選択します"
+     204 key 0x37 "キャラクターのイラストを見ることが出来ます"
+     205 key 0x38 "BP画像の移動　R1L1拡大縮小　SLウィンドウＯＦＦ"
+     206 key 0x39 "キャラクターのエンディングを見ることが出来ます"
+  The sound test calls 1827c0(G, 0x2c, category), (G, 0x2d, category) and
+  (G, 0x30, category); because sub is added without a key check, (0x2d, 1)
+  and (0x2d, 2) resolve to the 0x2e and 0x2f records, and (0x30, category)
+  with category != 0 would run into records 190/191 (the caller only uses
+  0x30 with BGM row 5; see Part A).
+
+W.8 Sound and stream calls made by the gallery tasks
+----------------------------------------------------
+All 0x1e7xxx entries first test word 0x345188 (sound enabled) and do nothing
+when it is 0 (1e7b70 / 1e7ba0 then return 0). 0x213878(cmd << 16, arg) is the
+single command sender to the sound driver (INFERRED: IOP RPC); only the
+command numbers are recorded here.
+  group(a0): a0 == -1 -> 0 (common bank), a0 == 0 -> 1 (seat 0 bank),
+             a0 == 1 -> 2 (seat 1 bank); other values leave the group
+             register unset (do not call with them).
+  1e7b70(a0, tone) and 1e7ba0(a0, tone): identical bodies -> 212fa0(group,
+      tone) "osb_se_on": plays tone 'tone' of the bank currently loaded in
+      that group (bank index word 0x59d018[group], 0x4a tones per bank row,
+      directory 0x5a0a98). Already modelled natively as
+      SoundSelection::sample (src/sound_selection.hpp:21).
+      Widget tones, all with a0 = -1: 0x20 cursor move, 0 confirm,
+      0x24 cancel and refusal. (The gallery top menu 0x1d2380 itself uses
+      0x20 / 0 / 0x25.)
+  1e79c8(a0, bank): 1e7a78() (command 0x26 arg 1; INFERRED stop of playing
+      effects), then 212dd8(group, bank) "osb_load": loads BVOICE2 directory
+      row 'bank' (0x250-byte rows, body copied in 0x4800-byte chunks),
+      records 0x59d018[group] = bank, and for group > 0 with bank < 0x31 also
+      loads the BVOICE1 row 'bank' (0x110-byte rows at 0x59d028). Same
+      directory layout as work/ss6/extract_combat_sound_bank.py.
+  1e8298(seat, command, character): the battle sound-selection entry; ported
+      as SoundSelection::act / record (src/sound_selection.cpp; its
+      gameMode 13/14 exception is the sound-test path).
+  1e7d60(a0, a1) -> 213378(a0, a1) "bvoice1_on  chr_num, ...": a0 == 0x32 ->
+      212d40(a1); a0 == 0x31 with a1 == 0x64 is remapped to bank 0x2a and an
+      index derived from word 0x59fccc and the language byte 0x43d055;
+      otherwise the request needs word 0x59d01c == a0. Remainder of 213378
+      (0x213480..0x2135e0) NOT READ: UNKNOWN.
+  1e7a50(): empty function (returns immediately).
+  1e7ad0() -> 214150() BGM stop: if word 0x5a9e84 == 0 { 0x1553b48 = 0;
+      0x1553b50 = 0; command 0x28 } else { 0x1553b4c = 213db0() (command 4);
+      0x1553b48 = 0; if result != 0 then 0x1553b50 = 1 }.
+  1e7b40(): command 0x26 arg 2.   1e7a78(): command 0x26 arg 1.
+  214060(track, flag) BGM request (deferred; consumed by the sound driver
+      task, not read here): 0x1553b40 = track + 1; 0x5a9e84 = 1;
+      0x1553b54 = u8 0x43d056; 0x5a9e80 = flag; 0x1553b44 = 0; 0x1553b58 = 0;
+      then 213d80(): 0x5a9e6c = 0.
+      u8 0x43d056 is sampled at request time: the sound test temporarily
+      writes it (and restores it afterwards) from the "オリジナル / アレンジ"
+      row, so it is the BGM-version option byte (INFERRED from that use).
+  213d70() -> word 0x5a9e6c (cleared by every 214060; set by the driver task:
+      INFERRED "stream has started/is playing"; the sound test counts frames
+      while it is non-zero and resets its counter to 0 when it is zero).
+  213180() loads the narration bank: opens "\VOICE\NAL.MSB;1" (10c180),
+      0x15539f8 = its start sector, row = u8 0x43d055 in the 0x210-byte-row
+      directory 0x5a89c8, 212c68(sector + row.offset, row.size, 0x1373980),
+      0x15539fc = u8 0x43d055.
+  213238(): if word 0x15539fc != u8 0x43d055 then 213180().
+      u8 0x43d055 is the narration language byte ("日本語 / 英語" row,
+      INFERRED from the sound test writing it from that row).
+The combat mixer, ADPCM decoding and the CD stream are already ported
+(src/*sound*, validate_combat_sound_bank.py, validate_combat_music.py); the
+gallery only needs the request layer above.
+
+W.9 Not read / UNKNOWN in this part
+-----------------------------------
+  - Channel order of the 32-bit colour words (1145c0, 10a460 argument order).
+  - 1135e8 / 10a460 / 109f08 / 10a710 / 10a1c0 glyph metrics (Part B).
+  - Which texture files occupy slot 1 (small font) and slot 0x2e (title and
+    button-icon atlas) — the loader calls are outside these functions.
+  - 20f360, 17cb50, 17e0b0, 109de8, and D-layout cases other than 6/0xb..0xd.
+  - 213378 beyond its first three branches; the sound-driver task that
+    consumes the 214060 request block and sets 0x5a9e6c.
+  - W+0x08 (pointer to an empty string) has no reader in the functions read.
+Suggested Probe checks: (1) 17f330 over 16 ticks after 17f428(P,-0x180,0x50,
+0x10,0x50,0x10) + 17f468 to confirm the interpolation sequence and return
+codes; (2) 20e128 with a stubbed 118128 pad block for every flag/bit
+combination listed in W.3, recording 1e7b70 arguments; (3) 20ef38 with 1145c0,
+10a460, 113f98 observed, for a 3-row and a scrolling 32-row/10-visible list.
+
+
+================================================================================
+PART B - SHARED MENU / SCENE INFRASTRUCTURE (static reading of SLPS_255.59)
+================================================================================
+Legend: [O] OBSERVED from instructions/data at the cited address, [I] INFERRED,
+[U] UNKNOWN. All numbers hexadecimal unless a decimal is given in parentheses.
+
+Already covered natively (not repeated here):
+  - src/console_title_art.cpp + work/ss6/validate_console_title_art.py: title and
+    mode-menu picture (bg_title00), the 15x15 obj0_16 label font, the PRESS START
+    prompt, and the fade modulation arithmetic of 117288 / 116588 (vertex colour
+    and CLUT interpolation toward the fade colour at level 0..256).
+  - src/versus_result.cpp beginFade/advanceFade: one instance of the 1252f0 fade.
+  - src/console_versus_menu.cpp + extract_console_versus_art.py: the VS result
+    menu, which uses the same menu frame (1ce660), 20-pixel glyph cache (10a710),
+    pad repeat (117fd8) and the yes/no dialog picture (1cf598).
+  - work/ss6/extract_vs_curtain.py: 1252f0 mode 3 (curtain).
+  - work/ss6/extract_versus_quotes.py: GOTH_24.BIN record layout.
+
+--------------------------------------------------------------------------------
+B1. Scene transition 1252f0(a0 mode, a1 speed, a2 destructor, a3 nextEntry)
+--------------------------------------------------------------------------------
+State block 1239da0 [O]:
+  +0  mode (a0)          +4 phase (0 idle,1 out,2 hold,3 in)
+  +8  tick counter       +c speed selector (a1)
+  1239db0 destructor fn (a2)      1239db4 next scene entry fn (a3)
+  1239d98 pointer to the transition task.
+Task creation 125178 [O]: 112670(prio 3c, handler 1251d0, 11, tag bc1); clears the
+state block and both function pointers. The task normally sleeps (task+4 = 11).
+
+1252f0 body [O]:
+  state.mode=a0; state.speed=a1; state.counter=0; state.phase=1;
+  mode 1: 1170d8(ffffffff); 1170e8(0); 117140(100,0); [3ebf18]|=2; [4c3834]=1
+  mode 2: 1170d8(ff000000); same three calls and flags as mode 1
+  mode 3: [4c3834]=1 only (no colour setup)
+  mode 4: if a1==0: [4c389c]=1   (no [4c3834] write)
+  all:    task(1239d98)+4 = 10 (runnable); store a2/a3.
+  1170d8 writes fade colour word 3ec730; 1170e8 clamps and writes fade level
+  3ec734 (0..100); 117140 writes 3ebf1c/3ebf20; 3ebf18 bit 1 enables the fade
+  modulation in 117288/117318. [4c3834] is g_GameData+2c.
+  [I] colour ffffffff = fade to white, ff000000 = fade to black (117318 reads the
+  three low bytes as the target r,g,b).
+  All menu scenes in this document call 1252f0(1,0,dtor,next).
+
+Task handler 1251d0, one visit per dispatch [O]:
+  r = 125498(&state)            // phase worker, uses the counter BEFORE increment
+  state.counter++
+  phase 1: if r==0 { counter=0; phase=2 }
+  phase 2: if r==0 { counter=0; phase=3;
+                     1253e0();                    // see below
+                     (*[1239db0])();              // old scene destructor
+                     (*[1239db4])();              // next scene entry
+                     if [4c38a8]==2: tail 1b6380(0) }
+  phase 3: if r==0 { counter=0; phase=0; [3ebf18]&=~2; task+4=11;
+                     g_GameData+94=0; g_GameData+2c=0 }
+  Neither function pointer is null-checked.
+
+Phase workers for modes 1 and 2 (125498 dispatch) [O]:
+  N = speed 0 -> a (10), 1 -> 1e (30), 2 -> 3c (60); other values give N=0
+      (division trap).
+  phase 1 = 125678: if [3ec734] < 100 { 117158(colour, ff/N); return 1 } return 0
+  phase 2 = 1256f0: return counter < 2
+  phase 3 = 125700: if [3ec734] > 0   { 117158(colour, -(ff/N)); return 1 } return 0
+  117158 writes colour 3ec730 and per-frame delta 3ec738. The integrator that
+  adds 3ec738 to 3ec734 each frame was not read here [U]; versus_result.cpp
+  advanceFade is the validated native equivalent (delta 25 for N=10).
+  Hold phase: worker returns 1 at counter 0 and 1, 0 at counter 2, so the
+  destructor and next entry run on the third hold visit.
+  Modes 3/4 use 125778/125848/1258a8 and 125c68/125da8/125dc0 with [3db908]
+  forced to 1 during the call [O]; bodies not read [U].
+
+1253e0 (midpoint hook) [O]: g_GameData+18 = 0 always. Only for mode 4 with
+  speed==0: game mode word = 3; if +a0 == 5 then +a0 = 6; 1e7ad0(); 1e7b40();
+  1e7af8(); 11d1c8([+10]); tail 129168([+10]^1).
+
+Call order summary:
+   1252f0 ---> phase 1 (fade out, N visits + 1) ---> phase 2 (3 visits)
+          ---> 1253e0 -> destructor -> next entry (same visit)
+          ---> phase 3 (fade in) ---> idle, g_GameData+2c cleared
+  The new scene's tasks are created inside the hold visit; a task with lower
+  priority number than 3c first runs on the next dispatch (see versus_result.cpp
+  line 9 comment).
+
+118320(fn) [O]: stores fn in 43d20c, the "current scene destructor" slot. Every
+  scene entry registers the same function it later passes as a2. Readers of
+  43d20c were not traced [U].
+124d50() [O]: memset(g_GameData 4c3808, 0, a8) then +9c,+8,+c,+10,+14 = -1.
+  Called by the gallery EXIT path (1d2508) before 1252f0(1,0,1d24f0,127940).
+
+--------------------------------------------------------------------------------
+B2. 2D quad submitters
+--------------------------------------------------------------------------------
+Sprite descriptor (0x18 bytes) [O]: +0 u, +4 v, +8 w, +c h (ints, texels),
+  +10 flags (not read by the submitters below), +14 texture slot.
+Globals: 3db900 current vertex colour (ABGR word, alpha in bits 24..31, 80 =
+  opaque scale as in title art), 3db8fc blend selector passed as 4th argument to
+  1149d0, 348b10 "use raw colour" latch (1142b8 sets, 1142c8 clears).
+
+113f98(a0 slot; f12 x, f13 y, f14 z, f15 w, f16 h, f17 u, f18 v, f19 uw,
+       stack+0 vh) [O]:
+  culled when 114e98(x,x+w,y,y+h) != 0; colour = 117288([3db900]) (fade applied)
+  except slot 28 which uses [3db900] unmodified; z' = 114d88(z);
+  uv scale = float table 5dd448[slot] (reciprocal texture size; e.g. slot 4/5 =
+  1/1024, slot 2e = 1/512 as read from the table); four 0x18-byte vertices
+  {x,y,z',u,v,colour} submitted by 1149d0(verts,4,slot,[3db8fc]).
+117de8(a0 desc, a1 flags, a2 colour, a3 hflip; f12 x, f13 y, f14 z, f15 w, f16 h)
+  [O]: returns without drawing when desc.slot <= 0 or flags&100.
+  [3db8fc] = (flags&200) ? 0 : 1; 10add8(slot, flags&~200).
+  colour != 0: [3db900]=colour. colour == 0: 1142b8() before, 1142c8() after.
+  Draw: 113f98(slot; x, y, z, w, h, desc.u, desc.v, desc.w, desc.h); with hflip
+  the call uses x+w and width -w. The on-screen size (f15,f16) is independent
+  of the texel size.
+117a00(a0 desc, a1 flags, a2 colour; f12 x, f13 y, f14 z) [O]: same, on-screen
+  size = desc.w x desc.h, [3db8fc]=1, 10add8(slot, a1).
+1145c0(a0 x, a1 y, a2 w, a3 h, t0 colour; f12 z) [O]: untextured rectangle
+  (x,y)-(x+w,y+h), colour through 117288, z through 114d88, submitted by
+  114c10(verts 0x10 bytes each,4,1).
+114d88(f12 z) [O]: returns 10000000.0 - z*100.0 + (float)[3db8f4], then
+  [3db8f4]++ (constants at 5dd594/5dd598). The counter is a per-call tie
+  breaker, so submission order is part of depth. Reset site not read [U].
+  Callers that draw text store (int)114d88(z) into 348a8c before the text call
+  and restore the previous value afterwards.
+Texture/palette binding: 1142d8(slot, "name.pvr") -> 10aa28 loads a texture by
+  name into slot record 3a9680 + slot*28; 1163c0("name.pvp", buf) reads a
+  palette; 116478(first, count, buf) uploads it; 10add8(slot, bankFlags) selects
+  the palette bank. Internals are the same routines already exercised by the
+  title/character-select validators; not re-read [U].
+
+--------------------------------------------------------------------------------
+B3. Text
+--------------------------------------------------------------------------------
+Font files, loaded once by 109e20 through 1026e0(path, dest, maxBytes) [O]:
+  cdrom0:\BIN\GOTH_20.BIN -> ff1040  (max 100000)   20-pixel kanji/kana
+  cdrom0:\BIN\GOTH_24.BIN -> 106b840 (max 100000)   24-pixel
+  cdrom0:\BIN\GOTH_H.BIN  -> 1116840 (max 8000)     [I] half-width set; no reader
+                                                     traced in this slice [U]
+Glyph index table 3aa168 (file-backed .data, 32-bit entries) [O]:
+  lead' = lead - 40 if lead >= a0 else lead
+  record = table[(lead' - 81) * c0 + (trail - 40)]
+GOTH_20 record = dc (220) bytes: pixel rows start at +a, 14 (20) rows of a (10)
+  bytes = 20x20 at 4 bits per pixel [O 10a82c..10a864].
+GOTH_24 record = 138 (312) bytes, 12-byte header, 24x24 (extract_versus_quotes).
+16-entry text CLUT at 348a48 [O]: every entry RGB ffffff with alpha 00,09,11,
+  1a,22,2b,33,3c,44,4d,55,5e,66,6f,77,80 (linear coverage ramp).
+
+10a460(a0 str, a1 x, a2 y, a3 r, t0 g, t1 b, t2 alpha)  -- 20-pixel string [O]:
+  byte 0a: x = start x, y += 14 (20)
+  byte < 80: 10a568(char, x, y, r,g,b,a); x += a (10)
+  otherwise: 10a710((byte<<8)|next, x, y, r,g,b,a); x += 14 (20); consumes 2 bytes
+  Depth comes from 348a8c (see 114d88).
+10a568 half-width glyph [O]: drawn only for 21..7f. cell = char - 20 (7f is
+  remapped to cell f and drawn through 108e68 instead of 1090a8);
+  u = (cell % 18) * a, v = (cell / 18) * 16 + 1 (24 columns, 10x22 pitch),
+  size a x 14 (10x20). r,g,b pass through 117318 (fade). CLUT base 3080, or
+  3110 when [348e00] != 0; tex0 template dword at 5d4690. The texture that
+  holds this 24-column sheet was not identified [U].
+10a710 full-width glyph [O]: n = [345180]++ (glyph cache cursor); col = n % 14,
+  row = n / 14 (20 per row), cell pitch 18 (24). Copies the 20x10-byte record
+  into the cache page at [3a9c20] + row*18*100 + col*18/2 (4bpp, 512 texels
+  wide), then draws 14x14 (20x20) from (col*18, row*18) via 1090a8 with texture
+  page 1a40 or 2bc0 chosen by [3451d0]&1 and CLUT 3080/3110, tex0 template
+  5d4698. [3a9c20] = dc4c40 or 11e89c0 (10a9e8, selected by [34516c]).
+  The reset of 345180 happens once per frame elsewhere (17 xrefs) [U exact site];
+  a frame may therefore cache at most 20 glyph rows of 20.
+109f08(same arguments) -- 24-pixel string [O]: line feed 18, half-width advance
+  c via 10a010, full-width advance 18 via 10a1c0 (record size 138).
+318358 = strlen [I from use]; 1ceb90(str) is a wrapper returning 318358(str).
+1090a8 / 108e68 sprite emitters: arguments a0 tex0, a1 x, a2 y, a3 w, t0 h,
+  t1 u, t2 v, t3 uw, stack {vh, z=[348a8c], r, g, b, alpha}; bodies not read [U].
+
+Help-text ticker (bottom line of every 1ce660-style menu) [O]:
+  state: 582b28 x[0], 582b2c x[1], 582b30 delay.
+  1cebb0(len): x[0]=10; x[1]=(len>>1)*14; delay=78 (120).
+  1ceb10(mode, len, idx) -> x:
+     if mode==1 { delay=delay-1 (stored);
+                  if delay<=0 { half=len/2 (signed, toward zero); x[idx]-=2;
+                                if x[idx] < -14*half: x[idx]=14*half;
+                                delay=0 } }
+     return x[idx]
+  Scene pattern on cursor change: len=1ceb90(text); 1cebb0(len).
+  Draw (gallery instance 1d27c8(item, alpha)): 348a8c=(int)114d88(-350.0);
+     entry = table[item] {char* text, int scroll}; len=strlen(text);
+     x=1ceb10(entry.scroll, len, 0); if x < 280: 10a460(text, x, 198, ff,ff,ff, alpha)
+     if entry.scroll==1 { x=1ceb10(1, len, 1); if x < 280: same draw }
+  Consequences: a non-scrolling text sits at x=16; a scrolling text is drawn
+  twice one text-width apart, and because 1ceb10 runs twice per frame in that
+  case the 120 delay elapses in 60 frames; each copy then moves 2 px per frame.
+  The scrolling strings carry trailing full-width spaces as the gap.
+
+--------------------------------------------------------------------------------
+B4. Pad sample 118128(seat) and repeat producer 117fd8(seat)
+--------------------------------------------------------------------------------
+118128(seat) returns 1237cc8 + seat*c [O]:  +0 held, +4 pressed (rising edges),
+  +8 pressed | auto-repeat for the four direction bits.
+117fd8(seat) [O], source selected by [443150]:
+  0: 1034a8(port = table 5dd838[seat] = {0,1}) record: held=+8, pressed=+10
+  1: held=[443568+seat*4]; pressed = held & ~[443570+seat*4]
+  2: only seat [443140] is live (index [443580]); the other seat reads 0
+  Repeat: for i in 0..3 with bit = table 5dd840[i] = {10,20,40,80} and counter
+  1237ce0 + seat*10 + i*4:
+     if !(held & bit) counter=0
+     else if counter==0 { counter=14 (20); out|=bit }
+     else if --counter <= 0 { counter=2; out|=bit }   (counter stored either way)
+  i.e. first repeat 20 frames after the edge, then every 2 frames. Matches
+  character_select.cpp:175-181 and console_versus_menu.cpp:13-16.
+Bit meanings (as used by the ported scenes; physical button names [I]):
+  10 up, 20 down, 40 left, 80 right (character_select.cpp:49-55)
+  20a = confirm set, 404 = cancel set (console_versus_menu.cpp:22-23; mode menu)
+  607 = spirit-select confirm set; 8 = Kuroko toggle (character_select.cpp)
+  80000 = SELECT [I from guide text "SL"], 100000 / 400000 = page back / forward
+  in list selectors and zoom in the illustration viewer, 200000 / 800000 = first /
+  last row in list selectors (see Part A and A.W).
+Menu command packers (one per scene, same shape) [O]:
+  1d28e8(seat) (gallery top menu): v=0; if pressed&404 v=8; if pressed&20a v|=4;
+     if repeat&10 v|=1; if repeat&20 v|=2.
+  1db9c0(seat) (VS result menu): 20 cancel, 10 confirm, 1 up, 2 down,
+     4 = pressed&80, 8 = pressed&40.
+  Vertical movement therefore auto-repeats; confirm/cancel/left/right are edges.
+
+--------------------------------------------------------------------------------
+B5. Common menu scene helpers (1ce478 .. 1cf8f0)
+--------------------------------------------------------------------------------
+State (all 32-bit) [O]:
+  582b10 background descriptor {u 0, v 0, w 280, h 1c0, flags 0, slot 4}
+  582b34 frame slide-in counter 0..f      582b38 content fade counter 0..f
+  582b3c legend fade counter 0..5         582b40 effect override (0 normally)
+  582b44 background effect variant 1 or 2
+  582b28/2c/30 ticker (B3)
+
+1ce478() scene background init [O], called by every non-battle menu entry
+(xrefs include 1cfa3c option, 1d2324 gallery, 1d29b4, 1829d8 ending gallery):
+  1142d8([582b24]=4, "PS2_menu_bg00_00.pvr");
+  1163c0("PS2_menu_bg00_00.pvp", buf); buf[0] (first 16-bit colour) = 0;
+  116478(200, 100, buf); 10add8(4, 20);
+  582b34=582b38=582b3c=0; 1e1620(); 582b40=0;
+  582b44 = ((316b90() & 7fff) >> e) + 1        // one library RNG draw per entry
+  variant 1: 1e2358(); variant 2: 1e23a0(); then 1e2408().
+  The packaged native asset for this picture is menu_bg00_00.tex
+  (1024x1024 indices + 1024-byte CLUT; src/versus_result_art.cpp:58).
+1ce570() background draw [O]: 117a00(582b10, 20, ffffffff; 0, 0, -49.0)
+  (640x448 at the origin), then the overlay effect:
+  [582b40]==0: 1e1a20(); variant 1 -> 1e1ff0(); 1e1c40(); variant 2 ->
+  1e1ff0(); 1e1e18(). [582b40]==1/2 force the variant draw without 1e1a20.
+  1ce628(): picture only (z constant 656aa4 = -49.0).
+  The 1e1620..1e2408 effect family (animated overlay) was not read [U].
+
+1ce660(a0 showPage, a1 page, a2 pageCount) menu frame [O]; t=[582b34]:
+  for i in 0..a: 1cf808: 1145c0(x = t*280/f - 280, y=T1y[i], 280, T1h[i],
+                               colour (A[i]*t/f)<<18, z -50)
+  for i in 0..a: 1cf858: 1145c0(1e, T2y[i], 244, T2h[i], same alpha, z -50)
+  for i in 0..a: 1cf8a8: 1145c0(x = 280 - t*280/f, T3y[i], 280, T3h[i], ...)
+  1ced08(0, 15e)                            // button legend
+  if a0==1: 1cf2a8(0, 27, page, pageCount)  // page indicator
+  advance: if [582b34] < f: ++            (frame slides in for 15 visits)
+           else { if [582b38] < f: ++ ; if [582b3c] < 5: ++ }
+  Tables (decimal, 11 entries each):
+   A   582b48: 16 32 64 128 160 192 192 192 160 128 64   (alpha, black bands)
+   T1y 582b78: 16 17 18 19 20 21 57 58 59 60 61    T1h 582ba8: 1 1 1 1 1 36 1 1 1 1 1
+   T2y 656be0: 78 79 80 81 82 83 378 379 380 381 382  T2h 656c10: 1 1 1 1 1 295 1 1 1 1 1
+   T3y 582bd8: 394 395 396 397 398 399 440 441 442 443 444  T3h 582c08: 1 1 1 1 1 41 1 1 1 1 1
+  Result: title band y 16..61 entering from the left, body panel x 30..610,
+  y 78..382 fading in place, footer band y 394..444 entering from the right.
+1ce878(a0,a1,a2): identical without the 1ced08 legend [O].
+Readiness and alpha [O]:
+  1cf750() -> 1 iff [582b38] >= f and [582b3c] >= 5 (scenes ignore input until then)
+  1cf738() -> [582b38]*11 (0..ff content alpha, passed to item/ticker draws)
+  1cf788 [582b38]=0; 1cf798(v) set; 1cf7a8 ++ up to f;
+  1cf7c8 [582b3c]=0; 1cf7d8(v) set; 1cf7e8 ++ up to 5.
+Typical per-update order of a menu task (gallery 1d2380) [O]:
+  for seat 0,1: if 1cf750() and not leaving: cmd=packer(seat); act; sound
+  1ce570(); 1ce660(0,0,0); a=1cf738(); title sprite(a); items(a); ticker(a)
+
+Button legend 1ced08(a0 dx, a1 y) [O]: alpha=[582b3c]*33; colour alpha<<18|ffffff;
+  four 18x18 icons from descriptor table 4c7510[0..3] (texture slot 2e) at
+  x = dx + 340, 362, 444, 466 (decimal; base {340,340,400,400} + 22*i), z -330;
+  then 10a460("決定", dx+185, y, white, alpha) and 10a460("キャンセル", dx+1ed, y).
+  Variants: 1cee68 (first two icons + 決定), 1cefc8 (last two + キャンセル).
+Page indicator 1cf2a8(dx, y, page, count) [O]: icons 4c7510[6] at x dx+19a and
+  [8] at dx+1be, "ページ送り" at dx+1dd, "%d" of page+1 at dx+24b (dx+241 when
+  >= 10), "/" at dx+256, "%d" of count at dx+264; alpha as the legend.
+Descriptor table 4c7510 (0x18 each, slot field 6, drawn with slot 2e) first
+  entries (u,v,w,h decimal): 0 (42,76,18,18) 1 (99,76,18,18) 2 (61,76,18,18)
+  3 (80,76,18,18) 4 (468,107,43,19) 5 (426,107,41,19) 6 (42,95,24,16)
+  7 (67,95,24,16) 8 (92,95,24,16) 9 (117,95,24,16) 10 (164,76,22,22);
+  the gallery title plate is 4c7720 = (1,419,205,28). The disc file bound to
+  slot 2e was not traced in this slice [U]; extract_console_versus_art.py
+  captures these sprites through Probe.
+1cf8f8(str, x, y, frame) [O partial]: blinking marker, drawn only while
+  frame % 40 >= 19, width strlen*e + 1b, through 17c260/17dd88 [U details].
+
+Misc calls made by menu entries [O]:
+  112f30(a0,a1): stores 3d3ae0/3d3ae4 then applies through 112f58; menus pass
+     (ffffff, 404040). 112f08(): re-applies the stored pair. Meaning [U]
+     ([I] global light/ambient colour words for the sprite pipeline).
+  Sound, all gated by [345188] != 0:
+     1e7b70(a0,a1) -> 1e7968: channel = 1 if a0==0, 0 if a0==-1, 2 if a0==1;
+        212fa0(channel, a1). Menu ids with a0=-1: 20 cursor move, 25 cancel,
+        0 confirm.
+     1e7ad0() -> 214150 (stop current stream); 1e7af8(): same when [5850e0]!=0
+        ("SndStopJingle"); 1e7b40() -> 213be8(2).
+  Gallery entry 1d22f8 ends with 112f30(ffffff,404040) then tail 1e7b40().
+
+--------------------------------------------------------------------------------
+B6. Yes/No confirmation dialog
+--------------------------------------------------------------------------------
+There is a shared DRAW routine but no shared state machine [O]:
+1cf598(a0 cursor, a1 kind):
+  1145c0(0, 64, 280, f0, c0000000, z -379.0)       // dim strip y 100..340
+  348a8c = (int)114d88(-380.0)
+  message, 24-pixel font 109f08(text, x, c8, ff,ff,ff, ff):
+     [4c38a8]==5 : "ネオジオランドに戻りますか？"           x 9a
+     else kind==1: "キャラクターを選択しなおしますか？"     x 80
+     else        : "タイトルに戻りますか？"                 x be
+  options 109f08 at y f8: "はい" x f0, "いいえ" x 154; colour ff,ff,ff except the
+  option at index cursor, drawn with g=0,b=0 (red). cursor 0 = はい.
+Callers: 1db138/1db158 (VS result menu task 1dafa0; ported in
+  console_versus_menu.cpp) and 1d9f10/1d9f30 (another scene, not read [U]).
+State handling as implemented by 1dafa0 [O]: dialog kind held in the scene's own
+  state word (582fbc = 4 -> kind 0, 3 -> kind 1), cursor 582fc4 initial 1
+  (いいえ); any up/down/left/right command toggles cursor^=1 with sound 20;
+  cancel closes (state 0, cursor 1, sound 25); confirm runs the scene's own
+  action (sound 0). The gallery top menu (1d2380) does not use the dialog: its
+  cancel command exits directly.
+
+--------------------------------------------------------------------------------
+B7. UNKNOWN / not read
+--------------------------------------------------------------------------------
+  - Per-frame integrator of fade level 3ec734 from 3ec738, and the reset sites
+    of depth counter 3db8f4 and glyph-cache cursor 345180.
+  - 1252f0 mode 3/4 workers (125778.., 125c68..) beyond the dispatch.
+  - Readers of the registered destructor slot 43d20c.
+  - Background overlay effect family 1e1620, 1e1a20, 1e1c40, 1e1e18, 1e1ff0,
+    1e2358, 1e23a0, 1e2408 (state, RNG use beyond the one draw in 1ce478).
+  - Source texture of the 10x20 half-width sheet used by 10a568, the role of
+    GOTH_H.BIN, and the disc file behind texture slot 2e.
+  - 1090a8/108e68 emitter internals (texel bias; extract_console_versus_art.py
+    notes a half-texel UV bias for font sprites).
+  - 112f58 semantics; physical button assignment of each pad bit.
+  - 1cf8f8 marker geometry (17c260/17dd88) and the second dialog caller 1d9f10.
+Suggested Probe checks: run 1ce660 for t=0..15 with 1145c0 observed to confirm
+the band rectangles; run 1ceb10 twice per frame for a scroll=1 string to confirm
+the 60-frame pause; run 1251d0 after 1252f0(1,0,..) counting visits until the
+destructor call.

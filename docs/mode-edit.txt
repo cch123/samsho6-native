@@ -1,0 +1,751 @@
+SPIRITS EDIT MODE and COLOR EDIT MODE (SLPS-25559) - static reverse-engineering specification
+==========================================================================================
+
+Scope: mode-menu items 4 and 5. Everything below was read statically from
+work/ss6/extracted/SLPS_255.59; no Probe run was used. Each statement is tagged
+OBSERVED (read from instructions/data at the cited address), INFERRED (interpretation)
+or UNKNOWN. Addresses are hexadecimal. "pad" is the per-seat record returned by
+0x118128(seat): +0 held, +4 pressed edges, +8 pressed | directional auto-repeat
+(0x117fd8: bits 0x10,0x20,0x40,0x80 from table 0x5dd840; first repeat after 20 updates,
+then every 2).
+
+0. Identification of the two scenes (settles the open question in the shared brief)
+-----------------------------------------------------------------------------------
+OBSERVED
+  0x13ad40  SPIRITS EDIT scene entry. Calls 0x13acd8, which prints
+            "customThreadGauge:STACK_SIZE=%X" (0x5e1c60) and creates task 0x13ada0. That task
+            builds a list from the string table 0x4ca250 = "祭スピリッツ１".."祭スピリッツ８".
+  0x13b160  COLOR EDIT scene entry. Calls 0x13f710 then 0x13b100, which prints
+            "customThreadColor:STACK_SIZE=%X" (0x5e1c88) and creates task 0x13b1c8. That task
+            uses 0x4ca228 (5 x "　　ボタンカラー　"), 0x4ca240 ("色をコピー","色をペースト") and
+            0x5e1cb0 "デフォルトカラーに戻しますか？".
+  So item 4 = SPIRITS EDIT (0x13ad40), item 5 = COLOR EDIT (0x13b160); the brief's inferred
+  naming is correct. Both run with mode word 0xf (opened by seat 0) or 0x10 (seat 1) and
+  0x4c38a8 = 0.
+  Controlling seat: both tasks call 0x178f90() every update; for mode 0x10 it returns 1
+  (0x179008), for mode 0xf it returns 0 (INFERRED for the fall-through tail after
+  0x17900c, not disassembled past that point). Only that seat's pad is read.
+
+1. Shared UI components (used by both scenes; also used by other menu scenes)
+-----------------------------------------------------------------------------
+1.1 Slide animator (0x34 bytes)                                              OBSERVED
+  +0 curX, +4 curY, +8 remaining, +0xc duration, +0x10/+0x14 startX/Y, +0x18/+0x1c targetX/Y,
+  +0x20 state (1 = retracted/"out", 0 = extended/"in"), +0x24/+0x28 outX/outY,
+  +0x2c/+0x30 inX/inY.
+  0x17f428(s, outX, outY, inX, inY, frames)  configure; cur = out; +0x20 = 1.
+  0x17f308(s)                                = 0x17f428(s,0,0,0,0,1).
+  0x17f468(s)  start moving to (inX,inY) unless target already equals it: 0x17f3c0 sets
+               start = cur, target, remaining = duration = frames, +0x20 = 0 (and remaining = 0
+               when cur already equals the target).
+  0x17f4b0(s)  same toward (outX,outY); then +0x20 = 1.
+  0x17f330(s)  per update: if remaining > 0 { r = --remaining;
+                 cur = (start*r + target*(duration-r)) / duration (signed integer division,
+                 X and Y separately); if r > 0 return 2 }  return (+0x20 == 0) ? 1 : 0.
+               i.e. 2 = moving, 1 = settled "in", 0 = settled "out".
+  0x17f400(s)  remaining < 1.
+  0x17f528(event, cursor, visibleRows, scroll, rowCount) and 0x17f560(cursor, visibleRows,
+  scroll, rowCount): scroll-window helpers. 0x17f560: v = min(scroll, cursor);
+  if (v + visible > rows) v = rows - visible; if (cursor >= v + visible) v = cursor-visible+1;
+  if (v < 0) v = 0. 0x17f528: event 3 -> scroll+visible, event 2 -> scroll-visible, otherwise
+  scroll; clamped to [0, rows-visible] (negative -> 0).
+
+1.2 List cursor (0x1c bytes; embedded at widget+0x50)                         OBSERVED
+  +0 flags, +4 disabled-row bitmap pointer, +8 min, +0xc max (exclusive), +0x10 step,
+  +0x14 cursor, +0x18 page size.
+  Flag bits: 0x1 use repeat bits 0x10 (-step) / 0x20 (+step); 0x2 use repeat bits 0x40 (-step)
+  / 0x80 (+step) (tested first; bit 0x1 only applies when bit 0x2 produced no movement);
+  0x4 wrap; 0x8 invert direction; 0x10 confirm disabled; 0x20 cancel disabled; 0x80 no move
+  sound; 0x100/0x200 suppress confirm/reject sound (mask 0x300); 0x100/0x400 suppress cancel
+  sound (mask 0x500); 0x800 bitmap valid; 0x20000 START (0x8) does not confirm; 0x40000
+  movement disabled; 0x1000/0x2000/0x8000/0x10000 are layout/ownership flags of the owner.
+  0x20dff8 init: cursor 0, flags 5, range [0,1), step 1, page 0.
+  0x20e028(l,min,max,step,page) (max bumped by 1 when min == max; swapped when max < min;
+  page reset to 0 when page >= max), 0x20e0a0(l,bitIndex,on) set/clear flag bit,
+  0x20e0d0(l,cursor) clamped/wrapped assignment, 0x20e480(l,bitmap) attach bitmap,
+  0x20e4e0(l,row) DISABLE row, 0x20e528(l,row) ENABLE row, 0x20e498(l,row) test disabled.
+  0x20e128(l, seat) -> event, in this order:
+    pad = 0x118128(seat); p = pad.pressed;
+    confirm = (p & 8) && !(flags & 0x20000) || (p & 0x202);   cancel = !confirm && (p & 0x404)
+    if confirm: if (flags & 0x10) or row disabled: sound(-1,0x24) unless flags&0x300; return 6
+                else sound(-1,0) unless flags&0x300; return 4
+    if cancel:  if (flags & 0x20): as the rejected case above (return 6)
+                else sound(-1,0x24) unless flags&0x500; return 5
+    d = 0; r = pad.repeat (+8)
+    if flags&2: d = (r&0x40) ? -step : (r&0x80) ? +step : 0
+    if flags&1 and d == 0: d = (r&0x10) ? -step : (r&0x20) ? +step : 0
+    if flags&8: d = -d;  if flags&0x40000: d = 0
+    n = cursor + d; if n >= max: n = (flags&4) ? min : max-1; else if n < min:
+        n = (flags&4) ? max-1 : min;   cursor = n
+    if cursor changed: sound(-1,0x20) unless flags&0x80; return 1
+    if page < 0 return 0
+    if page > 0 and r&0x100000: cursor = max(0, cursor - page*step); ev = 2 (move sound)
+    else if page > 0 and r&0x400000: cursor = min(max-1, cursor + page*step); ev = 3
+    else if r&0x200000: cursor = 0; ev = 1      else if r&0x800000: cursor = max-1; ev = 1
+    return cursor changed ? ev : 0
+  Sound request is 0x1e7b70(-1, id): 0x20 move, 0 confirm, 0x24 cancel and rejected.
+  Event codes: 0 none, 1 moved, 2 page back, 3 page forward, 4 confirm, 5 cancel, 6 rejected.
+  Pad bit meaning: 0x10/0x20 up/down and 0x40/0x80 left/right (OBSERVED usage; same as
+  src/character_select.cpp); 0x8 START; 0x80000 SELECT (INFERRED from the hint strings
+  "SL..." shown for exactly the states where 0x80000 is tested); 0x202 = the two confirm
+  buttons, 0x404 = the two cancel buttons (hint string "BP選択 BOBT決定 BXBS戻る");
+  0x100000/0x400000/0x200000/0x800000 = shoulder buttons (which is L1/R1/L2/R2: UNKNOWN).
+
+1.3 Generic list menu (0x86c bytes; ctor 0x20e570)                            OBSERVED
+  +0 width, +4 height, +8 title string, +0xc visible rows, +0x10 scroll, +0x14 visible flag,
+  +0x18 active flag, +0x1c slide, +0x50 list cursor, +0x6c row string pointers[0x200].
+  0x20e5d8(m, rows, visible): rows>=1, visible = min(visible or rows, rows); cursor range
+  [0,rows); page = visible; size: list flag 0x10000 -> width 0x92, height visible*0x15+0x1a;
+  flag 0x8000 -> 0x7a, visible*17+0x18; else 0x74, visible*9+0x16.
+  0x20e738(m, char** strings, visible): rows = count up to the first NULL; 0x20e7f8(m,row,str)
+  sets one row and widens +0 to strlen/2*0x14+0x1c (flag 0x10000 layout).
+  0x20ee70(m, seat) update: st = 0x17f330(slide); if st == 0 { visible = active = 0; return 0 }
+  if st == 2 return 0; if !visible or !active return 0; ev = 0x20e128(list, seat); scroll
+  maintenance with 0x17f528/0x17f560; return ev.
+  0x20ef38 draw (rows), 0x20f360 draw variant used for the colour-number menu (draws a button
+  glyph per row from pointer table 0x59cd58[row] through 0x17e038). Draw internals: not
+  transcribed (see section 8).
+  Character list builder 0x20eae0(m, visible, firstRow, includeEx, includeKuroko, useUnlockTbl):
+    sets list flag 0x10000; clears id table 0x1373830 (s16[0x37]) to -1; walks the order table
+    0x59cd20 (u8[0x31]: 0,1,3,4,5,6,12,14,15,35,36,38,7,34,37,39,9,2,8,10,16,17,22,24,23,25,18,
+    19,20,21,28,29,30,31,33,32,11,27,13,26,42,41,40,45,44,46,47,48,43); id 0x2b (43) is included
+    only when includeKuroko != 0; other ids are included when useUnlockTbl ? byte[0x43d09f + id]
+    != 0 : byte[0x43d06e + id] == 0. When includeEx != 0 and byte 0x43d0ec != 0 the four ids at
+    0x59cd51 (72,74,73,75) are appended. Row label = 0x4d4bb0[id] for id < 0x32, otherwise
+    fixed strings 0x664810/0x664820/0x664838/0x664850 (default 0x664800). Sets list flag 0x2000;
+    0x20ee20(m) then returns the character id of the cursor row (0x1373830[cursor]).
+
+1.4 Screen frame (0x164 bytes; ctor 0x1822a0)                                 OBSERVED/partial
+  Sub-widgets: +8 title (0x181788/0x1817c8), +0x10 header (0x181d28/0x181d70, slide at +0x1c),
+  +0x60 help line (0x181fc8/0x182010, slide at +0x6c, text pointer +0xa8), +0xac key-hint line
+  (0x1818c8/0x181910, text pointer +0x104), +0x108 second hint line (slide at +0x114).
+  0x182318(f, kind 0..10) selects title/header/help/hint variants through jump table
+  0x5f3f08 (kind 1: 0x1817c8(1), 0x181d70(1), 0x182010(1), 0x181910(+0xac,1); kinds 2 and 3
+  pass 0 to 0x1817c8 and their own number to the other three); 0x182648 open (slides in),
+  0x1826b0 close, 0x1825b8 update, 0x182600 draw.
+  0x1827c0(f, id, sub): help text = 0x1821f8(id, sub): table 0x4ee870 of {u8 id; u32 text}
+  (8 bytes, 207 entries, terminator id 0xff; continuation rows carry id 0xfe); result is the
+  text of entry (first index whose id matches) + sub; fallback 0x5f3f00.
+  0x1827d8(f, k) sets the second hint line (0x181910(f+0x108,k)): k = 0xb -> 0x5f22f8
+  "SLデフォルトカラーに戻す", 0xc -> 0x5f2328 "SL色のコピー＆ペースト", 0xd (other) -> 0x5f2318
+  "SLキャンセル". 0x1827f0 shows it, 0x182828 hides it. 0x181c10(w, text) sets a hint text.
+  Help ids used here (text addresses in the table):
+    0x21+0 "キャラクターの色を編集します"            0x21+1 "編集する祭スピリッツを選択します"
+    0x0f+c (c = 0..15) category help ("スピリッツゲージ上昇タイプを指定します" ...)
+    0x10+c, sub = option row: per-option help (0x5f3160 ... 0x5f3738)
+    0x23 "編集するキャラクターを選択します"          0x24 / 0x26 "編集する色を選択します"
+    0x25+0/1 "本体の色を編集します" +2 "武器の色を編集します" +3 "その他の色を編集します"
+        +4 "全体的な色の確認をします"
+    0x27 "カラーバーを操作して色を変更します"
+    0x28+0 "現在の色をコピーします" +1 "コピーしてある色を現在の色にペーストします"
+  Geometry, textures and fonts of the frame: UNKNOWN in this slice (shared with OPTION etc.).
+
+1.5 Per-update prologue used by both tasks                                    OBSERVED
+  0x17eab0() (-> 0x12f050: loads the menu texture set once before the loop),
+  0x17c210() each update: zeroes the float at 0x12d3850 and the float at 0x4ee54c
+  (depth allocator: 0x17c228(z) returns z - g_12d3850 and adds the constant at 0x5f1f08).
+  0x112a28(0) ends the update (task yield).
+
+2. SPIRITS EDIT
+---------------
+2.1 Entry, task, exit                                                         OBSERVED
+  0x13ad40: 0x13acd8(); tail-call 0x1e7b40.
+  0x13acd8: printf(0x5e1c60, 0x6000); memset(0x124a1c0, 0, 0x18000);
+            0x1126f0(priority 0x32, handler 0x13ada0, stack 0x124a1c0, stackSize 0x6000, 0x20,
+            tag 0x1451).
+  Destructor 0x13ad60: for tag in 0x1451..0x14b4: 0x11e3a0(tag); 0x112a70(tag).
+  Exit: only one path. State -1 waits for the slot menu slide to finish, then
+  0x10f158() (memory-card auto-save; it returns immediately when word 0x5735c8 == 0),
+  0x1252f0(1, 0, 0x13ad60, 0x127940). 0x127940 is the title/mode-menu scene entry (creates
+  task 0x127a88, priority 0x14, tag 0xbbe). The mode word is not changed by this scene.
+
+2.2 Data                                                                      OBSERVED
+  Working table 0x4d7068: 8 slots x 16 bytes ("祭スピリッツ１..８"); the ELF image is all zero.
+  Save copy: save block 0x5735c8 (size 0x65a8, cleared by 0x10f000) offset 0x633c = 0x579904,
+  0x80 bytes. 0x152700 copies working -> save (called by 0x152658 and by the save path
+  0x1b8d1c); 0x1526a8 copies save -> working (load path 0x1b8bb4).
+  0x152658 (boot/default, from 0x10f05c): each slot = 0x152898(slot) then 0x152700.
+  0x152898 default descriptor: byte[c] = index of the first option of category c, then
+  byte0 = 2, byte1 = 5, byte2 = 9, byte4 = 0x16, byte14 = 0x2c:
+      {2,5,9,10,22,23,26,29,31,33,35,37,39,41,44,45}   (cost 8+8+12+4+18 = 50)
+  0x1527c8(slot, out16) reads a slot; 0x152830(slot, in16) writes a slot (both print an
+  error through 0x316140 and do nothing when slot >= 8).
+  Byte 0x43d0ed: number of selectable slots is 8 when non-zero, otherwise 6 (0x13ae2c here;
+  0x130390/0x1303f0/0x1333b4/0x13351c/0x1337d0 in character select). Setter 0x1e4778(1)
+  (writes 1; any other argument writes 0); no direct caller found: unlock condition UNKNOWN.
+  Network: 0x152e30 packs the working table into 8 x 4 words, 0x152f08(player, words)
+  unpacks into 0x12d2308 + player*0x80 (out of scope).
+
+2.3 Descriptor layout and option table                                        OBSERVED
+  A descriptor is 16 bytes; byte c holds the GLOBAL option index chosen for category c.
+  Option table 0x4d6e30: 47 entries x 12 bytes {u8 category; s8 cost; u16 0; char* romaji;
+  char* japanese}. Category name table 0x4d6db0: 16 x {char* romaji; char* japanese}.
+  Extraction: file offsets via Elf.offset(0x4d6e30) (0x234 bytes) and Elf.offset(0x4d6db0)
+  (0x80 bytes); strings are Shift-JIS.
+
+  cat name (romaji / jp)              idx cost romaji              jp
+   0  GAUGE SYSTEM / ゲージ上昇         0   0  NON                 なし
+                                        1   3  DAMAGE              ダメージ
+                                        2   8  ATTACK              攻撃
+                                        3  16  DAMAGE + ATTACK     ダメージ＋攻撃
+   1  BUKI TOBASHI / ゲージＭＡＸ技     4   0  NON
+                                        5   8  BUKI TOBASHI        武器飛ばし
+                                        6  14  BUKI HAKAI          武器破壊
+   2  HI OHGI / 秘奥義                  7   0  NON
+                                        8   6  SHIN TYPE           一試合に一回
+                                        9  12  KEN TYPE            ゲージ使用
+   3  AB BUTTON / 弱斬り＋中斬り技     10   0  NON
+                                       11  28  CHOU GIRI           超斬り
+                                       12  12  IKARI TAME          怒り溜め
+                                       13  20  RENZAN              連斬
+                                       14   6  MEISOU              瞑想
+                                       15  10  KANZEN GUARD        完全ガード
+   4  E BUTTON / 特殊行動              16   0  NON
+                                       17   8  KEN                 見切りスライド
+                                       18  12  KEMONO              連続見切り
+                                       19   8  ZERO                回避
+                                       20   6  SHIN                回避・飛び込みなし
+                                       21   6  TEN ZAN             避け・回り込み
+                                       22   4  MA                  前転・後転
+   5  KYOUTI / 無の境地                23   0  NON
+                                       24  18  KYOUTI              あり
+                                       25  24  KYOUTI + ISSEN      あり＋一閃
+   6  IKARI BAKUHATSU / 怒り爆発       26   0  NON
+                                       27  12  BAKUHATSU           あり
+                                       28  20  BAKUHATSU + ISSEN   あり＋一閃
+   7  GAUGE MAX / ゲージＭＡＸ持続     29   0  NON        30  15  ZAN               あり
+   8  IKARI MAX / 怒り頂点動作         31   0  NON        32   3  IKARI MAX DOUSA   あり
+   9  NUIGURUMI / ぬいぐるみ           33   0  NON        34   2  NUIGURUMI HENKA   あり
+  10  AIR GUARD / 空中ガード           35   0  NON        36   8  AIR GUARD         あり
+  11  LONG SLEEP / しんだふり          37   0  NON        38   8  LONG SLEEP        あり
+  12  GUARD NG / ガード不可            39   0  NON        40  -8  NO GUARD          あり
+  13  OPENING MOVE / 開幕行動          41   0  NON        42  12  OPENING MOVE      あり
+  14  SUPER CANCEL / サムライドライブ  43   0  NON        44  18  SUPER CANCEL      あり
+  15  CHAIN COMBO / ＳＣＳ             45   0  NON        46  60  CHAIN COMBO       あり
+
+  Point budget (0x152908 / 0x152948):
+    used(desc)        = sum over the 16 bytes of option[desc[c]].cost (signed)
+    remaining(desc,s) = (s < 6 ? 50 : 300) - used(desc)        (slots 0..5: 50, slots 6,7: 300)
+  NO GUARD has cost -8, i.e. it refunds 8 points.
+
+2.4 Task 0x13ada0 - objects on the task stack                                  OBSERVED
+  frame (sp+0x20): 0x1822a0; 0x182318(frame, 1).
+  slot menu M (sp+0x190): 0x20e570; slide (-0x130,0x50) -> (0x10,0x50), 16 frames; list flag
+      0x10000; if byte 0x43d0ed != 0: 0x20e738(M, 0x4ca250, 8) (8 rows, 8 visible) else
+      0x20e5d8(M,6,6) + rows 0..5 from 0x4ca250.
+  editor E (sp+0xa00): 0x20d6f8(E, frame+0x60); then 0x20db50(E) (retracted, inactive).
+  summary slide S (sp+0xea0): (0x2c2,0x70) -> (0xe2,0x70), 16 frames, started retracted.
+  cur = -1, next = 7.
+
+  State machine (cur at $s5, next at $s0):
+
+       +--------------------+ confirm (4)  +----------------------+
+  ---> | 7 slot list        |------------->| 8 editor             |
+       | menu + summary in  |<-------------| (categories/options) |
+       +--------------------+  editor      +----------------------+
+              | cancel (5)     returns 5
+              v
+       +--------------------+ slide done: 0x10f158(); 0x1252f0(1,0,0x13ad60,0x127940); next=-2
+       | -1 closing         |
+       +--------------------+
+
+  Per update, in this order:
+    seat = 0x178f90(); 0x118128(seat) (result unused); 0x17c210(); 0x1825b8(frame);
+    0x17f330(S); ev0 = 0x20ee70(M, 0x178f90()); ev1 = 0x20d818(E, 0x178f90());
+    if next != cur:                                     (entry actions)
+        7:  0x182648(frame); 0x17f468(M.slide); M.visible = 1; 0x17f468(S); M.active = 1;
+            0x20db50(E); 0x1827c0(frame, 0x21, 1)
+        8:  if cur < 8: 0x20d7a0(E, M.cursor);          (load the slot)
+            0x20db00(E); 0x17f4b0(M.slide); M.active = 0; 0x17f4b0(S)
+        -1: 0x17f4b0(M.slide); M.active = 0; 0x17f4b0(S); 0x1826b0(frame)
+        cur = next
+    else:                                               (state update)
+        7:  ev0 == 4 -> next = 8;  ev0 == 5 -> next = -1
+        8:  ev1 == 5 -> next = 7   (ev1 == 4 is ignored here)
+        -1: if 0x17f400(M.slide): 0x10f158(); next = -2;
+                0x1252f0(1, 0, 0x13ad60, 0x127940)
+        if next != cur: M.active = 0; 0x20db90(E, 0)    (inputs disabled for this update)
+    draw: 0x20d9f8(E); 0x20ef38(M); 0x182600(frame); 0x17eac8(S.curX, S.curY, M.cursor);
+    0x112a28(0).
+  There is no "discard changes" path: every confirmed option is written to 0x4d7068
+  immediately (2.5); cancel only leaves the current list.
+
+2.5 Editor E (ctor 0x20d6f8)                                                   OBSERVED
+  Layout of E: +0 category panel (0x20cd00; 0x20cd68(panel,0x10,9); slide +0x1c:
+  (-0x1d4,0x70) -> (0xc,0x70)); +8 title pointer = E+0x450; +0x50 category list cursor;
+  +0x1f8 option panel (title 0x6647b8 "POINT MENU"; slide +0x214: (0x320,0xbe) ->
+  (0x190,0xbe), retargeted by 0x20dcd8); +0x248 option list cursor with disabled bitmap at
+  +0x3ec; +0x3f0 slot; +0x3f4 focus (0 categories, 1 options); +0x3fc first[16] (global index
+  of the first option of each category); +0x43c help-line widget; +0x440 desc[16] (working
+  copy); +0x450 char title[] = sprintf("POINT = %2d", remaining).
+  0x20d7a0(E, slot): +0x3f0 = slot; category row count (+0x5c) = slot < 6 ? 15 : 16 (the
+      CHAIN COMBO category is not listed for the 50-point slots); category cursor = 0;
+      0x1527c8(slot, desc); 0x20dbc8(E); 0x20dcd8(E, cursor).
+  0x20dbc8(E) refresh: for c in 0..15: 0x20ce48(panel, c, categoryJapaneseName[c],
+      option[desc[c]].japanese, option[desc[c]].cost); first[c] = index of first option with
+      category c; panel width 0x182; +0x6c = 0x10; +0x70 = 0x12;
+      title = "POINT = %2d" with 0x152948(desc, slot).
+  0x20dcd8(E, c) build option list for category c:
+      avail = 0x152948(desc, slot) + option[desc[c]].cost
+      n = number of options with category c; 0x20cd68(optionPanel, n, n)
+      for each option o of category c, row r: 0x20ce48(optionPanel, r, o.japanese, 0, o.cost);
+          row r is ENABLED when (o.cost <= avail) or (o.cost < 0), otherwise DISABLED
+      option cursor = desc[c] - first[c]; option panel is positioned next to the highlighted
+      category row (target Y = categorySlideY + (cursor - scroll)*0x15, clamped so that the
+      panel bottom stays inside the category panel; X = 0x272 - panelWidth limited to 0x1b0;
+      for c == 4 the panel is 9 narrower and +0x264 is decremented) and slid in.
+  0x20d818(E, seat) update -> event:
+      a = 0x17f330(E.slide); b = 0x17f330(E.optionSlide)
+      focus == 0 (categories): if a == 0 { visible = active = 0; return 0 }; a must be 1 and
+          E.active (+0x18) non-zero, otherwise return 0.
+          ev = 0x20e128(categoryList, seat); scroll maintenance;
+          ev == 4: active = 0; focus = 1; 0x20dcd8(E, cursor); optionActive(+0x210) = 1;
+                   0x20dfa8(E); return 4
+          ev in 1..3: 0x20dcd8(E, cursor); 0x20dfa8(E); return ev
+          otherwise return ev (5 = leave the editor, handled by the task)
+      focus == 1 (options): b == 0 -> option visible/active cleared, return 0; requires b == 1,
+          +0x20c and +0x210 non-zero.
+          ev = 0x20e128(optionList, seat); scroll maintenance;
+          ev == 4: 0x20df58(E): desc[c] = first[c] + optionCursor; 0x152830(slot, desc)
+                   (write to 0x4d7068); 0x20dbc8(E);
+                   then focus = 0; active = 1; optionActive = 0; 0x20dfa8(E); return 0
+          ev == 5: focus = 0; active = 1; optionActive = 0; 0x20dfa8(E); return 0
+          ev in 1..3: 0x20dfa8(E); return 0
+          A disabled row answers confirm with event 6 (reject sound 0x24) and nothing changes.
+  0x20dfa8(E): help text = 0x182268(E+0x43c widget, focus ? 0x10 + categoryCursor : 0xf,
+      focus ? optionCursor : categoryCursor)   (ids of section 1.4; for focus 0 the sub index
+      is the category cursor, register $a2 = +0x64).
+  0x20db00 show (both slides in, active = 1, focus = 0), 0x20db50 hide,
+  0x20db90(E, on) restore/clear the active flag of the focused list.
+  0x20d9f8 draw: both panels through 0x20d2e8, then the title text at (panelX + width - 0xbc
+  + 11, panelY - 0x20 + ...) with 0x17e228; exact primitives not transcribed.
+
+2.6 Summary panel 0x17eac8(x, y, slot)                                         OBSERVED/partial
+  Draws sprite set 5 entry 0x4c9120 and the icon list produced by 0x152988(out, slot)
+  (the same routine is used by character select at 0x133ca8). 0x152988 reads the descriptor
+  through 0x152758(0, slot) and emits up to 17 pairs (group s16 at out+2k, icon s16 at
+  out+0x22+2k), -1 terminated:
+    byte0: 0->(0,10) 1->(0,6) 2->(0,7) 3->(0,8)      byte1: 4->(1,10) 5->(1,11) 6->(1,12)
+    byte2: 7->(2,10) 8->(2,13) 9->(2,14)
+    byte3: 10->(3,10) 11->(3,15) 12->(3,16) 13->(3,17) 14->(3,18) 15->(3,19)
+    byte4: 16->(4,10) 17->(4,20) 18->(4,21) 19->(4,22) 20->(4,23) 21->(4,25) 22->(4,24)
+    byte10 == 0x24 -> (0x21, 0x2a)
+    byte5: 0x18->(5,0x23) 0x19->(5,0x25)             byte6: 0x1b->(5,0x24) 0x1c->(5,0x26)
+    byte7 == 0x1e->(5,0x1f)  byte8 == 0x20->(5,0x20)  byte9 == 0x22->(5,0x1c)
+    byte11 == 0x26->(5,0x28) byte12 == 0x28->(5,0x1b) byte13 == 0x2a->(5,0x1e)
+    byte14 == 0x2c->(5,0x29) byte15 == 0x2e->(5,0x27)
+  Icon geometry/texture: UNKNOWN (0x17eac8 body after 0x17eb5c not transcribed).
+
+2.7 Selection in character select and use in battle                           OBSERVED/INFERRED
+  Character select keeps the chosen custom slot at 0x4c8d18 + side*0x34 + 0x30. Left/right
+  on the 祭 spirit steps it with wrap over 6 or 8 slots (0x130368..0x13041c; 8 when byte
+  0x43d0ed != 0); the stepping is skipped when 0x118420() != 0 (0x4c38a8 == 5 or 6). The
+  full state machine of that selector belongs to the character-select port (not read here).
+  Battle: actor configuration block cfg = actor+0x10c {+0 system, +4 player, +8 character,
+  +0xc custom slot, ...}. 0x14f4e0(cfg) returns NULL unless cfg.system == 6, otherwise
+  0x152758(cfg.player, cfg.slot):
+      slot >= 8 -> error print, NULL
+      0x4c38a8 == 6 -> 0x12d2308 + (player*8 + slot)*16     (network copy)
+      else          -> 0x4d7068 + slot*16                   (the edited table itself)
+  Where cfg+0xc is copied from the select record: UNKNOWN (not traced).
+  All battle-side descriptor readers (each calls 0x14f4e0; "stock" = the test applied when the
+  system is not 6 or, for the "==" rows, when the byte does not match):
+
+  reader    byte  custom condition          stock systems     callers
+  0x14eb78   3    == 14 (MEISOU)            else 0x14f8b0     0x11e568 0x11e618 0x11e648 0x11e7ac
+                                                              0x11f00c 0x11f3cc 0x142130 0x1422a8
+                                                              0x143dec 0x14ec38   (returns cfg+0x30)
+  0x14ebd0   2    == 9                      5                 0x14eeac 0x14eefc 0x1758c0 0x1802c0
+                                                              0x1be198            (returns cfg+0x40)
+  0x14f518   6    0x1b -> 1, 0x1c -> 0      3 -> 0, 4 -> 1,   0x11f2e4            (tri-state)
+                                            others -> -1
+  0x14f588   7    == 0x1e                   2                 0x14ad0c 0x1be774 0x1be9ec 0x1c18bc
+                                                              0x1c1984 0x1c1a2c
+  0x14f5d8   4    0x11,0x12 -> 5; 0x13 -> 4; (system itself;  0x14c110 0x150434 0x150e10 0x15c588
+                  0x14 -> 1; 0x15 -> 2;      8 -> 5)          0x179c40   (effective system column)
+                  0x16 -> 7; other -> 6
+  0x14f680   0    1 or 3                    not 5 and not 6   0x1a4308 0x1a455c (0 when cfg+0x14 != 0)
+  0x14f6e8   0    2 or 3                    7, 5              0x11ea64 0x14f66c 0x14f750 0x14f774
+  0x14f780   7    == 0x1e                   2                 0x14ed9c
+  0x14f7d0  13    == 0x2a                   never             0x14bb64
+  0x14f810   3    == 15                     5                 0x1a49c0 0x1a4a18
+  0x14f860  10    == 0x24                   2                 0x161a08
+  0x14f8b0   5    0x18 or 0x19              4                 0x14eba8 0x159d90 0x179c10
+  0x14f908   6    0x1b or 0x1c              3, 4              0x159bd4 0x179b18
+  0x14f968   3    == 12                     2                 0x11eb84 0x14f1bc
+  0x14f9b8   4    0x11 or 0x12              8, 5              0x15d820 0x16e624 0x173fd0 0x1740a0
+                                                              0x1749e0 0x174a64 0x174ad0
+  0x14fa18   1    == 6                      7, 1              0x168770 0x1fef9c 0x2006b0 0x206570
+  0x14fa70   8    == 0x20                   1                 0x149abc
+  0x14fac0   3    == 11                     0                 0x15d0c0 0x1621f4 0x162994 0x2115b8
+  0x14fb08   3    == 13                     3                 0x15d0e8 0x16222c 0x1629d8 0x2110ac
+                                                              0x211274 0x211658
+  0x14fb58   1    != 4                      1,2,3,4,5,7,8     0x162afc 0x179cc0 0x2116d0
+  0x14fbd8   2    != 7                      1, 5              0x162cd0 0x179c8c 0x2116c4
+  0x14fc30   2    == 8                      1                 0x173048 0x175884 0x1794b8 0x179c9c
+                                                              0x1804e0
+  0x14fc80  12    == 0x28                   8                 0x151438 0x155900 0x15c5a8 0x15d810
+  0x14fcd0  15    == 0x2e                   8                 0x14c3c4 0x159230 0x15f794 0x162474
+  0x14fd20  11    == 0x26                   8                 0x15ad18 0x170d04
+  0x14fd70   4    == 0x12                   never             0x14c11c 0x15ae7c 0x15af30
+  0x14fdb0  14    == 0x2c                   never             0x14c648 0x159140
+  Direct 0x14f4e0 users not decoded here: 0x17596c (in 0x1758e8) and 0x179ae8 (in 0x179ac8).
+  The native port already consumes these bytes (src/input_bindings.cpp, action_selection.cpp,
+  input_routes.cpp, state_transition.cpp, state_callbacks.cpp, special_requests.cpp,
+  combat_decision.cpp); what is missing is the source of InputSystemConfig::descriptor, which
+  is the 0x4d7068 slot selected above.
+  Bytes 9 (NUIGURUMI) and the HUD-only meaning of the icon ids have no reader in the table
+  above other than 0x152988: their battle readers are UNKNOWN (probably inside the two
+  undecoded users or behind 0x14f5d8-style column substitution).
+
+3. COLOR EDIT
+-------------
+3.1 Entry, task, exit                                                          OBSERVED
+  0x13b160: 0x13f710(); 0x13b100(); tail-call 0x1e7b40.
+  0x13f710: allocates (0x110aa0, once; pointers 0x4d3d00..0x4d3d14, sizes 0x464, 0x30,
+            0x1e58, 0x270, 0x71a4, 0x9898) and clears the battle work buffers, then 0x154350.
+            It is the same routine battle setup uses (other caller 0x125048); the preview
+            fighter is a real character object.
+  0x13b100: printf(0x5e1c88, 0x4000); memset(0x12621c0, 0, 0x10000);
+            0x1126f0(0x32, 0x13b1c8, 0x12621c0, 0x4000, 0x20, 0x1451).
+  Destructor 0x13b188: same tag loop 0x1451..0x14b4 as SPIRITS EDIT.
+  Exit: state -1, when the character menu slide has finished: 0x10f158() (auto-save),
+  0x1252f0(1, 0, 0x13b188, 0x127940) (back to the title/mode-menu scene).
+
+3.2 Palette storage                                                            OBSERVED
+  pal_all.bin is loaded at 0x408a40 (0x115208, size 0x41000). Index: key = character*5 +
+  colourNumber; bank b (0..31) of 16 u16 entries at 0x408a40 + ((key*32 + b)*16)*2.
+  Editable table "edit_pal_tbl" = save block + 4 = 0x5735cc, size 0x6180 bytes
+  (52 characters x 0x1e0; the code iterates characters 0..50 only):
+      entry(character, colour 0..4, storedBank 0..2, i 0..15) =
+          u16 at 0x5735cc + ((character*5 + colour)*0x30 + storedBank*16 + i)*2
+  stored bank 0 = pal_all bank 0, stored bank 1 = pal_all bank 1, stored bank 2 = pal_all
+  bank aux(character), where aux = byte table 0x4ca9a8[character] (0x13be78; 0xff means "use
+  bank 2"): non-0xff values: 1:20 2:22 4:20 11:3 16:26 19:21 24:20 33:23 34:25 42:20 45:20.
+  Runtime copies: 0x3ec740 (player 1) and 0x3f28c0 (player 2), same layout. 0x115498 (boot,
+  from 0x10f024) fills the save table and both runtime copies with the pal_all defaults and
+  resets the palette cache; 0x115238(player) refills one runtime copy with defaults. The
+  VS memory-card loader (state table 0x573548, 0x1b67b0..0x1b68xx) copies 0x6180 bytes from
+  the loaded card image + 4 (0xdf1044) into 0x3ec740 or 0x3f28c0 depending on the port
+  being read, and 0x1b6460 copies 0x3ec740 -> 0x3f28c0 when word 0x132cc18 == 1 (INFERRED:
+  both players share one card). Which path fills 0x3ec740 for ARCADE/PRACTICE/SURVIVAL:
+  UNKNOWN (no other writer of 0x3ec740 exists besides 0x115238/0x115498/0x1b6xxx).
+  Colour format: u16, bit 15 set on every value written by the editor; three 5-bit fields
+  at bits 0-4, 5-9 and 10-14. The editor converts with
+      word = 0xff000000 | f(10-14) << 19 | f(5-9) << 11 | f(0-4) << 3     (0x13c9f8)
+      u16  = 0x8000 | (word >> 9 & 0x7c00) | (word >> 6 & 0x3e0) | ((word & 0xff) >> 3)  (0x13ca58)
+  Only entries 1..15 of a bank are shown/edited (entry 0 is never touched).
+
+  Palette key decoding in the cache allocator 0x115d40(key, bank) -> cache slot:
+      owner = (key >> 16) & 3; k = key & 0xffff; character = k / 5
+      owner == 0: source pal_all bank `bank` of key k.
+      owner != 0: if bank == aux(character) (or, for character 33 only, bank == aux or
+                  aux + 1) then bank = 2. If bank < 3 the source is
+                    owner 1: key & 0x40000 ? 0x3ec740 : key & 0x80000 ? 0x1232c80 : 0x5735cc
+                    owner 2: key & 0x40000 ? 0x3f28c0 : key & 0x80000 ? 0x1232ce0 : 0x5735cc
+                  at offset (k*3 + bank)*0x20 (the 0x1232c80/0x1232ce0 buffers are indexed by
+                  bank only); otherwise pal_all as for owner 0.
+      The slot is looked up/allocated in a 24-entry cache (identity words 0x439a48, reference
+      words 0x439aa8, busy words 0x439b08, physical slot numbers 0x5dd5c8) and uploaded by
+      0x116478; the cached colours live at u16 0x43ab70[slot*16 + i].
+  The editor uses keys (character*5 + colour) | 0x10000, i.e. it draws directly from the save
+  table 0x5735cc. Character select uses 0x40000 | owner bits (src/character_select.cpp
+  already produces palette = 0x40000 + index + (custom ? (side ? 0x20000 : 0x10000) : 0)).
+
+3.3 How an edited colour is chosen in character select / battle               OBSERVED+INFERRED
+  The five colour numbers 0..4 are the five confirm buttons of character select, in the
+  order of the native table paletteButtons = {0x400, 0x200, 0x2, 0x4, 0x400000}
+  (src/character_select.cpp, original 0x129db0). Holding SELECT (pad.held & 0x80000) while
+  pressing one of them selects the EDITED palette of that button for that side (control bits
+  shifted by 6, or by 16 together with held 0x100000); without SELECT the stock palette is
+  used. The edit menu labels its five rows "ボタンカラー" with the matching button glyphs
+  (0x59cd58). The battle readers of the key are the character draw path (0x115d40 callers
+  0x121ecc, 0x122ae8). Network mode additionally sends the three banks through 0x115ae0
+  (from 0x129fb8) into 0x1232c80 + player*0x60.
+
+3.4 Per-character preview table and helpers                                    OBSERVED
+  0x4ca278: 51 used entries x 0x24 bytes {s32 id; s32 action0, record0; action1, record1;
+  action2, record2; action3, record3} (action -1 = part not present; record is 1-based).
+  Decoded values (id: a0,r0 a1,r1 a2,r2 a3,r3):
+     0: 1,1 500,2 466,5 -1,1     1: 1,1 502,9 466,1 769,1    2: 1,1 501,15 466,1 773,1
+     3: 1,1 504,1 466,4 -1,1     4: 1,1 502,5 466,1 769,1    5: 1,1 498,1 466,8 -1,1
+     6: 1,1 496,1 466,3 -1,1     7: 1,1 496,8 466,1 -1,1     8: 1,1 504,1 466,1 -1,1
+     9: 1,1 498,1 466,1 -1,1    10: 1,1 498,3 466,2 -1,1    11: 1,1 496,6 466,1 466,1
+    12: 1,1 506,4 466,1 -1,1    13: 1,1 502,45 466,1 -1,1   14: 1,1 498,4 466,4 -1,1
+    15: 1,1 502,3 466,5 -1,1    16: 1,1 502,4 466,5 595,1   17: 1,1 498,6 466,5 -1,1
+    18: 1,1 496,1 466,5 -1,1    19: 1,1 492,1 466,1 769,1   20: 1,1 496,1 467,1 -1,1
+    21: 1,1 496,5 467,1 -1,1    22: 1,1 498,7 466,2 -1,1    23: 1,1 496,3 466,3 -1,1
+    24: 1,1 498,3 466,2 769,4   25: 1,1 466,2 -1,1 -1,1     26: 1,1 496,4 466,7 -1,1
+    27: 1,1 498,1 466,8 -1,1    28: 1,1 135,15 466,3 -1,1   29: 1,1 495,8 466,5 -1,1
+    30: 1,1 502,9 466,1 -1,1    31: 1,1 504,2 466,1 -1,1    32: 1,1 559,3 466,6 -1,1
+    33: 1,1 15,1 466,1 897,1    34: 1,1 502,2 466,1 769,1   35: 1,1 498,6 466,6 -1,1
+    36: 1,1 498,8 467,1 -1,1    37: 1,1 498,4 466,2 -1,1    38: 1,1 494,2 466,8 -1,1
+    39: 1,1 498,7 466,8 -1,1    40: 1,1 502,2 466,2 -1,1    41: 1,1 502,25 466,1 -1,1
+    42: 1,1 500,12 466,1 769,1  43: 1,1 495,8 -1,1 -1,1     44: 1,1 498,7 -1,1 -1,1
+    45: 1,1 498,1 -1,1 769,1    46: 1,1 498,5 -1,1 -1,1     47: 1,1 501,3 -1,1 -1,1
+    48: 1,1 623,11 -1,1 -1,1    49,50: all actions -1
+  0x4ca9e0: s32[51] weapon preview Y offsets: -12,-16,-16,-8,0,0,-8,-24,-40,-8,0,0,-48,-12,-24,
+     8,-48,-48,-12,-16,-16,-16,0,0,-8,-4,20,-8,-8,-20,20,-12,0,0,-12,12,-32,0,-4,0,0,0,-16,
+     then zeros.
+  Parts: 0 body, 1 body (second pose), 2 weapon, 3 other, 4 whole-figure check.
+  0x13c880(character, part) "part exists": part 0 -> action0 != -1; 1 -> action1 != -1;
+     2 -> action2 != -1; 3 -> action3 != -1; 4 (and >= 5) -> 1.
+  Stored bank of a part: part 3 -> 2; part 2 -> (character != 25 ? 1 : 0); parts 0, 1 -> 0.
+  Word 0x4caaac (static 0, no writer found) is added to aux(character) for the part-3 source
+  bank (0x13caf0, 0x13cc08).
+
+3.5 Task 0x13b1c8 - objects on the task stack                                  OBSERVED
+  frame            sp+0x20    0x1822a0; 0x182318(frame, 2)
+  character menu A sp+0x190   0x20eae0(A, 6, 0, 0, 0, 0); slide (-0x130,0x50)->(0x10,0x50)
+  colour menu B    sp+0xa00   list flag 0x10000; 0x20e738(B, 0x4ca228, 5);
+                              slide (-0x130,0xec)->(0x10,0xec)
+  copy menu C      sp+0x1270  list flag 0x10000; 0x20e738(C, 0x4ca240, 5) -> 2 rows
+                              ("色をコピー","色をペースト"); slide (0x2e4,0x82)->(0x1a4,0x82)
+  part selector P  sp+0x1ae0  0x20be68 (list flags: bit 0x1 cleared, bit 0x2 set -> left/right);
+                              slide (-0x130,0x30)->(0x10,0x30); +0x6c character, +0x70 row
+                              count, +0x74 partId[5]; 0x20bf58(P) = partId[cursor]
+  swatch row R     sp+0x1b70  0x20f4d8: list range [0,15), step 1, page 4, left/right;
+                              +0x6c colour words[15]; slide (0x280,0x30)->(0x140,0x30)
+  slider S         sp+0x1c20  0x20f898: channel list +0x50 range [0,3) up/down wrapping
+                              (page -1); value list +0x6c range [0,0x20) step 1 page 8,
+                              left/right, confirm and cancel disabled (flags 0x10|0x20);
+                              +0x88..0x8a current fields (bits 10-14, 5-9, 0-4 of the u16),
+                              +0x8b..0x8d backup, +0x90 clipboard word (initial 0x00f8f8f8),
+                              +0x94 copy/paste highlight; slide (0x280,0xce)->(0x140,0xce)
+  dialog D         sp+0x1cc0  0x212820, message 0x5e1cb0 "デフォルトカラーに戻しますか？"
+                              (ctor default 0x665240 "よろしいですか？"); 2 rows, left/right;
+                              slide configured (1,0)->(0,0), 16 frames
+  preview objects  obj1 ($fp), obj2 (sp+0x1d30), obj3 (sp+0x1d34): each 0x11e2e8(0x1451)
+                   + 0x11d528.
+  Init order after the widgets: 0x13f8a8() (camera 0x122e98/0x122eb8 with constants
+  0x5e9ad0..0x5e9ae0, 0x10add8(0x10000|n,0x10) n = 0..2, 0x123fd0); 0x13be98()
+  (0x11d448(); 0x11d4f8(); word 0x124a180 = 1; word 0x124a184 = 0); 0x13bed0(0)
+  (0x11d488(1, 0): load character 0 into resource slot 1; 0x124a184 = 1); 0x1159d0()
+  (palette cache reset); obj1: 0x11d668(obj1, 0, 0x190, 0, 0x290000), 0x11d908(obj1,3,1,0);
+  obj2: 0x11d570(obj2, 0xb, 0, 0, 0x210000), 0x11d908(obj2,0,1,0); obj3: same,
+  0x11d908(obj3,0xa4,1,0); 0x17eab0(). cur ($s3) = -1, next ($s5) = 0.
+
+3.6 State machine                                                              OBSERVED
+
+   -1 closing <--cancel-- 0 character --confirm--> 1 colour number --confirm--> 2 part
+                          ^                |  ^                         |  ^
+                          +----cancel------+  +---------cancel----------+  |
+                                                                           |
+        2 part --confirm (parts 0..3)--> 3 swatch --confirm--> 4 sliders   |
+          |  ^                            | ^  ^                 |         |
+          |  +---------cancel-------------+ |  +--confirm/cancel-+         |
+          | SELECT (part != 4, part exists) | SELECT                       |
+          v                                 v                              |
+        6 "reset to default?" dialog      5 copy/paste menu                |
+          | yes: restore part, -> 2         | confirm: copy or paste, -> 3 |
+          | no / cancel / SELECT: -> 2      | cancel / SELECT: -> 3        |
+          +---------------------------------+------------------------------+
+
+  Per update, in this order:
+    seat = 0x178f90(); pad = 0x118128(seat); 0x17c210(); 0x1825b8(frame);
+    evA = 0x20ee70(A, 0x178f90()); evB = 0x20ee70(B, ..); evC = 0x20ee70(C, ..);
+    evP = 0x20bf70(P, ..); evR = 0x20f5b8(R, ..); evS = 0x20fa40(S, ..);
+    evD = 0x2128f8(D, ..);     (each call re-evaluates 0x178f90(); an inactive widget
+                                returns 0, so only the active one consumes input)
+    ch = 0x20ee20(A)           (character id under the A cursor)
+    sel = pad.pressed & 0x80000
+    colour = B.cursor; part = 0x20bf58(P); idx = R.cursor
+    if next != cur: entry actions (below); cur = next      [no state update this frame]
+    else: state update (below); if next != cur: clear the active flag of A, B, C, P, R, S, D
+    preview update (3.8); 0x20fb50(S, cur == 5 ? C.cursor + 1 : 0);
+    draw: 0x20c038(P); 0x20f680(R); 0x20fb58(S); 0x20ef38(A); 0x20f360(B); 0x20ef38(C);
+          0x182600(frame); 0x2129d0(D); 0x112a28(0)
+
+  Entry actions (word sp+0x1d38 "portrait visible" is zeroed first, then):
+    -1: A slides out, inactive; 0x1826b0(frame).
+     0: portrait = 1; 0x182648(frame); 0x182318(frame,2); A in, visible, active; B out,
+        inactive; if cur < 0 (first entry only, not when returning from state 1): 0x1159d0();
+        0x11d668(obj1, ch, 0x190, 0, 0x290000); 0x11d908(obj1, 4, 1, 0).
+        help 0x1827c0(frame, 0x23, 0).
+     1: 0x182318(frame,2); portrait = 1; 0x182648(frame); A in, visible, inactive; B in,
+        visible, active; P, R, S out and inactive; 0x182828(frame);
+        if cur > 1 (returning): 0x13be98(); 0x11d908(obj1, 4, 1, 0).  help (0x24, 0).
+     2: 0x182318(frame,3); 0x182648(frame); frame header (+0x10) slid out and hidden;
+        0x1827d8(frame, 0xb); P in, visible, active; R in, visible, inactive; S in, visible,
+        inactive; A, B, D out and inactive;
+        if cur < 2 (arriving from 1): 0x1159d0(); 0x13bed0(ch) (load character ch into
+            resource slot 1); 0x11d570(obj2, 0xb, 0xfa, 0x3c, 0x210000); 0x11d908(obj2,0,1,0);
+            0x11d570(obj3, 0xb, 0, 0, 0x210000); 0x11d908(obj3,0xa4,1,0); 0x13c720(P, ch).
+        always: 0x13c928(R, ch, part, colour); 0x13c8f0(S, R);
+            help (0x25, (ch == 11 && part == 3) ? 2 : part); 0x13ccf0(frame, part).
+     3: 0x1827d8(frame, 0xc); 0x1827f0(frame); P visible inactive; R visible ACTIVE;
+        S visible inactive; C out, inactive; if cur > 3: 0x13c928(R, ch, part, colour);
+        always 0x13c8f0(S, R); help (0x26, 0).
+     4: P, R visible inactive; S visible ACTIVE; help (0x27, 0); 0x182828(frame).
+     5: 0x1827d8(frame, 0xd); 0x1827f0(frame); C in, visible, active; P, R, S visible
+        inactive; help (0x28, C.cursor).
+     6: 0x1827d8(frame, 0xd); 0x1827f0(frame); P inactive; D in, visible, active;
+        D cursor = 1 ("no"); D scroll recomputed.
+  0x13c720(P, ch): rows = 3 + (part 2 exists) + (part 3 exists); partId = {0, 1, [2], [3], 4};
+        all rows enabled except the LAST row (part 4), which is disabled, so confirming on
+        "whole-figure check" produces event 6; cursor = 0.
+  0x13c928(R, ch, part, colour): when the part does not exist or part == 4 all 15 swatches
+        are 0xff000000; otherwise swatch i = convert(entry(ch, colour, storedBank(part), i+1)).
+  0x13c8f0(S, R): 0x20f998(S, R.swatch[R.cursor]) (fields, backup and the value cursor).
+  0x13ccf0(frame, part): part == 4 -> hint 0x5e1d90 "BP選択 BXBS戻る" and 0x182828(frame);
+        otherwise hint 0x5e1da0 "BP選択 BOBT決定 BXBS戻る" and 0x1827f0(frame).
+
+  State updates:
+    -1: if 0x17f400(A.slide): 0x10f158(); next = -2; 0x1252f0(1,0,0x13b188,0x127940).
+     0: evA == 4 -> next = 1; evA == 5 -> next = -1;
+        evA in 1..3 -> 0x1159d0(); 0x11d668(obj1, ch, 0x190, 0, 0x290000);
+                       0x11d908(obj1, 3, 1, 0).
+     1: evB == 4 -> next = 2; evB == 5 -> next = 0; evB in 1..3 -> 0x1159d0().
+     2: evP == 4 -> next = 3; evP == 5 -> next = 1;
+        evP in 1..3 -> 0x13c928(R, ch, part, colour); 0x13c8f0(S, R);
+                       help (0x25, (ch == 11 && part == 3) ? 2 : part); 0x13ccf0(frame, part);
+        otherwise if sel and part != 4 and 0x13c880(ch, part): next = 6.
+     3: evR == 4 -> next = 4; evR == 5 -> next = 2; else if sel -> next = 5;
+        else evR in 1..3 -> 0x13c8f0(S, R).
+     4: evS == 4 or 5 -> next = 3, then apply; evS in 1..3 -> apply;
+        apply = 0x13ca58(0x20f9f0(S), ch, part, idx, colour).
+     5: evC == 4 -> if C.cursor == 0: 0x20f9e8(S, 0x20f9f0(S))        (copy to clipboard)
+                    else: 0x20f998(S, 0x20fa20(S))                    (paste: clipboard with
+                          alpha forced to 0xff becomes the current colour)
+                    next = 3; apply (as in state 4);
+        evC == 5 -> next = 3; else if sel -> next = 3;
+        else evC in 1..3 -> help (0x28, C.cursor).
+     6: evD == 4 -> next = 2; 0x13cbd8(ch, part, colour); 0x13c8f0(S, R); 0x1159d0();
+        evD == 5 -> next = 2; else if sel -> next = 2.
+  Slider update 0x20fa40(S, seat) (only when S settled in, visible and active):
+        ev = 0x20e128(channelList): 4 -> backup = current, return 4; 5 -> current = backup,
+        return 5; 1..3 -> valueCursor = current[channel], return 0;
+        otherwise ev2 = 0x20e128(valueList): 1..3 -> current[channel] = valueCursor, return ev2;
+        else return 0.
+     Value range 0..31, left/right +-1 with the standard repeat (20 then 2 updates),
+     0x100000/0x400000 -+8 clamped, 0x200000 -> 0, 0x800000 -> 31. Channel row 0 is the field
+     at bits 10-14, row 1 bits 5-9, row 2 bits 0-4. On screen row 0 uses the bar constant
+     0xffff0000/0xff800000 (0x20fcb0). Whether row 0 is labelled R or B depends on the colour
+     word convention of the UI primitive (0x17d370): UNKNOWN, see section 8.
+  Dialog update 0x2128f8: event 4 with cursor 0 is returned as 4 (yes); event 4 with
+     cursor != 0 is converted to 5 (no).
+  Edits take effect immediately in the save table (no separate commit); cancel in state 4
+  restores the value the slider had when it was last confirmed or loaded.
+
+3.7 Write, reset                                                               OBSERVED
+  0x13ca58(word, ch, part, idx, colour):
+      c = 0x8000 | (word >> 9 & 0x7c00) | (word >> 6 & 0x3e0) | ((word & 0xff) >> 3)
+      sb = storedBank(part); cacheBank = part == 3 ? aux(ch) + [0x4caaac]
+                                       : part == 2 ? (ch != 25 ? 1 : 0) : 0
+      entry(ch, colour, sb, idx + 1) = c                    (base 0x5735ce = table + 2)
+      slot = 0x115d40((ch*5 + colour) | 0x10000, cacheBank);
+      u16 0x43ab72[slot*16 + idx] = c                       (live palette cache, entry idx+1)
+      if ch == 33 and part == 3:
+          slot = 0x115d40((colour + 0xa5) | 0x10000, cacheBank + 1); same cache write.
+  0x13cbd8(ch, part, colour) reset one part to the stock colours:
+      src bank = part == 3 ? aux(ch) + [0x4caaac] : part == 2 ? (ch != 25 ? 1 : 0) : 0
+      (0x13be78 result is used as an unsigned byte here, so aux 0xff would read bank 255;
+      the dialog is only reachable when the part exists)
+      copies 16 u16 from pal_all (key, src bank) to entry(ch, colour, storedBank(part), 0..15)
+      if ch == 33 and part == 3: copies the same 16 source values again to the 16 u16 that
+      follow stored bank 2, i.e. to stored bank 0 of key + 1 (0x13cc8c, base 0x5735ec).
+      This overwrite of the NEXT colour's body bank is what the instructions do; whether it
+      is intentional is UNKNOWN (validate with a Probe run before porting).
+
+3.8 Preview drawing                                                            OBSERVED/partial
+  Held-button inputs each update (pad.held): both = (held & 0xa00000) == 0xa00000;
+  pose = (held & 0x100000) ? 1 : (held & 0x400000) ? 2 : 0.
+  x0 = float(P.slide.curX) (the part selector's current X, so the figure slides with it).
+  obj1 = 0x13bf00(obj1, portraitVisible, colour): hidden (flags +0x104 |= 2) unless
+      portraitVisible and word 0x124a180 != 0; when it becomes visible with a loaded resource
+      (+0xc0 != 0) and bit 1 of the old flags clear: 0x11d908(obj1, 3, 1, 0);
+      flags |= 0x200; depth 0x11dff8(obj1, 0x17c228([0x4ee54c] - 900.0)); +0x20 = colour
+      (stock palette key, no 0x10000); 0x11d6c8; 0x11d868; 0x11d730.
+      obj1 is created by 0x11d668 -> 0x1202c0 with +0xcc = 8 (INFERRED: the large
+      character-select portrait object; its resource path is UNKNOWN).
+  obj2 = 0x13bfd0(obj2, P.visible && !both, part, colour, x0): the in-game sprite of the
+      character (resource slot 1), drawn with palette key colour + 0x10000 (+0x20) so the
+      edited table is used:
+        hidden unless visible and word 0x124a184 != 0. +0x30 = 0; y (+0x44) = 0;
+        x (+0x40) = x0*0.5 + 230.0, then by part / character id:
+          part 4: 33:+10  35,37,18,21:+8  24:-12  19:+12  27:+4  13:-6  43:+12  48:-6
+          part 2: x = x0*0.5 + 234.0; y = 0x4ca9e0[ch] + 48; 27:-12  26:+4  29:+20  34:-12
+          part 3: 11: x = x0*0.5 + 234.0, y = 48;  2,16: y = 48;  32:+16  33:+9
+          part 1: 15:+8  35:+12  22:+9  25:+8 and y = 48  18:+4  32:+16  27:+2  13:+20  48:-16
+        then: (part != 2 and ch == 20) +5; else (part != 2 and ch == 43) +8;
+              else ch == 46 or 47: +7; else ch == 48: +10
+        action/record: part 0..3 from 0x4ca278 (section 3.4); other parts action 0x380,
+        record 1. action == -1 -> hidden. If the object's current action (+0x24) differs:
+        0x11d908(obj2, action, 1, 1) and +0x28 = record - 1.
+        (ch == 11 and part == 3) sets bit 0x80000000 of +0x38, otherwise clears it.
+        flags |= 0x200; depth from 0x17c228([0x4ee54c] - 900.0); 0x11d6c8; 0x11d868; 0x11d730.
+  obj3 = 0x13c4f8(obj3, P.visible ? both : 0, part, colour, pose, x0): alternate full-body
+      check pose shown while both 0x200000 and 0x800000 are held:
+        x = x0*0.5 + 230.0 + 6.0; y = 0; palette key colour + 0x10000
+        pose 2: 0x11d908(obj3, 0xe3, 1, 0); +0x28 = 0; ch 17: +20
+        pose 1: 0x11d908(obj3, 0x198, 1, 0); +0x28 = 2; x -= 16
+        pose 0: 0x11d908(obj3, 0xa4, 1, 0); +0x28 = 0; ch 4:+14  5,15:-6  39:+4  2:+8  8:+6
+                25:-6  19:+12
+  0x11d908(obj, action, 1, restart) semantics, the camera constants and the exact draw
+  submission of these objects are the battle object path (docs/auxiliary-objects.txt,
+  docs/character-draws.txt); not re-derived here.
+
+4. Data tables to extract (file offsets via Elf.offset(address))
+-----------------------------------------------------------------
+  0x4d6e30  option table, 47 x 12 bytes             0x4d6db0  category names, 16 x 8
+  0x4ca250  slot names, 8 pointers                  0x4ca228  colour menu rows, 5 pointers
+  0x4ca240  copy/paste rows, 2 pointers             0x4ca278  preview table, 51 x 0x24
+  0x4ca9a8  aux bank bytes, 51                      0x4ca9e0  weapon Y offsets, 51 x s32
+  0x59cd20  character order, 0x31 + 4 bytes         0x4d4bb0  character names, 50 pointers
+  0x4ee870  help text table, 207 x 8                0x5e1d10  preview float constants, 27 floats
+            (900,0.5,230,10,8,12,4,6,234,20,48,16,9,2,5,7,900,0.5,6,230,20,16,14,4,8,12,900)
+  0x5e1cd0/0x5e1cf0 colour state entry/update jump tables (8 entries each, index state+1)
+  0x5e1d7c  part-exists jump table (5)              0x5eae9c/0x5eaeb4 icon jump tables (6, 7)
+
+5. Resources and sounds
+-----------------------
+  OBSERVED: UI sounds are only 0x1e7b70(-1, 0x20 / 0 / 0x24) from the list cursor. Both
+  scene entries tail-call 0x1e7b40 (argument registers not set by the entry; BGM behaviour
+  UNKNOWN). Texture set loading for the menu frame is 0x17eab0 -> 0x12f050 (0x1142d8(5,
+  name at 0x5e0868 or 0x5e0880 depending on 0x177140()); file names not decoded here).
+  Text is drawn with 0x17e228/0x17e428 (string), 0x17df90/0x17e038 (sprite by table),
+  0x17d370/0x17cb50/0x17dd88 (rectangles/gradients), 0x17eed8 (window frame); these are the
+  shared menu primitives and are not specified in this slice.
+
+6. Interaction with battle (summary)
+------------------------------------
+  - Mode words 0xf/0x10 never reach battle; both scenes return to 0x127940.
+  - SPIRITS EDIT output: table 0x4d7068, consumed through 0x14f4e0/0x152758 by the readers in
+    section 2.7 when the fighter's system is 6, slot = cfg+0xc.
+  - COLOR EDIT output: table 0x5735cc, consumed through palette keys with owner bits
+    0x10000/0x20000 in 0x115d40 after being copied to the per-player runtime tables
+    (section 3.2). 0x116030 is a second key-based lookup that also references 0x5735cc
+    (0x116054); its body was not decoded.
+  - Both tables are part of the memory-card save block 0x5735c8 (+4 and +0x633c).
+
+7. Implementation notes
+-----------------------
+  - One reusable list-cursor + slide-animator + list-menu implementation covers every widget
+    in both scenes; the scene logic itself is the two state machines above.
+  - Events are sampled for all widgets before the state switch, and a state change consumes
+    one update without processing input (entry actions only).
+
+8. UNKNOWN / not read, and suggested Probe experiments
+------------------------------------------------------
+  1. Draw routines (0x20ef38, 0x20f360, 0x20c038, 0x20f680, 0x20fb58, 0x2129d0, 0x20d9f8,
+     0x20d2e8, 0x20cd00/0x20cd68/0x20ce48, 0x17eac8 body, frame 0x181788..0x182260): only the
+     constants quoted above were read. Probe: run each draw with stubbed primitives
+     (0x17d370, 0x17cb50, 0x17dd88, 0x17e228, 0x17e428, 0x17df90, 0x17e038, 0x17eed8) and log
+     the argument records to obtain coordinates, colours and string ids.
+  2. Slider channel labels (R/G/B order): log the colour words passed to 0x17d370 for a known
+     u16 and compare with the native pal_all decoder.
+  3. 0x13cbd8 / 0x13ca58 special case for character 33 (overwrite of key+1 stored bank 0, and
+     the second cache key colour+0xa5): confirm with a Probe run on a seeded table.
+  4. Word 0x4caaac (static 0; no writer found by lui/addiu scan) - confirm no indirect writer.
+  5. Unlock source of byte 0x43d0ed (8 slots, 300-point slots 7 and 8): 0x1e4778 has no
+     direct caller; search function-pointer tables.
+  6. Copy path cfg+0xc <- 0x4c8d18 + side*0x34 + 0x30 and the complete 祭-slot selector of
+     character select (0x12ff..0x1304.., drawing 0x1337b0, icon list 0x133ca8).
+  7. Filling of the player-1 runtime palette table 0x3ec740 outside VS mode, and the exact
+     card-loader states (0x1b6580, table 0x573548).
+  8. Undecoded descriptor users 0x1758e8 (call at 0x17596c) and 0x179ac8 (call at 0x179ae8);
+     battle reader of byte 9 (NUIGURUMI HENKA).
+  9. 0x178f90 tail for mode 0xf, 0x1e7b40 behaviour, the obj1 portrait resource
+     (0x11d668/0x1202c0), 0x11d908 restart semantics when called every update with the same
+     action (obj3), physical identity of pad bits 0x100000/0x200000/0x400000/0x800000.
+ 10. 0x20dcd8 option-panel placement arithmetic (0x20de58..0x20df04) was summarised, not
+     transcribed instruction by instruction.

@@ -1,0 +1,121 @@
+ARCADE MAP SCENES (SLPS-25559): travel map 1c1b20 and walk-in 1c4428
+=====================================================================
+Native port: src/arcade_map.hpp / .cpp (ArcadeMapTables, ArcadeMapState, ArcadeMapArt,
+ArcadeMapScene, ArcadeWalkInScene). Tables: work/ss6/extract_arcade_map.py -> arcade_map.bin
+(+ outputs/ss6-feasibility/arcade_map_tables.json). Evidence: work/ss6/validate_arcade_map.py ->
+outputs/ss6-feasibility/arcade_map_validation.json. Everything below is OBSERVED in the
+disassembly and compared against the original code in Probe unless marked otherwise. This
+supersedes the UNKNOWN entries of docs/mode-arcade-flow.txt 5.2 / 5.3 (U1).
+Sheet record layout: {u, v, w, h, +0x10, slot} (six words).
+
+1. Shared map state (words 582380..5823a8, floats 132f5c8..132f750)
+--------------------------------------------------------------------
+1c1e30 loads moji4 / moji5 / hukidasi / hukidasi2 (slots 0x1e, 0x2b, 0x1f, 0x20), then
+1c1f88 (132f5d0 / d4 / d8 = 654e74 / 78 / 7c) and 1c2010 (cloud layers). The opening 1c60c8
+runs 1c1e30 itself (1c6a68 -> 1c6af8) and its task 1c6b10 draws 1c2920 / 1c2a38, so the
+opening and the map share ONE ArcadeMapState; the map entry skips 1c1e30 / 1c2420 / 1c1ec8 and
+the BGM when P[h].+18 == 1.
+  132f5c8 A  top inset, 132f5cc B top drop, 132f5d0 C scale (passed to 1c32c8 on the stack,
+  never read), 132f5d4 D picture right, 132f5d8 E picture bottom, 132f5dc / e0 arrival offset.
+  Clouds: 17 sprites in four layers of 5, 4, 3, 5 (tables 654db0[0..4], 654dd8[0..3],
+  654dd8[4..6], 654db0[5..9]); per sprite x, speed, height and an ease step; per layer y and
+  ease step; 132f6fc "opened".
+1c2010: x = k * step(layer); the position is stored BEFORE the speed draw; speed =
+  ((rand() & 0x7fff) * scale >> 15) + 1, scale {3, 5, 6, 10} by layer, times 654e84; C-library
+  generator 316b90.
+Cloud update (second half of 1c2a38): layers 0/1 move right (gone when x > 654ed4), layers 2/3
+  move left (gone when x < 654ee8 - w). A layer respawns (new x and speed draws, unit 654ee0)
+  only when EVERY sprite of it is gone.
+
+2. Path / arrival / cloud easing
+--------------------------------
+All four easing routines evaluate s = sin(quarter - step*pi/steps*half) in EE single precision
+for the argument, widened by 310be0, through the C library sine 30bd00 (its 60 results are
+captured from the original and pinned in arcade_map.bin), then target - span*s through the
+fp-bit double routines 310fa0 / 310f38 (truncating to 53 bits) and 311510.
+CORRECTION / precision rule: 311510 (truncdfsf2) TRUNCATES toward zero (2000 random doubles
+in Probe), it does not round to nearest.
+1c3608 path (step 582384, 60 steps): A = 94 - 94s, B = 90 - 90s, C = 0.758 - (-0.242)s,
+  D = 697 - 57s, E = 434 - (-46)s (the immediates are built with lui/ori/dsll32 in the code).
+1c3888 arrival (step 58238c, 60 steps): offset x/y = t - t*s with t from 6550b0 / 6550e0
+  indexed by G.stage; C = step*655120/655114 + 655124 (single precision); D = 1280 - 583s,
+  E = 960 - 526s.
+1c3b78 open (skipped once 132f6fc is set): layer y via 1c4118 toward 655128..655144, cloud
+  heights via 1c4230 to h*65512c; 132f6fc = 1 and all steps cleared when all 17 complete.
+1c3ec8 close: same with 655148..655164 / h*65514c -> h, no completion flag.
+
+3. Map task 1c25e0 (per frame; matches flow spec 5.2 with these additions)
+--------------------------------------------------------------------------
+- The voice 1e7d60(0x31, 654ea8[G.stage == 3 ? 7 : 582398]) is issued while F == 0x1e; F only
+  advances when G.+18 == 0, so a challenger freeze repeats the request on every frozen visit.
+- Exit: 1c1ac0(1c1de8, 1c4428) — the hand-off task 1c1ae8 runs the destructor and the walk-in
+  entry on the same frame. NO 1252f0 and no fade. (ArcadeSession::follow() currently models
+  this as request(3, 0, 1c1de8, WalkIn): wrong kind.)
+- The fighter (only when P[h].+14 == 0): 11e2e8(0x1770), 11fed0(obj, seat, 0x703, 0xf0 / 0x190,
+  0, 0 / 0x80000), obj+20 = P[h].+04; every visit: obj+c0 == 1 -> 120390(obj, 0x703); 120ce0.
+- 1c1de8: G.+2c = 0 (and frees tags 0x1772 / 0x1770).
+
+4. Map drawing (submission order 1c2860, 1c2920, [1c31f0, 1c3260], 1c2a38, [1c2fe8])
+------------------------------------------------------------------------------------
+1c2860  backdrop tile 4c6208 (slot 0x2a), 4 x 6 tiles at (col*w, row*h) via 117760 -> 113be0:
+        no vertex fade, depth = the bare tie-break counter (114d78), so these sit behind every
+        114d88 submission; the counter continues from its previous value plus 24.
+1c2920  the map picture 4c6598 (slot 0x29, 1024 x 819 of an 8-bit 1024 sheet with CLUT 3101
+        from map_main.pal, 113980) as a quadrilateral: x0 = A - (D - 654ecc) + ox, x1 =
+        -(D - 654ecc) + ox, x2 = D - A + ox, x3 = D + ox, y0 = B - (E - 654ec8) + oy, y1 = E + oy.
+        1c32c8 applies the 117288-style vertex fade toward 3ec730 itself (CLUT 3101 is not
+        processed by 116588) and submits a 9 x 9 grid (step 655094 = 1/8, texel scale 655090)
+        as eight 18-vertex strips (tag ff2, one depth). Texel coordinates clamp at 1023.
+1c31f0 / 1c3260  stage marker 5823b0[stage] at (5823e0, 582410) and label 655000[stage] at
+        (655030, 655060), slot 0x22 forced into the record, through 117760. No record exists for
+        stage 11 (null pointer).
+1c2a38  17 cloud sprites 117de8 (flags 0x20, colour 0x80ffffff, z 654ed8, w, current height),
+        submitted BEFORE they move.
+1c2fe8  stage name: alpha = trunc(255 - 4.25 * pathStep) (654fe8 / 654fe4); index = G.stage == 3
+        ? 8 : 582398; first sheet 654ef8 (slot 0x1e) and second sheet 654f70 (slot 0x2b) at
+        their x/y tables, z 654fec; indices < 4 add the two common parts 4c65b0 / 4c6760 at
+        654ff0..654ffc. 1c1c78..1c1d38 rewrite the slot words of these records on every entry.
+1c1ec8  map_icon_NN with NN = min(G.stage, 9): sheet in slot 0x22, .pvp with entry 0 cleared
+        uploaded by 116478(0x300, 0x100), 10add8(0x22, 0x30) (GS CBP 0x30cd).
+All quads go through 108118, whose texel coordinates clamp to size - 1.
+
+5. Walk-in 1c4428 (coroutine 1c4568, redraw task 1c43f0)
+-------------------------------------------------------
+Matches flow spec 5.3, with:
+- Task order per frame: 1c43f0 (priority 0xa: 1c2860, 1c2920, 1c31f0, 1c3260, 1c2a38 — clouds
+  keep moving; the path/arrival state is frozen at its final value) then the coroutine.
+- Objects tag 0x1772: seat 0 at x 0xf0 (action 0x703 iff mode 1 and P[0].+14 == 0, else 0x704),
+  seat 1 at x 0x190 flags 0x80000 (0x703 iff mode 2 and P[1].+14 == 0). A fighter that starts
+  in 0x703 counts as already finished; the other seat gets the 0x1e-frame start delay. Every
+  finished action (0x704 included) is restarted as the loop 0x703.
+- 10add8(0x10000..0x10002, 0x10) returns without a write (ids above 0x1ff).
+- Phase A: the first visit always runs; then while the countdown (0x3c) is positive. Any
+  pressed & 0x60f zeroes it.
+- Phase B: the 58244c wait counts only after both objects have finished; pressed & 0x60f sets
+  it to the limit.
+- Pair message 1a3168(listener, speaker): table 50d550 (byte 43d052 == 0, 49 characters) or
+  50d618 (43 characters); entry +4: two generic list pointers, then 51 pair pointers by
+  listener. A null pair entry draws one 316b90 value: generic[(r >> 14) & 1]. The speaker is
+  the CPU; in mode 2 the balloon id gets +5 (mirrored balloon: u + w with negative width).
+- 1a26b0 (balloon rows 4eeef8 {slot, x, y, u, v, w, h, text x, text y}, z 60a080): balloon
+  sprite, then up to three lines through 113028 with colour -1 at 24-pixel rows starting at
+  y + text y + (3 - lines) * 14; every glyph counts against 3d3aa0 (= frame / 4). It returns
+  "done" when the glyphs drawn are fewer than the limit. With 3ec73c set 1130f8 / 1131d8
+  neither draw nor count (the walk-in then sees done as soon as the limit is positive).
+- Text fast-forward: frame = 0x2710; second press: n = 0. The hold loop draws the balloon
+  with limit 0 (no text).
+- START hold (582444 / 582448) toggles in the dialogue wait and in the final loop, exactly as
+  the flow spec states; exits 1252f0(2, 0, 1c44f0, 1c5290) / 1252f0(2, 0, 1c44f0, 139760), once
+  (latch 582440). The final-loop exit happens on the visit AFTER the hold loop is first entered.
+- Intruder: 1c2420 sets 5823ac = 17a548() (and on 1 forces G.stage 3 / CPU character 33); the
+  walk-in skips the dialogue when 5823ac == 1. The kind-4 banner entry 1252f0(4, 1, …, 1c1b20)
+  belongs to the callers (stage dialogue 1c53e0 / win quote 136288), not to the map.
+- 1c44f0: frees 0x1771 / 0x1772 / 0x1b5e, 1e7ad0, 1e7b40.
+
+6. Not ported here
+------------------
+Fighter sprites: requested through ArcadeObjectHost (create / finished / restart / step in
+original call order); not rendered by ArcadeMapArt (the validator compares the calls only).
+The camera words (122e98 / 122eb8 arguments) are exposed but not applied.
+Text services 1a3168 / 1a26b0 are private to this module (ArcadeWalkInScene::message,
+ArcadeMapArt::balloon); unify with the sibling talk / results scenes later.

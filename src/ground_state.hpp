@@ -44,6 +44,10 @@ struct GroundStateFrame {
     int remainingSeconds=-1;
     bool training=false;
     int trainingRage=0;
+    // 172158: 139c88 (behaviour code) and 139ce8 (CPU UKEMI TYPE) for a practice dummy.
+    int trainingAction=0,trainingRecovery=0;
+    // 149f30: this entry ended the opponent's combo (1409b8).
+    std::function<void()> comboEnded;
     //Required for attack registration; the caller owns live auxiliary-object
     //identities, including the first kind3 object's command field.
     CallbackContext* objects=nullptr;

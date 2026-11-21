@@ -51,8 +51,10 @@ public:
     //Returns true only for rage2->3, whose caller must publish11e6f0(2,player).
     bool advanceOrdinaryMeters(DamageActor& actor,int stateTable,int stateIndex,
                                uint32_t flags104,uint32_t& flags108,bool roundTransition=false,bool* chargeFilled=nullptr) const;
-private:
     int32_t decay(int system,unsigned character) const;
+    // 14ee14: the sword-gauge capacity while rage is raised (system row +0x1c).
+    int32_t raisedSwordLimit(int system) const {return systems_.at(unsigned(system))[7]*256;}
+private:
     std::array<int32_t,59> rules_{};
     std::array<std::array<int32_t,7>,51> characters_{};
     std::array<std::array<int32_t,10>,9> systems_{}; // 0x50dee0: systems 0..8 (8 = the companion fighters 44..47)

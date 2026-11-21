@@ -1,0 +1,319 @@
+Arcade in-fight score, state-9 round tally and arcade HUD additions (SLPS-25559)
+================================================================================
+
+Scope: gameData+0x90 (score) producers 14e838/14e8d8/1c97c0/1c97f0 and their ten call sites,
+the state-9 tally task 1c7ce8..1c9820, the arcade score digits of the HUD (1bc098/1ba768) and
+the free-seat prompt (1ba1b0/1ba228/1ba448/1ba148). Companion of docs/mode-battle-branches.txt
+sections 6, 8 and 13; where the two disagree this file wins (section 9 lists the corrections).
+
+Evidence classes
+  OBSERVED   read from the disassembly and, where marked [V], compared with the original code
+             executed in Probe by work/ss6/validate_arcade_tally.py
+             (outputs/ss6-feasibility/arcade_tally_validation.json).
+  INFERRED   meaning deduced from use; not executed.
+  UNKNOWN    not read.
+Native port: src/arcade_tally.hpp/.cpp. Tables: work/ss6/extract_arcade_tally.py ->
+arcade_tally.bin (932 bytes), manifest outputs/ss6-feasibility/arcade_tally_tables.json.
+
+
+1  Score word and tables (OBSERVED [V])
+---------------------------------------
+
+gameData+0x90 (4c3898) is a signed 32-bit score. Producers:
+  1c97c0(kind)      score += table 655588[kind]; returns the table value
+  1c86c8            tally pay-out (section 4)
+  1bc160 / 1bc1a8   mode-3 win counter / reset (mode-battle-branches section 13)
+
+14e838(seat, kind):
+  rec = 1400d8(seat)                                  // match record battle+0x254+0x108*seat
+  if (kind != 0xd && kind != 0xe && kind != 0xf && (s32)rec[+0x0c] > 0) kind = 0x11
+  if ((mode == 1 && seat == 0) || (mode == 2 && seat == 1)) tail-call 1c97c0(kind)
+  // no range check on kind; the refused path leaves v0 undefined
+14e8d8(seat, class):
+  same seat gate; 1c97f0(class): word 582950 = table 6555e8[class]
+
+Table 655588 (24 s32), kind -> points, with the producer of each kind (section 2):
+  0x00     0  unused               0x0c   400  object class 14 (object kind 5)
+  0x01   100  hit class 0          0x0d   200  stage item 4
+  0x02   200  hit class 1          0x0e   500  stage item 5
+  0x03   300  hit class 2          0x0f  1000  stage item 6
+  0x04   100  hit class 3          0x10   400  counter-hit bonus (second award)
+  0x05   100  hit class 4 / other  0x11   100  combo hit (rewritten by 14e838) / class 8
+  0x06   200  hit class 5          0x12   400  hit class 10 / object default
+  0x07  -100  hit class 6          0x13  1000  hit class 11
+  0x08   400  deflection a48 = 3   0x14  1000  hit class 12
+  0x09  1000  deflection a48 = 4   0x15   600  hit class 13
+  0x0a   100  ground throw catch   0x16   500  hit class 7 or 9
+  0x0b   200  evasion (14d9b8)     0x17     0  unused
+Table 6555e8 (6 s32), finish class -> bonus: {0, -1000, 2000, 2000, 4000, 6000}.
+
+"Hit class" is the result of 14dac8(actor) (src/finishing_blow.cpp actorCategory) for a body
+source and of 14dc00(object) (projectileFinishCategory) for an object source. INFERRED class
+names from actorCategory: 0/1/2 armed light/medium/heavy, 3 flag23c:800, 4 unarmed, 5 state 22,
+6 state 33, 7 state 39, 8 states 41..54, 9 state 21, 10 states >= 65, 11 "first" special class,
+12 state 38, 13 "second" special class, -1 not attacking.
+
+
+2  Call sites (OBSERVED; kind selection of 157a58/157b50/1576e8 [V] as tail slices)
+-----------------------------------------------------------------------------------
+
+caller  | enclosing | event                                              | seat          | kind
+--------+-----------+----------------------------------------------------+---------------+---------------------
+14d970  | 14d8c8    | stage item picked up (16bbc4 tail), item id 4/5/6  | actor+0xa24   | 0xd / 0xe / 0xf
+        |           | (jump table 5ea970; ids 0..3 are the life items,   |               | then 1e7b70(-1,0x42)
+        |           |  7..18 go to 16c250)                               |               |
+14da24  | 14d9b8    | kind-9 decoy struck (15480c, after 1567d0 != 0);   | decoy owner   | 0xb
+        |           | both the flags248:02000000 branch and the other    | actor+0xa24   | then 1e7b70(-1,0x39)
+154f88  | 154e10    | weapon deflection, deflector variant a48 == 3      | deflector     | 8
+        |           | (target of the contact, contact+0x68)              | (target)      |
+155000  | 154e10    | weapon deflection, deflector variant a48 == 4      | deflector     | 9
+        |           |                                                    |               | then 1e7b70(-1,0x3f)
+1552fc  | 1551c0    | route-4 ordinary throw catch: 156118() == 0, the   | thrower       | 0xa
+        |           | thrower enters normal 31 (0x1f), victim damage 13. | (source,      |
+        |           | Reached for EVERY character: the character-32 /    |  contact+0x40)|
+        |           | state 0x520001 test only chooses flags244:00800000 |               |
+154e98  | 154e10    | counter stance consumed the contact (1561e8 != 0)  | stance owner  | body(14dac8(owner))
+ ->157aa0 157a58    |   157a58(owner, 0)                                 | (target)      |
+155268  | 1551c0    | command-throw capture (156118 != 0)                | thrower       | body(14dac8(thrower))
+ ->157aa0 157a58    |   157a58(thrower, 0), then 157cd8, 158030          |               |
+155bdc  | 155a88    | ordinary hit by a body (155a88 arg1 != 0), after   | attacker      | body(14dac8(attacker))
+ ->157aa0 157a58    |   14a8d0/14d198/152260/156038:                     |               | then, if counter:
+ ->157ac4           |   157a58(attacker, counter = 157fa8(target, c+0x48))|              | 0x10
+155ce4  | 155a88    | ordinary hit by an object (arg1 == 0), after       | object owner  | object(14dc00(object))
+ ->157bb4 157b50    |   156538: 157b50(object, counter)                  | 140090(o+0x10)| then, if counter:
+ ->157be0           |                                                    |               | 0x10
+156d1c  | 156ca8    | object command-throw capture (1566e8 != 0)         | object owner  | object(14dc00(object))
+ ->157bb4 157b50    |   157b50(object, 0)                                |               |
+1578f0  | 1576e8    | lethal request latch (first one only: skipped when | attacker      | 14e8d8 class, below
+        |           | flags244:08000000 is already set)                  | actor+0xa24   |
+
+body(c)   (157a58, jump table 5eb398):  c 0..13 -> {1,2,3,4,5,6,7,0x16,0x11,0x16,0x12,0x13,0x14,0x15};
+          any other value (including -1) -> 5. Class 11 also sets actor.flags244 |= 0x80000000.
+object(c) (157b50): 14 -> 0xc, 13 -> 0x15, 11 -> 0x13 (and owner.flags244 |= 0x80000000),
+          2 -> 3, 1 -> 2, 4 -> 5, 0 -> 1, anything else -> 0x12.
+Both wrappers call 14e838 a second time with kind 0x10 when their flag argument is non-zero.
+Every call passes through the combo rule: while record[seat]+0x0c > 0 the hit kind AND the
+counter bonus are each rewritten to 0x11 (100 points). 157fa8 itself requires record+0x0c == 0
+unless the contact has low7 bit 0, so "counter + combo" is only reachable through that bit.
+Order inside 155a88: the award precedes 1575d0 (finish latch) and 1409e8 (record update), so
+record+0x0c is the value BEFORE this hit is counted: the first hit of a combo scores its own
+kind, later hits score 0x11. Guarded contacts are not routed through 155a88's award (no guard
+score). INFERRED from the call graph; the guard handlers were not re-read for other callers.
+
+Finish class (1576e8, 1578d4..1579a8):
+  record+0x1c (set just before from the 14dac8/14dc00 class: 13 -> 0, 11 -> 1, 9 -> 2, 12 -> 3,
+  7/8 -> 4, other -> 5; this is roundOutcome() in src/finishing_blow.cpp)
+  class = guard flag (1576e8 arg t0, the one that also sets flags244:10000000) ? 1
+        : outcome 2 or 4 ? 2 : outcome 0 ? 3 : outcome 1 ? 4 : outcome 3 ? 5 : 0
+  -> 582950 = {0, -1000, 2000, 2000, 4000, 6000}[class] for the arcade seat.
+  A guarded (chip) finish costs 1000; an ordinary normal finish (outcome 5) pays nothing.
+582950 is written only by 1c97f0 and consumed (zeroed) by tally phase 0. It is not cleared at
+round start: a lethal latch by the CPU seat leaves the previous value untouched.
+
+Native call sites that correspond (not edited by this slice):
+  src/stage_item_contact.cpp updateStageItemPickup, `id>=4&&id<=6`      -> 14d970, arcadeItemKind(id)
+  src/native_match.cpp strikeMikiri (sample 57)                         -> 14da24, kind 11, seat of `b`
+  src/native_match.cpp resolveContacts route 2/3, variantA48==3 / else  -> 154f88 kind 8 / 155000 kind 9, seat of b
+  src/native_match.cpp resolveContacts route 2/3 resolveCounterStance   -> 154e98, body class of b, no counter flag
+  src/native_match.cpp resolveContacts route 4 captureIndex branch      -> 155268, body class of a
+  src/native_match.cpp resolveContacts route 4 catchGroundThrow branch  -> 1552fc, kind 10, seat of a
+  src/native_match.cpp resolveStrike before recordContactFinish, !guard -> 155bdc (body) / 155ce4 (projectile),
+                                                                           flag = `counter`, combo = stats.hitCount0c
+                                                                           before its increment
+  src/native_match.cpp resolveContacts Route4Player                     -> 156d1c, object class, owner seat
+  src/finishing_blow.cpp record() ("no profile-write side effect")      -> 1578f0, arcadeFinishClass(guard, outcome1c)
+
+
+3  Tally task: entry, state words, teardown (OBSERVED [V])
+----------------------------------------------------------
+
+1c7ce8  112670(0x19, 1c7f08, 0x10, 0x177a); 1c7d48(); 1c7e00()      priority 0x19, tag 0x177a
+1c7d48  58298c = (record[0].wins(+0x28) < record[0].required(+0x2c))   // from seat 0 only
+        582988 = 1c7ea0() = !(hud[1].life < hud[0].life)               // seat with more HUD life, tie -> 1
+        112f08(8) (re-applies text colours; its argument is ignored), 112f30(0x000000, 0xffffff)
+        3d3aa0 = -1 (no glyph reveal limit); 582944 = 1; 582940 = 582948 = 58294c = 582984 = 582990 = 0;
+        1c9810() (582994 = 0); gameData+0xa4 = 0
+1c7e00  582954 = 1407d0(); 582964 = 582950; 582958 = hud[582988].life; 58295c = 60000;
+        58296c = 582970 = 582974 = 582978 = 58297c = 0; 582968 = 1; 582980 = 1c7ee0(582988)
+1c7ee0  hud[seat].life == 200 (full life: PERFECT)
+1c7d20  112a70(0x177a); 582944 = 0                 // callers: 1448e0 (state 9 update), 1397ac (scene exit)
+1c87e0  returns 582944 (callers 1beac8, 1bec94: HUD life-bar routines return early while non-zero)
+1c87f0  returns 582948
+1c9820 / 1c9810  582994 = 1 / 0                    // pause menu open 1d9e08 / close 1da158
+
+hud[seat] = 1c1140(seat) = 132f3a0 + 0x98*seat: +0x14 displayed life, +0x10 lagging life,
++0x00 / +0x08 bar position / extent words, +0x94 bar kind, +0x54 / +0x68 / +0x7c marks.
+1407d0: battle+0x13c == 3 -> -1; else (timer0 + 0x59ff) / 0x5a00 (survival 123a0c0 == 2:
+(timer0 + 0xb3ff) / 0xb400); timer0 = battle+0x114. Signed division truncating toward zero.
+
+  582940 phase 0..6          582944 active            582948 done            58294c exit counter
+  582950 finish bonus left   582954 seconds latch     582958 life latch      58295c straight left
+  582960 pay-out latch       582964 finish latch      582968 step 1..30      58296c FINISH shown
+  582970 TIME shown          582974 LIFE shown        582978 STRAIGHT shown  58297c TOTAL (unpaid)
+  582980 perfect             582984 wait counter      582988 tally seat      58298c straight seat
+  582990 sound toggle        582994 paused
+
+
+4  Handler 1c7f08, once per frame (OBSERVED [V])
+------------------------------------------------
+
+  skip = paused ? 0 : (pad(582988).pressed(+4) & 0x60f) != 0        // pad(n) = 1237cc8 + 0xc*n
+  1c8a98()                                                         // panel and labels, always
+  switch (582940)      // every case body is skipped while paused; the draws are not
+  step(whole) = whole*n/30 - whole*(n-1)/30 with n = 582968 (32-bit products, truncating division)
+  count(v, row): if (v == -1) phase++ else { 58297c += v; row += v; sound }
+  sound: 582990 ^= 1; if (582990 == 1) { 1e7b70(-1, 0x42); 582990 = 0 }   -> one request per counted frame
+
+  +-----------+   left == 0     +-----------+  clock == 0  +-----------+  life == 0  +-----------+
+  | 0 FINISH  |---------------->| 1 TIME    |------------->| 2 LIFE    |------------>| 3 STRAIGHT|
+  | 1c82c0    |   or 30 steps   | 1c8360    |  or 43d05d=2 | 1c8488    |             | 1c85d0    |
+  +-----------+   or skip       +-----------+              +-----------+             +-----------+
+                                                                                          |  not due / 30 steps
+        +-----------+  30 frames  +-----------+  TOTAL == 0  +-----------+                 v
+        | 6 exit    |<------------| 5 pay-out |<-------------| 4 wait    |<----------------+
+        | done @30  |             | 1c86c8    |  30 frames   | 582984    |
+        +-----------+             +-----------+  or skip     +-----------+
+
+phase 0, 1c82c0(skip): left = 582950; left == 0 -> -1.
+    skip: 582950 = 0; step = 1; return left.
+    else v = step(582964); 582950 = left - v; n < 30 ? n++ : (582950 = 0, step = 1); return v.
+phase 1, 1c8360(skip): (timer0 + 0x59ff) / 0x5a00 == 0 -> -1.
+    skip: v = 1407d0(); timer0 = 0; step = 1; return v*100.
+    else d = step(582954); timer0 -= d*0x5a00; n < 30 ? n++ : (timer0 = 0, step = 1); return d*100.
+    The caller then replaces the result by -1 when option byte 43d05d == 2. 1c8360 has already
+    run: when the clock was non-zero one step of clock and of 582968 is consumed, so phase 2
+    starts at step 2 and the life bonus loses its first share (the last step still zeroes the
+    life). With an already zero clock 1c8360 returns -1 before touching anything.
+phase 2, 1c8488(seat = 582988, skip): bar = hud[seat]; bar.life == 0 -> -1.
+    skip: v = bar.life; bar.lag = bar.life = 0; step = 1.
+    else v = step(582958); bar.lag -= v; bar.life -= v; n < 30 ? n++ : (bar.life = 0, step = 1).
+    1bee40(seat, v); return v * (582980 == 1 ? 200 : 100).
+    1bee40: kind 2 / 4 / 5 return unless mark54 / mark68 / mark7c < bar.life (signed);
+            then if (seat == 0) hud[0].+0x00 += v;  bar.+0x08 -= v.
+phase 3, 1c85d0(skip): w = 58298c; left = 58295c; return -1 unless
+            left != 0 && seat[w].+0x20 >= 2 && record[w].wins >= seat[w].+0x20 && record[w^1].wins == 0.
+    skip: 58295c = 0; step = 1; return left.
+    else 58295c = left - 2000; n < 30 ? n++ : (58295c = 0, step = 1); return 2000.
+    (60000 in 30 frames; "STRAIGHT" = match won without losing a round, at least 2 wins needed.)
+phase 4: 582984++; if (582984 >= 30 || skip) { 582960 = 58297c; phase = 5 }.
+phase 5, 1c86c8(skip): left = 58297c; left == 0 -> phase = 6.
+    skip: 58297c = 0; score += left; step = 1.
+    else v = step(582960); score += v; 58297c = left - v; sound;
+         n < 30 ? n++ : (step = 1, 58297c = 0).
+phase 6: if (gameData+0x18 == 0) 58294c++;
+         if (58294c >= 30) { 582948 = 1; 582944 = 0 }
+         if (58294c >= 20) 1e7a78()            // every frame from 20 on; 1e7a78: if (345188) 213be8(1).
+                                               // INFERRED: releases / fades the stage music
+State 9 update 144848 polls 1c87f0 and calls 1c7d20 (mode-battle-branches section 6).
+
+Bonus arithmetic summary: FINISH = table 6555e8 value (may be -1000); TIME = seconds left * 100;
+LIFE = HUD life * 100, or * 200 when the life was exactly 200 at entry (label PERFECT);
+STRAIGHT = 60000; TOTAL = sum, added to gameData+0x90 over 30 frames.
+A v of exactly -1 terminates a phase without being added (reachable only with a non-table
+582950 such as -1 under skip). Negative totals are paid like positive ones.
+Duration without input: up to 30 frames per bonus present, 30 wait, 30 pay-out, 30 exit;
+one frame is spent on each transition (the frame that returns -1 adds nothing).
+
+
+5  Tally draw state (OBSERVED; text arguments [V], panel sprites counted only)
+------------------------------------------------------------------------------
+
+Per frame, in this order (panel sprites at depth -25; text colour argument 0xff000000, glyph
+colours 0x000000 / 0xffffff from 112f30(a0, a1); ASCII advance 12 pixels; the depth used by
+113028 was not read):
+ a) 1c8a98 panel, 247 sprite calls: frame from (168,112) to (472,320) built from the 16x16
+    pieces 4c5110[0..4] = (u,v) (324,52) (341,52) (358,52) (375,52) (392,52), field +0x10 = 5,
+    texture slot 1:
+      1c8bf8 top edge, 117de8 x19: corner [0] at x 168, eight [1] at 184..296, joint [2] at 312,
+             eight [1] at 328..440, corner [0] mirrored (a3 = 1) at 456; y 112
+      1c8df0 left edge, 114118 x11 (rotated [1] x5, [2], [1] x5), x 168..184, y 128..304
+      1c9040 right edge, 114118 x11, x 456..472, y 128..304
+      1c9258 bottom edge, 114118 x19, y 304..320
+      1c95a0 interior, 117de8 x187, colour 0xa0ffffff: 11 rows y = 128 + 16*row; each row draws
+             9 tiles at x = 184 + 32*i and 8 tiles at x = 200 + 32*i, records [4]/[3] on even
+             rows and [3]/[4] on odd rows (checker pattern)
+ b) labels, 113028(text, 0xd8, y, 0xff000000):
+      y 0x90 "FINISH"   y 0xa8 "TIME"   y 0xc0 582980 == 1 ? "PERFECT" : "LIFE"
+      y 0xd8 "STRAIGHT" only while the phase-3 predicate (without the 58295c test) holds
+      y 0xf0 "- - - - - - - - - -"      y 0x108 "TOTAL"
+ c) values, sprintf "%d", right-aligned: x = 0x1a8 - 12*digits(v) (1b9838; 0 -> 1 digit),
+    FINISH and TOTAL also reserve one column when v < 0 (TIME/LIFE/STRAIGHT do not):
+      phase 0: FINISH (58296c, y 0x90)                       1c8800
+      phase 1: + TIME (582970, y 0xa8)                       1c8870
+      phase 2: + LIFE (582974, y 0xc0)                       1c88e0
+      phase 3..6: + STRAIGHT (582978, y 0xd8) when its predicate holds   1c8950
+      always: TOTAL (58297c, y 0x108)                        1c8a28
+    The rows follow the phase the handler dispatched on, so a newly entered phase shows its row
+    one frame later. Values are the running sums after this frame's step.
+No fade, no slide: the panel appears on the first handler frame and vanishes with the task.
+
+
+6  Arcade score in the fight HUD (OBSERVED, not executed)
+---------------------------------------------------------
+
+1bab38 (HUD task): if (sub-mode != 5 && (mode == 1 || mode == 2)) 1bc098().
+1bc098: 1ba768(x = word[58224c + 4*mode], y = 0x10, depth = -0x12d, value = gameData+0x90,
+               pitch = record[0].w, flag = 0, records = 4c5ae8, a1' = 0)
+        word[582250] = 115 (mode 1), word[582254] = 571 (mode 2).
+1ba768: n = 1b9838(value); for i in 0..n-1: digit = (value / 10^i) % 10;
+        117de8(&records[digit], 0, -1, 0; x, y, depth, w, h); x -= pitch.
+        Right-most digit at x, growing leftwards, no leading zeros, a single "0" for 0.
+        Digit records 4c5ae8[d] = (u 181 + 11*d, v 494, w 10, h 12), texture slot 10.
+        A negative score indexes records with a negative digit (out of table): UNKNOWN picture;
+        reachable only if kind 7 (-100) or a -1000 finish is applied to a score near zero.
+The score shown is live: the tally pay-out is visible as the number counts up behind the panel.
+1bc0f0 (HUD teardown): mode 1 / 2: if (seat.+0x14 != 582248) 582238 = score.
+
+
+7  Free-seat prompt (OBSERVED; blink clock [V]; sprites not executed)
+---------------------------------------------------------------------
+
+1ba1b0 (global per-frame, from 118148 and the menu loops): 110ae8/110ac0 are empty platform
+  hooks; if (582208 != 0) { mode == 0 ? 1ba228 : (sub-mode != 5 ? 1ba448 : nothing) }.
+  582208 is the enable word written by 1b9e00(flag).
+1ba120: 582230 = 10; 582234 = 0.
+1ba148 (blink clock, once per call of 1ba228/1ba448):
+  582234 == 0: if (++582230 >= 60) 582234 = 1      -> counts up, hidden
+  582234 != 0: if (--582230 == 0) 582234 = 0       -> counts down, shown
+  returns 582234 (also stored in byte 582200). Period 120 frames: shown 60, hidden 60
+  (first hidden span after 1ba120 is 49 frames).
+1ba448 (modes != 0), when the clock returns 1, for seat s in {0, 1}:
+  drawn for s == 1 in mode 1, s == 0 in mode 2 (and both in mode 0, unreachable through 1ba1b0);
+  no test of mode 3 or others: they draw nothing.
+  gameData+0x2c == 1 || gameData+0x30 == 1 (result latched / pause menu):
+      1b9880: one sprite 4c3f10[0] = (u 1, v 105, w 124, h 12) at (0x10, 0x10) seat 0,
+              (0x1e1, 0x10) seat 1, depth -600
+  otherwise: sprite 4c3ec8[0] at (0x10, 0x10) seat 0 / (0x1b0, 0x10) seat 1, then the three
+      records 4c3ec8[0..2] = (1,66,64,12) (60,92,64,12) (1,79,73,12) left to right from the same
+      x, each advancing x by its width (201 pixels in total); depth -600. Texture slot 27.
+      (The status bytes written by the empty hooks 110af0 always select this branch.)
+1ba228 (mode 0, attract demo): same clock; latched: 4c3f10[0] at (0xf9, 0x140); otherwise the
+  three 4c3ec8 records from (0xe0, 0x140); depth -600.
+INFERRED: 4c3ec8 is the three-piece "PRESS START BUTTON" legend and 4c3f10[0] its alternative
+shown while joining is blocked; the texture of slot 27 was not decoded here.
+src/console_title_art.cpp draws the title-scene variant of the same legend.
+
+
+8  UNKNOWN / not done
+---------------------
+
+  - Panel and prompt pixels (texture slots 1, 10, 27) are described, not rendered or compared.
+  - 14dac8 / 14dc00 were not executed by the validator (existing native ports are trusted);
+    the kind tables above are validated from the point where their result is in a register.
+  - Guard, throw-victim and script-damage handlers were not re-read for score calls; the ELF
+    contains no jal/j to 14e838 or 14e8d8 other than the ten listed (exhaustive opcode scan).
+  - 1e7a78 / 213be8(1) effect on the music stream.
+  - Record+0x0c reset points (combo end) are those of the existing native hitCount0c.
+
+
+9  Corrections to docs/mode-battle-branches.txt
+-----------------------------------------------
+
+  - Section 8: the pay-out sound (-1, 0x42) is requested on EVERY counted frame of phases 0..3
+    and 5, not every second frame (the toggle word 582990 is cleared after each request).
+  - Section 8: 58298c is not "the winner"; it is 1 when seat 0 has not reached its required wins.
+  - Section 8: 1c7e00 latches the life of seat 582988 (the seat with more HUD life), not of a
+    fixed seat; 582980 marks a 200-life round (bonus x200, label PERFECT).
+  - Section 8 caller list: 157ac4 and 157be0 are the tail calls of the second (counter, kind
+    0x10) award inside 157a58 / 157b50, not independent events.
+  - Section 13: 1bc098 passes x from word[58224c + 4*mode] (115 / 571), y 0x10, depth -0x12d.

@@ -36,6 +36,7 @@ namespace {
 uint32_t resultPad(uint32_t logical) {
     constexpr std::array<uint32_t,8> physical{0x400,0x200,2,4,0x400000,0x800000,0x100000,0x200000};
     uint32_t bits=logical&0xf8;
+    if(logical&PadSelect)bits|=0x80000;
     for(unsigned i=0;i<physical.size();++i)if(logical&(PadLight<<i))bits|=physical[i];
     return bits;
 }
@@ -56,7 +57,7 @@ void storeMeter(StateEntryActor& a,const DamageActor& m) {
 }
 NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusMode mode,const NativeMatch* rematchFrom,
                          std::array<unsigned,2> spirits,std::optional<VersusLineup> selection,int selectedStage,
-                         std::array<CpuSeatDecision,2> cpuSeats)
+                         std::array<CpuSeatDecision,2> cpuSeats,const MatchRules* rules)
     :assets_(path),lineup_(selection.value_or(rematchFrom?rematchFrom->lineup():VersusLineup{{{0,spirits[0],0},{0,spirits[1],1}}})),
      resourceSlots_{lineup_[0].character,lineup_[1].character,51},
      banks_{ActionBank(path,true,resourceSlots_[0]),ActionBank(path,true,resourceSlots_[1])},
@@ -67,9 +68,13 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
      aux_(path,resourceSlots_),angleTrig_(path),damage_(path),reactions_(path),judgments_{JudgmentData(path,resourceSlots_[0]),JudgmentData(path,resourceSlots_[1]),JudgmentData(path,51)},collisions_(path),projectiles_(path),
      combat_(path),rounds_({initialize_,ground_,effects_,stage_,captions_,ending_,lock_,&sounds_}) {
     auto& b=battle_;
+    system_=rematchFrom?rematchFrom->system_:std::make_shared<SystemData>(path);
+    palettes_=rematchFrom?rematchFrom->palettes_:std::make_shared<EditedPalettes>(path);
     // 1183f8 + 1b8bc0: the factory volume setting is 100, scaled by 0.25 * 512.
     b.audio.streamParameter5a9e78=0x3200;
     const auto& limits=BattleRoundState::roundTimeLimits;
+    if(rules){rules_=*rules;explicitRules_=true;}
+    else if(rematchFrom&&rematchFrom->explicitRules_){rules_=rematchFrom->rules_;explicitRules_=true;}
     if(mode==VersusMode::Console) {
         if(rematchFrom) {
             const auto& old=rematchFrom->battle_;
@@ -88,11 +93,26 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
             if(roundTime==-1)roundTime=limits.at(old.timeOption13c);
         }
         b.matchEnd.submodeA0=2;
-        b.matchEnd.metadataStage04=selectConsoleVersusStage(b.random,selectedStage_);
+        // 1398c0 draws the VS/practice stage (139be8); arcade and the demo
+        // take the stage the schedule already stored in GameData+4.
+        b.matchEnd.metadataStage04=explicitRules_&&rules_.stage>=0?rules_.stage:selectConsoleVersusStage(b.random,selectedStage_);
     }
+    // A caller that owned the RNG between scenes supplies it; this replaces
+    // the copy inherited from the previous fight.
+    if(rules&&rules->random)b.random=*rules->random;
     for(unsigned arena=0;arena<combatStages_.size();++arena) {
         combatStages_[arena].stage=arena;
         if(rematchFrom)combatStages_[arena].inheritRematch(rematchFrom->combatStages_[arena]);
+    }
+    if(explicitRules_) {
+        b.gameMode=rules_.gameMode;b.matchEnd.submodeA0=rules_.submode;b.battleKind123a0c0=rules_.battleKind;
+        b.damagePercent43d061=rules_.damagePercent;b.gameLevel43d05c=rules_.gameLevel;
+        // 13f9f0: GAME TIME 0/1 select 60/90 and any other value no limit;
+        // the demo and practice always run without a clock.
+        // An explicit round time (command line) or a rematch keeps its value.
+        if(b.gameMode==0||b.practice())roundTime=0;
+        else if(b.survival())roundTime=99; // 13fc08: clock option 2
+        else if(roundTime==-1)roundTime=rules_.gameTime==0?60:rules_.gameTime==1?90:0;
     }
     // Stage 11's constructor (1b3e20) draws fourteen library random numbers.
     // The loader calls 1a4a98 at 139700, directly after the stage is chosen
@@ -145,7 +165,8 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         a.damageCharacterA18=logicCharacter(lineup_[1-i].character); // 148ea0 aliases 42 too
         f.config.system=pick.spirit;
         a.fieldA28=f.body.field20=pick.palette;
-        if(rematchFrom)b.match.players[i].requiredWins=rematchFrom->battle_.match.players[i].requiredWins;
+        if(explicitRules_)b.match.players[i].requiredWins=b.practice()||b.survival()?1:rules_.requiredWins[i];
+        else if(rematchFrom)b.match.players[i].requiredWins=rematchFrom->battle_.match.players[i].requiredWins;
         f.body.timeline.setObjectFlags(0x10000000u|(i<<19),0x40000000,0x40);
         f.body.timeline.setSoundObserver([this,i](int16_t c,const ActionClock& clock){
             auto& f=fighters_[i];
@@ -158,14 +179,71 @@ NativeMatch::NativeMatch(const std::filesystem::path& path,int roundTime,VersusM
         });
         a.flags23c=0x1000;a.state1a4=0xffffffffu;a.fieldA30=200;a.registry28c[2]=0xffffffffu;
         f.sampling.player=i;f.sampling.expectedFacing=i!=0;f.sampling.gameMode=b.gameMode;
-        for(unsigned k=0;k<8;++k)mappings_[i].normal[k]=mappings_[i].mode6[k]=1u<<(8+k);
+        for(unsigned k=0;k<8;++k)mappings_[i].mode6[k]=1u<<(8+k);
         human_.initialize(f.input,f.config);
         GroundStateRuntime::captureBody(f.body,a);
     }
+    applyKeyMasks();
     // 139760 runs 13fd80 inside the scene-transition callback. At the
     // black midpoint the fighters and clock already exist; priority 50
     // can sample the next pad only on the following scheduler dispatch.
+    if(b.practice())enterPractice();
+    if(b.survival()) {
+        survival_=rules_.survival;
+        if(!survival_)throw std::invalid_argument("A survival fight needs its run");
+        b.survivalLife=survival_->run.carriedLife();b.survivalClock=survival_->run.carriedClock();
+        b.matchEnd.endFlagA4=0;
+        for(unsigned i=0;i<2;++i) {
+            // 14ff58: without an introduction the first request (normal 0) must not read as a repeat.
+            fighters_[i].actor.state194=0xffffffffu;
+            // 148df0 stores the control kind of setup+8 before 13fd80 carries the human's life over.
+            if(rules_.cpuLevel[i]>=0){fighters_[i].actor.controlKindA20=1;fighters_[i].actor.controlModeC8=35;}
+        }
+    }
+    // The inherited scene-audio latch belongs to the previous fight or the select scene.
+    if(rules&&(b.arcadeSeat()>=0||b.survival())){sceneAudioEntered_=false;rebindAudio_=true;}
     if(mode==VersusMode::Console)initialize_.begin(ground_,players(),b,effects_);
+    if(explicitRules_&&b.arcadeSeat()>=0) {
+        tallyTables_=std::make_unique<ArcadeTallyTables>(path);
+        arcadeScore_=rules_.score;
+        b.tallyEnter=[this] {
+            auto& world=tallyWorld_=tallyWorld();
+            tally_.enter(world);
+            battle_.matchEnd.endFlagA4=world.postMatchMenuA4;arcadeScore_=world.score90;
+        };
+        b.tallyUpdate=[this] {
+            // The task pays the clock and the life bars out step by step
+            // (1c8360, 1c8488), so its world persists across visits.
+            auto& world=tallyWorld_;
+            world.sceneSwitch18=battle_.matchEnd.field18;
+            const auto tick=tally_.tick(menuPressed_,world);
+            battle_.timers.values[0]=world.roundClock114;
+            arcadeScore_=world.score90;arcadeFinishBonus_=world.finishBonus582950;
+            for(int i=0;i<tick.sounds;++i)sounds_.sample(-1,0x42);
+            return tally_.done();
+        };
+        b.tallyLeave=[this]{tally_.leave();};
+    }
+    for(unsigned i=0;i<2;++i)if(explicitRules_&&rules_.cpuLevel[i]>=0) {
+        // 158830: Sugoroku (33) and Kuroko (48) always fight at level 8.
+        const auto raw=fighters_[i].actor.characterA14;
+        enableCpu(i,cpuFightLevel(b.survival(),raw,rules_.cpuLevel[i]));
+    }
+}
+ArcadeTallyWorld NativeMatch::tallyWorld() const {
+    const auto& b=battle_;
+    ArcadeTallyWorld w;
+    w.clockOption13c=b.timeOption13c;w.roundClock114=b.timers.values[0];w.survival=b.survival();
+    w.timeOption43d05d=uint8_t(rules_.gameTime);
+    for(unsigned i=0;i<2;++i) {
+        // The HUD bar record mirrors the fighter's life once the round has ended.
+        w.life[i].life14=fighters_[i].actor.fieldA30;
+        w.wins28[i]=b.match.players[i].wins;w.required2c[i]=b.match.players[i].requiredWins;
+        w.seatRequired20[i]=rules_.requiredWins[i];
+    }
+    w.score90=arcadeScore_;w.sceneSwitch18=b.matchEnd.field18;w.postMatchMenuA4=b.matchEnd.endFlagA4;
+    w.finishBonus582950=arcadeFinishBonus_;
+    return w;
 }
 std::array<RoundPlayerRef,2> NativeMatch::players() {
     auto ref=[](MatchFighter& f){return RoundPlayerRef{f.body,f.actor,f.input,f.config,f.storage,f.objects};};
@@ -278,8 +356,13 @@ bool NativeMatch::resolveStrike(const ContactEvent& e,const CollisionPlayer& fro
     b.flags23c=t.flags23c;b.flags244=t.flags244;
     const int category=projectile?projectileFinishCategory(*projectile,a,b,human_.bindings()):10;
     if(projectile&&!guard&&category==11)a.flags244|=0x80000000u; // 157b50 also records nonlethal technique hits.
-    recordContactFinish(a,b,stats,e,projectile!=nullptr,guard,counter,human_.bindings(),category);
-    const bool matchBlow=b.fieldA30>0&&b.pendingDamageA38>=b.fieldA30&&stats.wins+1>=stats.requiredWins;
+    // 157668: no finishing blow is recorded in practice.
+    if(!battle_.practice())recordContactFinish(a,b,stats,e,projectile!=nullptr,guard,counter,human_.bindings(),category,
+                                               StateCallbacks::hasSystemEffect(source.config)&&a.systemState13c==3);
+    // 155c64: a counter hit by a body sets record+0 (140a48) and counts actor+f27.
+    if(!projectile&&!guard&&counter&&a.characterBytesF22[5]<99)++a.characterBytesF22[5];
+    // 156f08: practice never arms the match-point blow.
+    const bool matchBlow=!battle_.practice()&&b.fieldA30>0&&b.pendingDamageA38>=b.fieldA30&&stats.wins+1>=stats.requiredWins;
     sounds_.contact(group,decision.defense,b.flags23c&0x1000,matchBlow,
                     counter,source.body.timeline.action().id(),battle_.random);
     if(!guard) {
@@ -374,8 +457,9 @@ void NativeMatch::scriptDamage(unsigned target,int base,DamageOrigin origin,int 
     battle_.queueLifeChange(victim,source.flags23c,amount);
     storeMeter(source,from);storeMeter(victim,to);
     interruptConcentration(target);
-    recordScriptFinish(source,victim,battle_.match.players[1-target],
-                       origin==DamageOrigin::ProjectileRecord,origin==DamageOrigin::CaptureScript,human_.bindings(),projectileCategory);
+    if(!battle_.practice())recordScriptFinish(source,victim,battle_.match.players[1-target],
+                       origin==DamageOrigin::ProjectileRecord,origin==DamageOrigin::CaptureScript,human_.bindings(),projectileCategory,
+                       StateCallbacks::hasSystemEffect(fighters_[1-target].config)&&source.systemState13c==3);
 }
 void NativeMatch::strikeMikiri(const ContactEvent& event,const CollisionPlayer& from,const CollisionPlayer& to,
                               const AuxiliaryObject& image,ContactMarks& source,ContactMarks& target) {
@@ -781,6 +865,11 @@ void NativeMatch::visitActor(unsigned i,const std::array<NormalizedPadSample,2>&
             a.flags248|=0x80;
         }
     }
+    // 14959c: with timer 28 expired a practice fighter's life returns to its maximum.
+    if(practice_&&practiceRefillsLife(*practice_,a.timers[28],int(a.character),int(f.body.timeline.action().id())))
+        a.fieldA30=a.maximumLifeA34;
+    // 1498d0: survival tracks the longest combo of the round in actor+f22.
+    else if(b.survival())a.characterBytesF22[0]=survivalMaxCombo(a.characterBytesF22[0],int32_t(b.match.players[i].hitCount0c));
     SystemCancelContext cancel;cancel.controlOwner=&a;cancel.controlInput=&f.input;cancel.controlConfig=&f.config;
     std::function<CpuCommand()> decideCpu;
     if(cpuLevels_[i]>=0)decideCpu=[this,i,&permission,&threat]{return runCpu(i,permission,threat);};
@@ -838,6 +927,12 @@ void NativeMatch::visitActor(unsigned i,const std::array<NormalizedPadSample,2>&
     frame.opponentInput=&other.input;
     frame.sound=&sounds_;frame.objects=&f.objects;frame.random=&b.random;frame.effects=&effects_;frame.weaponLock=&shared;
     frame.matchStats=&b.match.players[i];frame.opponentStats=&b.match.players[1-i];
+    if(practice_&&b.practice()) {
+        frame.training=true;frame.trainingRage=practice_->spiritGauge(int(i));
+        frame.trainingAction=practiceBehaviour();frame.trainingRecovery=practice_->ukemi();
+        // 149f20: the combo total restarts when the practising player's combo counter is cleared.
+        if(practice_->humanSeat()==int(1-i))frame.comboEnded=[this]{practiceBattle_->damage.comboEnded();};
+    }
     b.entry.player=i;b.entry.opponentFlagsB8=other.actor.flagsB8;
     std::array<uint32_t,4> wolfBefore{};
     if(a.character==19&&a.auxiliaryObject04) {
@@ -1101,8 +1196,140 @@ void NativeMatch::enterTitleAudio() {
     sounds_.bindPlayers(51,lineup_[1].character);
     sounds_.playMusic(1,0x3200);
 }
+void NativeMatch::enterOption(OptionScene scene) {
+    // 1ce478 seeds the animated background from the C library generator:
+    // 1800 draws in 1e1620, the variant draw, then one in 1e2358/1e23a0.
+    if(!menuCanvas_)menuCanvas_=std::make_unique<MenuCanvas>(assets_);
+    option_->enter(scene,menuBackdrop_.enter(battle_.random));
+}
+void NativeMatch::drawOption() {
+    // Page composition in the order of the original page routines. Only the
+    // primitives and the text submissions are compared with the original.
+    const auto& d=option_->draw;
+    auto& canvas=*menuCanvas_;auto& list=menuList_;
+    menuFade();
+    list.beginFrame();
+    MenuChrome chrome=option_->chrome;
+    chrome.band=d.band;chrome.legend=d.legend;
+    canvas.background(list,menuBackdrop_,battle_.random,chrome);
+    if(d.whiteScreen)canvas.rectangle(list,0,0,0x280,0x1c0,0xffffffffu,-400.f);
+    if(d.frameDrawn)canvas.frame(list,chrome,d.showPage,d.page,d.pageTotal);
+    canvas.banner(list,canvas.banners()[unsigned(d.banner)],d.alpha);
+    for(const auto& t:d.texts) {
+        if(t.highlight)canvas.marker(list,t.text,t.x,t.y,d.frame);
+        canvas.ascii(list,t.text,t.x,t.y,t.argb);
+    }
+    if(d.help)for(int copy=0;copy<d.helpCopies;++copy)if(d.helpVisible[unsigned(copy)]) {
+        MenuChrome still=chrome;still.helpX[0]=d.helpX[unsigned(copy)];
+        canvas.helpText(list,still,*d.help,false,d.alpha);
+    }
+}
+void NativeMatch::tickOption(const std::array<NormalizedPadSample,2>& pads) {
+    if(titleFadeTick_ && ++titleFadeTick_>=27)titleFadeTick_=0;
+    const auto menuPads=menuRepeat_.sample({resultPad(pads[0].held),resultPad(pads[1].held)},
+                                           {resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
+    const auto result=option_->tick(menuPads);
+    for(int id:result.sounds)sounds_.sample(-1,id);
+    drawOption();
+    if(result.request!=OptionScene::None && !sceneFade_.active()) {
+        pendingOption_=result.request;sceneFade_.begin(true);
+    }
+    // The transition task (priority 3c) runs after the page task (14).
+    if(!sceneFade_.tick())return;
+    if(pendingOption_==OptionScene::Title){option_.reset();returnToModeMenu();}
+    else if(pendingOption_==OptionScene::KeyConfig)enterKeyConfig();   // 13cdb0
+    else enterOption(pendingOption_);
+    pendingOption_=OptionScene::None;
+}
+bool NativeMatch::tickPause(const std::array<NormalizedPadSample,2>& pads) {
+    auto& b=battle_;
+    // The demo has no pause menu; practice replaces it with its own (17f790).
+    if(b.gameMode==0||b.practice()||b.survival())return false;
+    if(!pause_) {
+        pauseAssets_=std::make_unique<PauseMenuAssets>(assets_);
+        pause_=std::make_unique<PauseMenu>(*pauseAssets_);
+        keyAssets_=std::make_unique<KeyConfigAssets>(assets_);
+        widgetData_=std::make_unique<MenuWidgetData>(assets_);
+        skillData_=std::make_unique<SkillListData>(assets_);
+    }
+    auto& game=pauseGame_;
+    game.mode=b.gameMode;game.submode=b.matchEnd.submodeA0;
+    game.transitionLock=b.matchEnd.continue2c;game.challengerFreeze=b.matchEnd.field18;
+    if(pauseExit_!=PauseScene::None) {
+        // 1252f0(2,0,1da210,scene): black fade, then the destructor at the midpoint.
+        if(!pauseExitDone_&&sceneFade_.tick()) {
+            pause_->exitScene(game,pausePlayers_);pause_->teardown();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            if(b.matchEnd.submodeA0==2) {
+                const auto scene=pauseExit_;pauseExit_=PauseScene::None;
+                if(scene==PauseScene::Title)openTitle(true);else openCharacterSelect();
+            } else pauseExitDone_=true;
+        }
+        return true;
+    }
+    const auto menuPads=menuRepeat_.sample({resultPad(pads[0].held),resultPad(pads[1].held)},
+                                           {resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
+    const bool hold=pauseHold_;
+    if(pause_->poll(game,menuPads,false)) {
+        // 1d9cd8 creates both child tasks suspended at every open.
+        const unsigned seat=pause_->ownerSeat(game);
+        keyConfig_.start(*widgetData_,seat);
+        skillList_.emplace(*skillData_,*widgetData_,*system_);
+        skillList_->gameMode=unsigned(b.gameMode);
+        skillList_->listId=fighters_[seat].actor.characterA14+((fighters_[seat].actor.flags23c&0x100000)?0x32:0);
+        skillList_->enter(seat);
+    }
+    if(!pause_->active){pauseHold_=false;pauseDraw_={};drawPauseOverlay();return hold;}
+    const auto widgetPad=[&](unsigned i){return WidgetPad{resultPad(pads[i].held),menuPads[i].pressed,menuPads[i].repeat};};
+    std::vector<int> tones;
+    if(pause_->windowTask[0]==PauseMenu::Woken) {
+        const auto r=keyConfig_.tick({widgetPad(0),widgetPad(1)},*system_,*keyAssets_,false,tones);
+        applyKeyMasks();
+        if(r.returnedToPause){pause_->windowReturned();pause_->windowTask[0]=PauseMenu::Asleep;}
+    } else if(pause_->windowTask[1]==PauseMenu::Woken&&skillList_) {
+        auto r=skillList_->tick(widgetPad(pause_->ownerSeat(game)));
+        tones=std::move(r.tones);
+        if(r.event!=SkillListWindow::None){pause_->windowReturned();pause_->windowTask[1]=PauseMenu::Asleep;}
+    }
+    auto tick=pause_->tick(game,pausePlayers_,menuPads);
+    for(int id:tick.sounds)sounds_.sample(-1,id);
+    for(int id:tones)sounds_.sample(-1,id);
+    pauseDraw_=tick.draw;
+    b.matchEnd.field18=game.challengerFreeze;
+    tally_.setPaused(pause_->tallyPaused!=0);
+    if(tick.scene!=PauseScene::None){pauseExit_=tick.scene;pauseExitDone_=false;sceneFade_.begin(false);}
+    // 1392e8 is a one-frame request: this visit's request stops the next update.
+    pauseHold_=pause_->active!=0;
+    drawPauseOverlay();
+    return true;
+}
+void NativeMatch::openSoloSelect(unsigned seat) {
+    // 1cd348: ARCADE sets mode word 1/2 and sub-mode 1 before scene 128008.
+    battle_.gameMode=int(seat)+1;battle_.matchEnd.submodeA0=1;
+    openCharacterSelect(true);
+    characterSelect_->configure(int(seat)+1);
+    characterSelect_->random=battle_.random;
+    soloSelection_.reset();
+    selectAudioPending_=false;enterSelectAudio();
+}
+void NativeMatch::openChallengerSelect() {
+    // 1253e0 sets mode word 3 (sub-mode stays 1); the select runs both seats.
+    battle_.gameMode=3;battle_.matchEnd.submodeA0=1;
+    openCharacterSelect(true);
+    characterSelect_->configure(3);
+    characterSelect_->random=battle_.random;
+    soloSelection_.reset();
+    selectAudioPending_=false;enterSelectAudio();
+}
+void NativeMatch::returnToModeMenu() {
+    // 124d50 clears GameData before the title scene 127940; the mode menu
+    // reopens on the row that started the mode (582af8 is not reset).
+    battle_.matchEnd={};battle_.matchEnd.winner08=-1;battle_.gameMode=4;
+    title_.emplace(true,system_->modeMenuUnlock(),menuRow_);
+    titleFadeTick_=0;
+}
 void NativeMatch::openTitle(bool returningFromVersus) {
-    title_.emplace(returningFromVersus);
+    title_.emplace(returningFromVersus,system_->modeMenuUnlock());
     titleFadeTick_=0;titleAudioPending_=!returningFromVersus;
     if(returningFromVersus) {
         // 1db334 clears GameData before setting its continue and end flags.
@@ -1137,8 +1364,12 @@ void NativeMatch::openCharacterSelect(bool boot) {
         characterSelect_->stageOption=battle_.stageItemsOption4c3828;
         for(unsigned i=0;i<2;++i)characterSelect_->seats[i].palette=lineup_[i].palette;
     }
+    // The practice select (mode word 9/10) keeps its routing when it is reopened.
+    if(battle_.gameMode==9||battle_.gameMode==10)characterSelect_->configure(battle_.gameMode);
     faceoff_.reset();unavailable_=false;unavailableStage_=-1;missingMove_.clear();
     selectFade_=0;selectAudioPending_=boot;
+    // 1251d0 -> 1b6380(0): every scene switch of VS mode reads the cards into the runtime palette tables.
+    if(battle_.matchEnd.submodeA0==2)palettes_->loadVersusCards(*system_);
     if(!boot)enterSelectAudio();
 }
 VersusLineup NativeMatch::selectedLineup() const {
@@ -1205,6 +1436,9 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
     // 118148 visits the global PRESS START task before the scene and even
     // while 2P menus or combat hide its text. It survives scene replacement.
     promptClock_=(promptClock_+1)%120;
+    menuPressed_={resultPad(pads[0].pressed),resultPad(pads[1].pressed)};
+    if(tickMenuScene(pads))return;
+    if(option_){tickOption(pads);return;}
     if(title_) {
         auto& menu=battle_.consoleMenu;
         menu.samplePads({resultPad(pads[0].held),resultPad(pads[1].held)},
@@ -1217,6 +1451,62 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         for(int tone:title_->tones)if(tone>=0)sounds_.sample(tone==1?0:-1,tone);
         if(title_->announce)sounds_.voice(49,0);
         titleFadeTick_=title_->transitionTick;
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Option) {
+            // 1cd5fc: mode word 11/12, sub-mode 0, 1cfda0 clears the top cursor.
+            menuRow_=int(title_->firstRow());
+            battle_.gameMode=0x11+title_->confirmingSeat;battle_.matchEnd.submodeA0=0;
+            title_.reset();
+            if(!optionTables_)optionTables_=std::make_unique<ConsoleOptionTables>(assets_);
+            option_.emplace(*optionTables_,*system_);
+            option_->save=[this]{system_->saveFile();};
+            option_->load=[this]{system_->loadFile();};
+            option_->resetTopCursor();
+            enterOption(OptionScene::Top);
+            return;
+        }
+        if(titleFadeTick_==15 && (title_->confirmedMode==ConsoleMode::SpiritsEdit||title_->confirmedMode==ConsoleMode::ColorEdit)) {
+            // 1cd4f4 / 1cd538: mode word f/10, sub-mode 0, next scene 13ad40 or 13b160.
+            const bool colour=title_->confirmedMode==ConsoleMode::ColorEdit;
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            battle_.gameMode=0xf+title_->confirmingSeat;battle_.matchEnd.submodeA0=0;
+            title_.reset();
+            if(colour)enterColorEdit(seat);else enterSpiritsEdit(seat);
+            return;
+        }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Gallery) {
+            // 1cd54c: mode word d/e, sub-mode 0, 1d2610 clears the top row, next scene 1d22f8.
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            battle_.gameMode=0xd+title_->confirmingSeat;battle_.matchEnd.submodeA0=0;
+            title_.reset();
+            enterGallery(seat);
+            return;
+        }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Arcade) {
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            title_.reset();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            openSoloSelect(seat);
+            return;
+        }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Practice) {
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            title_.reset();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            openPracticeSelect(seat);
+            return;
+        }
+        if(titleFadeTick_==15 && title_->confirmedMode==ConsoleMode::Survival) {
+            menuRow_=int(title_->firstRow());
+            const auto seat=unsigned(title_->confirmingSeat);
+            title_.reset();
+            sounds_.stopMusic();sounds_.stopGroup(2);
+            openSurvivalSelect(seat);
+            return;
+        }
         if(titleFadeTick_==15) {
             menu.beginSet(title_->confirmingSeat);
             title_.reset();
@@ -1253,7 +1543,10 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
                 // enters the match in the same priority-60 dispatch.
                 sounds_.stopMusic();sounds_.stopGroup(2);
                 auto random=battle_.random;
-                const auto stage=selectConsoleVersusStage(random,characterSelect_->stage);
+                // ARCADE challenger (mode word 3, sub-mode 1): 1398c0 draws the arena when the
+                // fight starts; the console VS stage page does not run here.
+                const bool challenger=battle_.gameMode==3&&battle_.matchEnd.submodeA0==1;
+                const auto stage=challenger?0u:selectConsoleVersusStage(random,characterSelect_->stage);
                 if(!CombatStageState::supports(stage)||!playableFighter(logicCharacter(characters[0]))||!playableFighter(logicCharacter(characters[1]))||(picks[0].spirit>5&&picks[0].spirit!=8)||(picks[1].spirit>5&&picks[1].spirit!=8)) {
                     unavailable_=true;unavailableStage_=stage;
                 }
@@ -1270,6 +1563,16 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
             for(auto event:characterSelect_->audio)sounds_.sample(event.bank,event.tone);
             battle_.random=characterSelect_->random;
         }
+        if(characterSelect_->complete&&!characterSelect_->twoSided()) {
+            // 12f100 leaves through 1252f0(1,1,...); the session picks the next scene.
+            if(++selectFade_==36) {
+                const unsigned seat=unsigned(characterSelect_->soleSeat());
+                const auto& pick=characterSelect_->seats[seat];
+                soloSelection_=SoloSelection{seat,pick.selected,pick.palette,pick.spirit};
+                sounds_.stopMusic();sounds_.stopGroup(2);
+            }
+            return;
+        }
         if(characterSelect_->complete&&++selectFade_==36) {
             const auto picks=selectedLineup();
             sounds_.stopMusic();sounds_.stopGroup(2);
@@ -1279,10 +1582,11 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         return;
     }
     if(!sceneAudioEntered_) {
-        if(lineup_[0].character||lineup_[1].character)sounds_.bindPlayers(lineup_[0].character,lineup_[1].character);
+        if(rebindAudio_||lineup_[0].character||lineup_[1].character)sounds_.bindPlayers(lineup_[0].character,lineup_[1].character);
         sounds_.enterBattleScene(battle_.voiceGate5850e0!=0);
         sceneAudioEntered_=true;
     }
+    if(!finished&&!battle_.consoleMenu.active&&tickPause(pads))return;
     if(battle_.matchEnd.submodeA0==2) {
         auto& menu=battle_.consoleMenu;
         menu.samplePads({resultPad(pads[0].held),resultPad(pads[1].held)},
@@ -1343,6 +1647,11 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         updateVersusResult(result,{resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
         return;
     }
+    if(battle_.practice()){tickPractice(pads);if(practiceBattle_)drawPracticeOverlay();return;}
+    if(battle_.survival()){tickSurvival(pads);return;}
+    battleFrame(pads);
+}
+bool NativeMatch::battleFrame(const std::array<NormalizedPadSample,2>& pads,bool held) {
     auto refs=players();auto& b=battle_;
     ++updates;objectDraws_.beginFrame();draws_.clear();effects_.update();
     TaskDispatch tasks;tasks.call=[&](uint32_t handler,uint32_t task){
@@ -1366,10 +1675,11 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
     // Priority 50 publishes the delta for the next dispatch even after the
     // priority-5 gauge task has ended. KO slowdown still affects the arena.
     b.gauges.words910[5]=0;
-    if(b.pause.advance()){
+    // 139104..139134: the KO pause counts on every outer frame, also under a window pause.
+    if(const bool stopped=b.pause.advance();stopped||held){
         b.gauges.paused46a940=1;
         auxiliaryPhase(ObjectPhase::Draw);
-        return;
+        return stopped;
     }
     b.gauges.paused46a940=0;
     b.gauges.delta46a908=(b.gauges.scale1239d84*b.gauges.scale1239d88)>>8;
@@ -1381,7 +1691,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         // continue on their own clock on subsequent visits.
         finished=true;
         auxiliaryPhase(ObjectPhase::Draw);
-        return;
+        return false;
     }
     for(unsigned i=0;i<2;++i)fighters_[i].body.animate(resolveObjectDelta(fighters_[i].body.delta30,i,b.gauges));
     for(unsigned i=0;i<2;++i)fighters_[i].body.move(resolveObjectDelta(fighters_[i].body.delta30,i,b.gauges));
@@ -1417,7 +1727,7 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         // 1519a0 issues the heal label before HP is capped. A full notice
         // pool suppresses only the label and its sound, never the recovery.
         if(life.pendingDamage<0&&b.itemNotices.heal(int(f.body.timeline.motion().x)))sounds_.sample(-1,65);
-        ActorTimers timers{a.timerDelta,a.timers};commitLife(life,timers);
+        ActorTimers timers{a.timerDelta,a.timers};commitLife(life,timers,b.practice());
         a.fieldA30=life.life;a.pendingDamageA38=life.pendingDamage;a.flags23c=life.flags23c;
         a.queuedActionA3c=life.queuedAction;a.timers=timers.values;
     }
@@ -1490,5 +1800,6 @@ void NativeMatch::tick(const std::array<NormalizedPadSample,2>& pads) {
         spawnStageBomb(aux_,b.entry.tasks,b.objectTasks,b.stageItems.itemX());
         b.stageItems.clear();
     }
+    return false;
 }
 }

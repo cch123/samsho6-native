@@ -1,0 +1,130 @@
+RANKING SCENE 1e8850 (SLPS-25559): attract loop and arcade Game Over, data-driven drawing
+===========================================================================================
+Native port: src/arcade_ranking.hpp / .cpp (ArcadeRankingArt: tables, draw, rasteriser;
+ArcadeRanking: entry, visit, leave). Control (phases, rows, START, successor demo) stays in
+src/console_attract_ranking.* (validated by validate_console_attract_ranking.py) and is reused.
+Tables: work/ss6/extract_arcade_ranking.py -> arcade_ranking.bin (+ copies of rank_obj.tex,
+map_main.tex, cloud_l.tex, cloud_r.tex, face.tex into the viewer assets).
+Evidence: work/ss6/validate_arcade_ranking.py -> outputs/ss6-feasibility/arcade_ranking_validation.json.
+Everything below is OBSERVED in the disassembly and compared against the original routines in Probe.
+
+1. ONE SCENE, TWO ENTRIES
+-------------------------
+Title attract 127b08: 1252f0(2, 0, 127d70, 1e8850). Arcade Game Over 1387b8 frame 12c:
+1252f0(1, 1, 138a48, 1e8850); unlock notice exit: 1252f0(1, 1, 1e6130, 1e8850). The task is the
+same in all cases: 1e8850 starts the CPU demonstration fight (1483f8, ported as
+selectRankingDemo), 1b9e00(2) (START -> title through 1b9b80), the same phase machine and the
+same successor (1ccea0: DemoNG 1ca408 / DemoSG 1ea7f0, then title). The ONLY differences are data:
+  - the save tables 43d0f0 (streaks) and 43d118 (scores) after 1c5150 inserted the run's score;
+  - word 582450 (1c5280), the inserted score row, set by 1c4ff8 and reset to -1 by the scene's
+    destructor 1e89f0 (1c5270), so the attract loop that follows never highlights.
+There is no timing difference inside the task; the incoming fade kind/speed belong to the
+transition task. CORRECTION to docs/mode-arcade-results.txt 7: nothing else differs.
+
+2. ENTRY 1e8850 (after 1483f8, 112670(14, 1e8b38, 10, 1f42), 118320(1e89f0))
+-------------------------------------------------------------------------------
+memset(13735b0, 0, 264); 1e8a18 rank_obj -> slot 8; 1e8a60 face -> slot a; 585290 = (byte
+43d052 != 0) ("overseas" record variants); display copy; 1e9758(task, 0); 1b9e00(2);
+cloud record slots 4c81b4 = 1e, 4c81cc = 2b; 585294 = 585298 = 0.
+Display copy (rows of 18 bytes {index, value, spirit, character, name[8]}):
+  loop 1 (1e88e8): rows 0..19 = {i, W[i].value, W[i].byte5, W[i].byte4} reading 8-byte steps
+    from 43d0f0 (rows 5..19 receive score bytes and are overwritten by loop 2);
+  loop 2 (1e8930): rows 5..24 = {i, R[i].score, R[i].byte9, R[i].byte4, 1ea578(R[i].name)}.
+1ea578 converts each ASCII byte to one SJIS character (table 585300): A..Z -> index c-41,
+0..9 -> c-30+1e, '!' 28, '?' 29, '.' 2a, '/' 2b, '-' 2c, '_' 2d, other 21..5f -> index c (reads
+past the 46-entry table; unreachable), everything else (space, >= 80) -> 3-byte copy of 6634f8
+(full-width space + NUL). The loop follows the name to its NUL, past the four name bytes. An
+empty name leaves the stack buffer uninitialised (unreachable: 1c9d78 substitutes defaults).
+
+3. VISIT 1e8b38 (priority 20)
+-----------------------------
+3db8fc = 1; save 3db900; 1ea708(ff, ff, ff, ff) (white); phase callback 5852c8[phase](task);
+restore 3db900. 1ea730(a, r, g, b) = clamp8(a)<<24 | clamp8(r)<<16 | clamp8(g)<<8 | clamp8(b).
+Phase callbacks (T = task+260 before the visit, firstRow = task+25c):
+  0 1e8bb8  -> phase 1.
+  1 1e8bd0  T >= 1e0: 117180(200, 200, 2); 117108(0, min(2(T-1e0), 78)). No draw. 21c -> 2.
+  2 1e8c88  Bezier 6632c0 (60 steps) -> y; 1ea318(a0, trunc(y) + 18). 3c -> 3.
+  3 1e8d00  stage = T < 78 ? 0 : T < f0 ? 1 : 2 (age0 = T, 0, T - f0); 1ea318(a0, 18);
+            row i 0..4: age = clamp(age0 - 12(4-i), 0, 59);
+              stage 0: strip alpha trunc(age * 2.1333333), Bezier 6632e0 (even) / 663300 (odd);
+              stage 1: strip alpha 80, x offset 0;  stage 2: alpha trunc(128 - age*2.1333333),
+              Bezier 663320 / 663340; offset = trunc(out[1]);
+              1145c0(0, 48i + 64, 280, 28, strip ffffff, z -99); 1e9768(row[first + i],
+              offset + 28, 48i + 60). 168 -> 4.
+  4 1e8f78  Bezier 663370 -> 1ea318(a0, trunc(y) + 18). 3c -> 5.
+  5 1e8ff0  T < 3c: 117180(200, 200, 2); 117108(0, max(78 - 2T, 0)). No draw. 168 -> 6.
+  6 1e90a8  1ea7b8(1ea730(4T, ff, ff, ff)); 4T >= ff: phase 7, 115a00 (CLUT cache reset),
+            112f30(ffffff, 404040), 148528 (battle destroyed); T++ afterwards.
+  7 1e9140  1e8aa8 (cloud_l -> slot 1e, cloud_r -> slot 2b), 10b640(1), 3d3aa0 = -1 (113028
+            reveal limit off), phase 8, 1ea7b8(white).
+  8 1e91a0  T < 3c: map(0, 0, 1.0); clouds at x 0 and a0 (y -16, z -100); 1ea7b8(white).
+            T < b4: age = min(T - 3c, 77); Bezier 663390 (120 steps); map(0, 0, 1.0);
+              3db900 = 1ea730(trunc(out[0]), ff, ff, ff); clouds at -trunc(out[1]) and
+              trunc(out[1]) + a0; 1ea7b8(1ea730(ff - 4 age, ff, ff, ff)).
+            else: Bezier 6633b0 (60 steps, age T - b4); map(xy, xy, out[1] / 100) with
+              xy = trunc((out[0] / 100) * 0.0) (always 0). f0 -> 9.
+  9 1e9438  map(0, 0, 2.0); 3db900 = 1ea730(5T, ff, ff, ff); 1ea378(a0, 18). 3c -> a.
+  a 1e94d0  T == 0: firstRow = 13. e = T - 48(13 - first); grey g = 255, or 5af - 4e when
+            e >= 12c; s = min(e, 48). 3db900 = (ff, g, g, g); f = float(-(T >> 2)):
+            offset = f < -462 ? 0 : trunc(f) (the diagonal scroll restarts); map(offset,
+            offset, 2.0); 1ea378(a0, 18); rows i < 6 with first + i < 20: alpha ff, row 0
+            (s - 32) * 11, row 5 ff - 11 s (255 / 22 = 11, integer); 3db900 = 1ea730(alpha,
+            g, g, g); 1e97d8(row[5 + first + i], d, s + 18 + 48 i). s >= 48: first = max(first
+            - 1, 0); e >= 168 -> phase b; T++ (also after the phase change).
+  b 1e9710  1b9dd0() == 0 -> 1ccea0; phase c.   c 1e9750  nothing.
+Bezier 1ea4a8(out, P, n, t): returns 0 and leaves out untouched unless 0 <= t < n; f0 = 1.0 /
+float(n-1), u = t*f0, v = 1 - u; per component k: a = P[k]*v*v, b = 3P[k+2]*u*v, c = 3P[k+4]*u*u,
+d = P[k+6]*u*u; out[k] = MADD(MADDA(MADDA(MULA(a, v), b, v), c, v), d, u) (each product and
+sum rounded, the finite ScalarFloat model).
+
+4. DRAW HELPERS (records {u, v, w, h, flags, slot}; pic = 117a00(record, flags, 3db900, x, y, z))
+--------------------------------------------------------------------------------------------
+  1ea318(x, y)  pic(4c7f60 + 18*ov, z -100)   streak header ("連勝")
+  1ea378(x, y)  pic(4c7f30 + 18*ov, z -100)   score header
+  1ea7b8(c)     1145c0(0, 0, 280, 1e0, c, z -200)
+  1ea3d8(x, y, s)  113be0(slot 5852a0 = 29, x, y, trunc(640 s), trunc(480 s), 0, 0, 1024, 818):
+                113be0 submits through 1149d0 at the PLAIN depth-counter value (114d78: z =
+                float(3db8f4++), no 10000000 bias) with the unfaded 3db900; the map is behind
+                everything. 108118 clamps the texel span to 1023.
+  1e9870(x, y, c)  pic(4c7fa8, x, y, -100); 122ab8(c, x + 1c, y + 1c, -150); pic(4c7f90, x, y, -180).
+  122ab8(c, x, y, z)  bank = 115d40(c*5, 1f) (24-entry CLUT cache, use marks released every
+                frame by 111890 -> 113aa8); 10add8(a, bank); 113f98(a, x - 28, y - 28, z, 64, 64,
+                u = (c % 8)*64, v = (c / 8)*64, 64, 64).
+  1e9768(row, x, y) (streak): 1e99c0(x + 10, y + c, index); 1e9f98(x + d8, y, value);
+                1e9870(x + 75, y - 4, character).
+  1e97d8(row, x, y) (score): 1e9c40(x + 8, y + c, index); 1e9958(x + b0, y, spirit);
+                1ea160(x + fa, y, score); 1ea2e8(x + 217, y + c, name) = 113028(name, x, y,
+                3db900); 1e9870(x + 6e, y - 4, character).
+  1e99c0(x, y, i) ordinal, z -100: i < 3: pic(4c7ea0 + 18 i (ov: 4c7ee8 + 18 i with the flags
+                word of 4c7ea0 + 18 i), x + 9, y - c). Otherwise the digits of i + 1 (tens, ones;
+                leading zero skipped, x advances 18 per position either way) pic(4c7d80 + 18 d,
+                x' (ov: x' + 20), y); suffix: jp pic(4c7e70, x + 30, y); ov n = 2 - drawn:
+                pic(4c7e88, n == 1 ? x + 13 : x + 18 n, y - 5).
+  1e9c40        the same with z -100 (663404) and the HIGHLIGHT prologue: when 1c5280() == i,
+                B = blue byte, A = alpha byte of 3db900, t = 585294:
+                  585298 == 0: g = B + (-B*t)/60   585298 != 0: g = B*t/60   (signed division)
+                  t < 60: 585294 = t + 1, else 585294 = 0 and 585298 toggles;
+                1ea708(A, g, g, g); after the ordinal 3db900 is restored. Only the rank
+                ordinal pulses; the pulse advances once per visit while the row is drawn.
+  1e9f98(x, y, v) streak: pic(4c7d20, x - a, y); positions 7..1 at x + 20 k: k >= 4 always the
+                filler 4c7d08, k <= 3 digit pic(4c7c18 + 18 d); pic(4c7fc0 + 18 ov, x + e0, y);
+                pic(4c7d38, x + 120, y - 7).
+  1ea160(x, y, s) score: pic(4c7d20, x - a, y); seven digits 4c7c18 + 18 d (leading zeros);
+                pic(4c7d50 + 18 ov, x + e0, y); pic(4c7d38, x + f8, y - 7).
+  1e9958(x, y, s) spirit: pic(4c7ff0 + 18 (s + 6 ov), x, y, -100).
+  1ea460(n, k): k-th decimal digit from the right with signed division.
+113028 draws Goth24 glyphs at the depth 114e40(3d3aac) without a tie-break increment.
+A zero 3db900 reaching 117a00 (alpha 0 row with grey 0) latches the additive preset (tag 2ff2).
+
+5. PORT AND WIRING
+------------------
+ArcadeRankingArt::table(SystemData) = the display copy; draw(canvas, list, frame, table,
+highlight, pulse) = one 1e8b38 visit for ConsoleAttractRanking::draw; rasterise() samples slots
+8, 29, 1e, 2b and a (face: the character travels in MenuDrawRecord::glyph) and hands Flat /
+Glyph records to MenuCanvas::rasterise. Phases 0..6 compose over the demonstration battle,
+7..12 over the black display clear.
+ArcadeRanking: enter(art, system, random, run.rankingHighlight, held) at the transition's
+new-scene entry (returns the demo fight for the battle pipeline); tick(start, alternateDemo) once
+per visit (the 1e9c40 pulse step is applied here, drawPulse keeps the value the draw uses);
+draw(); at the transition midpoint the battle's 148528 and leave(run) (1c5270: rankingHighlight
+= -1). The destination is RankingDestination::Title (START) or DemoNG / DemoSG.

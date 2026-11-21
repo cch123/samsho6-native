@@ -1,0 +1,375 @@
+SPIRITS EDIT MODE and COLOR EDIT MODE - drawing (SLPS-25559)
+============================================================
+
+Scope: the draw side of tasks 0x13ada0 (SPIRITS EDIT) and 0x13b1c8 (COLOR EDIT) and of
+the shared widget library they call. The logic side is docs/mode-edit.txt; the widget
+state machines are docs/mode-gallery.txt PART A.W. Everything below was read from the
+instructions and then confirmed by work/ss6/validate_edit_art.py, which runs the original
+tasks with their draw routines executing and compares the submission queue 0x68c3c0 of
+every visit with src/edit_art.cpp. Statements not covered by that comparison are tagged
+UNVERIFIED. Addresses are hexadecimal; coordinates are integer pixels of the 640x448
+frame; colour words are written as the 32-bit values the routines pass (AARRGGBB for the
+flat primitives 0x1145c0 / 0x1143e0 / 0x1147d8, see src/menu_canvas.cpp).
+
+Native module: src/edit_art.hpp / .cpp (EditArt, EditFrame, EditPaletteBank,
+drawSpiritsEdit, drawColorEdit). Tables: work/ss6/extract_edit_art.py -> edit_art.bin.
+
+0. Draw order of the two tasks
+------------------------------
+
+  SPIRITS EDIT visit (0x13ae.. loop)         COLOR EDIT visit (0x13b3.. loop)
+  ----------------------------------         --------------------------------
+  17c210   depth cursor = 0, base = 0        17c210
+  1825b8   frame slides tick                 1825b8
+  ...      state machine                     ...      state machine
+                                             13bf00   portrait object   -+ each takes one
+                                             13bfd0   sprite object      | 17c228 step at
+                                             13c4f8   check-pose object -+ layer 900
+  20d9f8   editor (two panels + title box)   20c038   part selector (frame + tabs)
+  20ef38   slot list                         20f680   swatch row
+  182600   screen frame                      20fb58   sliders
+  17eac8   summary plate + icons             20ef38   character list
+                                             20f360   colour-number list + button icons
+                                             20ef38   copy/paste list
+                                             182600   screen frame
+                                             2129d0   reset dialog
+
+The submission order is not the paint order: every primitive carries a depth and the
+queue is resolved by depth (section 1). The backdrop picture is submitted in the middle
+of the list by 182600 and still ends up behind everything.
+
+1. Depth cursor and layers
+--------------------------
+  0x12d3850 float cursor, 0x4ee54c float base. 17c210 zeroes both; 17c250(f12) stores the
+  base. 17c228(z) returns z - cursor and then adds the constant 0x5f1f08 (0.1) to the
+  cursor. Every widget primitive asks for 17c228(base - K) with a per-primitive layer K
+  and hands the result to 114d88 (queue depth = 10000000 - z*100 + counter 3db8f4++).
+  A larger K is nearer the viewer; within one K a later request is 0.1 nearer.
+  The additions and subtractions on the cursor are inexact in single precision and use EE
+  add.s / sub.s rounding (toward zero): after 13 steps the cursor is 1.3000001907 and the
+  layer -1101.2999878, not the IEEE round-to-nearest neighbour. All other sums of these
+  routines are exact (integers and halves).
+  Layers: 500 flat backdrop (1817f0 kind 2); 700 bar shades (181c30, 181e88, 182118);
+  800 boxes, borders, scroll bars, sliders, tabs, title plate, summary plate (800 at
+  5f2028); 900 text, icons, summary icons, dialog shade, preview objects; 1000 text while
+  word 4ee85c is set (17e1f0; the reset dialog), 520 while 4ee860 is set (17e200; not used
+  by these scenes). 17e210 clears both words.
+  The option panel of SPIRITS EDIT is drawn with base -200 (20d2e8 with a1 != 0 loads the
+  float at 6647ac into the base and restores 0 at its end), which lifts the whole panel
+  200 units above the category panel it overlaps.
+  COLOR EDIT: the three object updates run before any widget draw and each consumes one
+  cursor step whether the object is hidden or not (13bf5c, 13c100 and 13c5b8 are reached
+  on the hidden paths too), so the first widget primitive of a COLOR EDIT visit sees
+  cursor 0.3.
+
+2. Box descriptor and box renderers (0x17c260 .. 0x17dd88)
+----------------------------------------------------------
+  17c260(F) clears a 0x30-byte descriptor: +0 style, +4 value, +c w = 1, +10 h = 1,
+  +14 x, +18 y, +1c outer = ff000000, +20 inner = ffffffff, +24 fill = 80ffffff,
+  +28 bar = ffffffff, +2c track = ff808080 (EditBox).
+  17c2d0(F, focused): focused -> fill c0101010, inner ffffffff, outer ff000080 (seat 0) or
+      ff800000 (seat 1); unfocused -> fill c0000000, inner ffa0a0a0, outer ff000060 /
+      ff600000. The seat is 178f90().
+  17c370(F, focused): outer = ff404040 unfocused, ff4040c0 focused seat 0, ffc04040
+      focused seat != 0; inner = ffffffff.
+  17c3d8(colour; x, y, w, h, t): hollow border, four 1145c0 rectangles at layer 800 in the
+      order left (X, Y, T, H), top (X, Y, W, T), right ((int)(x+w-t), Y, T, H), bottom
+      (X, (int)(y+h-t), W, T), capitals being the truncated arguments.
+  17c718(F, gutter): window. If gutter > 0: rectangle ((int)(x+w), (int)y, gutter, (int)h,
+      outer). Then by style: 0 -> border(outer; x, y, w, h, 5), inset 5; 1 -> border(outer;
+      x, y, w, h, 5), border(inner; x+5, y+5, w-10, h-10, 2), border(outer; x+7, y+7, w-14,
+      h-14, 2), inset 9; 2 -> five borders (outer 5; inner +5/-10, 5; outer +10/-20, 2;
+      inner +12/-24, 1; outer +13/-26, 1), inset 14; other styles: inset 0, fill only.
+      Fill rectangle ((int)(x+i), (int)(y+i), (int)(w-2i), (int)(h-2i), fill).
+  1147d8(colour; x0, y0, x1, y1, x2, y2, x3, y3; stack z): flat four-vertex strip in
+      argument order. It is culled by 114f20 before any depth is taken: all four x < 0
+      (the routine reads y3 in place of x3 in this one test), all x > 640, all y < 0 or
+      all y > 480. Coordinates are truncated by 105790 like the triangle 1143e0.
+  17c560(colour; x, y, w, h, t): diamond border, four strips at layer 800 (5f1f14), with
+      cx = x + w/2, cy = y + h/2:
+        (x, cy) (cx, y) (x+t, cy) (cx, y+t)          upper left
+        (cx, y) (x+w, cy) (cx, y+t) (x+w-t, cy)      upper right
+        (x, cy) (x+t, cy) (cx, y+h) (cx, y+h-t)      lower left
+        (cx, y+h-t) (x+w-t, cy) (cx, y+h) (x+w, cy)  lower right
+  17cb50(F): diamond box. Borders by style exactly as 17c718 but with 17c560 and the
+      insets 5 / 9 / 14, then the fill strip at layer 800:
+        (x + w/2, y + i) (x + w - i, y + w/2) (x + i, y + h/2) (x + w/2, y + w - i)
+      The right and the lower point use w where h would be expected; every caller passes
+      a square.
+  17ce58(F): tab (trapezoid, wide edge on top). X, Y, W, H are the truncated box values.
+      The slanted sides are evaluated in double precision through the soft-float library
+      (311390 int->double, 310ee0 add, 310f38 sub, 310fa0 mul, 311510 double->float) with
+      k1 = 1.2 (5f1f80) and k2 = 0.8 (5f1f88). Four strips, layer 800 (5f1f90):
+        outer: (X, Y) (X+W, Y) (X + 12 k2, Y+H) (X+W - 12 k2, Y+H)
+        inner: (X + k1, Y + k2) (X+W - k1, Y + k2) (X + 13 k2, Y+H - k2) (X+W - 13 k2, Y+H - k2)
+        outer: (X + 2 k1 + 1, Y + 2 k2) (X+W - 2 k1 - 1, Y + 2 k2) (X + 14 k2, Y+H - 2 k2) (..)
+        inner: (X + 7 k1 + 1, Y + 7 k2) (X+W - 7 k1 - 1, Y + 7 k2) (X + 19 k2, Y+H - 7 k2) (..)
+      The descriptor's fill colour is not used: the body is the second "inner" strip.
+  17d370(F): slider bar, all at layer 800. s = (int)(x + 12 - 2). Left arrow: four
+      triangles (s-12, y+9) (s, y) (s, y+19) with s advanced by +3, +1, +1 and colours
+      outer, inner, outer, inner. Right arrow from s = (int)(x + 186 + 12): (s+12, y+9)
+      (s, y) (s, y+19), s stepped by -3, -1, -1, same colours. Track rectangle
+      ((int)(x+12-1), (int)(y+6), 186, 7, +2c); if +4 > 0 the value rectangle (same origin,
+      width +4, height 7, +28). Borders: (outer; x+10, y+4, 188, 11, 2), (inner; x+10,
+      y+2, 188, 15, 2), (outer; x+10, y, 188, 19, 2).
+  17d790(F): four corner brackets (cursor), layer 800, 16 rectangles. With X = (int)x,
+      Y = (int)y, R = (int)(x+w-12), B = (int)(y+h-12):
+        top left     outer (X, Y, 12, 6) (X, Y, 6, 12)       inner (X+2, Y+2, 8, 2) (X+2, Y+2, 2, 8)
+        top right    outer (R, Y, 12, 6) (R+6, Y, 6, 12)     inner (R+2, Y+2, 8, 2) (R+8, Y+2, 2, 8)
+        bottom left  outer (X, B+6, 12, 6) (X, B, 6, 12)     inner (X+2, B+8, 8, 2) (X+2, B+2, 2, 8)
+        bottom right outer (R, B+6, 12, 6) (R+6, B, 6, 12)   inner (R+2, B+8, 8, 2) (R+8, B+2, 2, 8)
+  17dd88(F, flag): arrow head, two triangles at layer 800.
+        flag != 0 (tip left):  outer (x, y+h/2) (x+w, y) (x+w, y+h);
+                               inner (x+6, y+h/2) (x+w-2, y+3) (x+w-2, y+h-3)
+        flag == 0 (tip right): outer (x, y) (x+w, y+h/2) (x, y+h);
+                               inner (x+2, y+3) (x+w-6, y+h/2) (x+2, y+h-3)
+  17eed8(x, y, z, w, h): soft-edged black bar, as in A.W (W.6); alphas 0x4ee868.
+  17f090(F, count, visible, top, scale): scroll bar, layer 800 (5f2058):
+      rectangle ((int)(x+2), (int)(y+2), (int)(w-4), (int)(h-4), inner),
+      rectangle ((int)(x+4), (int)(y+4), (int)(w-8), (int)(h-8), ff000000),
+      track = (int)(h-8); thumb = max(track*visible*scale/count, 2);
+      offset = track - thumb; if top + visible < count: o = track*top/count and
+      offset = (track < o + thumb) ? track - thumb : o; if scale >= 2 and track <
+      offset + thumb: thumb = track - offset;
+      rectangle ((int)(x+6), (int)(y+4+offset), (int)(w-12), thumb, inner).
+
+3. Text layer (0x17db28 .. 0x17e428)
+------------------------------------
+  0x4ee548 is the text colour word; 17db28(c) stores it; 17db38(active, selected) stores
+  ffff0000 / ffffffff (active) or ffa00000 / ffb0b0b0 (inactive).
+  17e228(text, x, y, mode): K = 1000 / 520 / 900 (5f1ff4 / 5f1ff8 / 5f1ffc). It saves
+  word 348a8c, stores (int)114d88(base - K) there (this advances the queue counter),
+  calls 113828(17c228(base - K)), draws with 1135e8 (mode 0, colour word), 10a460 (mode 1)
+  or 109f08 (other), with R = byte 2, G = byte 1, B = byte 0, A = byte 3 of the colour
+  word, calls 113838 and restores 348a8c. An empty string still takes the depth and the
+  cursor step.
+  17e428(text, mode, plain; x, y): markup line. Depth as above with K at 5f2010 / 5f2014 /
+  5f2018, taken once for the line. advance = 20 (mode 1) or 24. Units of two bytes; a
+  zero in either position ends the line:
+      "CR"           return the address behind the token (the callers ignore it)
+      "MS"           if byte 43d0d6 == 0 every later unit is skipped
+      lead >= 0x80   one glyph: mode 1 -> 10a710 at ((int)x, (int)(y + 2)), otherwise
+                     10a1c0 at ((int)x, (int)y); x += advance
+      0x20           17e228(" ", (int)x, (int)y, mode 1 ? 1 : 2); x += advance/2; ONE byte
+      plain != 0     any other ASCII unit consumes ONE byte and draws nothing
+      "EX"           17e228("EXIT", (int)(x+1), (int)(y+3), ..); x += 2*advance + 1; ONE byte
+      icon tokens    I1..I9 -> 0..8, IA..IE -> 9..d, IW e, IH f, IZ 27; G1..G9 -> 10..18
+                     (dx -1, dy -2); L1 L2 -> 1f 20 (dy 5); R1 R2 -> 21 22 (dy 5); SC 2d;
+                     ST 1e (3, 2); SL 1d (3, 4); BO 19, BX 1a, BT 1c, BS 1b (2, 3);
+                     BP 23 (2, 1); OR 2a; PL 29.
+                     w = 17e038(icon; x + 1 + dx, y + dy, 17c228(base - 900));
+                     x += w; x += dx + 3. The icon layer is 900 whatever the text layer.
+      other ASCII    consumes ONE byte
+  17e038(n; x, y, z): 0 for n == -1, n == 5d, and n == 2d while byte 43d0d6 == 0;
+  otherwise 17df90(n < 33 ? slot 2e : slot 5, record 4ee6b8[n]; x, y, z), returning the
+  record width. 17df90 clears the additive latch (1142c8), sets 3db900 = ffffffff and
+  submits 113f98 with the record rectangle unscaled.
+  Icon records 2e..32 (slot 2e) are the part labels of COLOR EDIT; 33..5d (slot 5,
+  ps2_gage_1_2_3_all) are the spirit summary labels.
+
+4. Screen frame 0x1822a0 (EditFrame)
+------------------------------------
+  State and requests are as in A.W (W.7). Points settled by the binary for the layouts
+  used here:
+  - 1822a0 constructs the title bar with 181d70(-1), which already configures its slide
+    (0,-0x90) -> (0,0x10) and sets the "configured" word; later layout changes use 17f410
+    (end points only, no snap).
+  - Backdrop kind by layout (182318): 0 -> 1, 1/2/3/5 -> 0, 4/7 -> -1, 6/8/9/10 -> 1.
+    Kind 0 is 1ce628 (picture only), kind 1 is 1ce570 (picture and animated overlay),
+    kind 2 a flat ff000040 rectangle at layer 500. Both edit scenes use kind 0.
+  - Title plate index (181d70): layouts 0..10 -> 2, 7, c, c, 6, 9, e, d, f, f, a of the
+    17 records at 4c7660 (slot 2e). SPIRITS EDIT (layout 1) -> 7, COLOR EDIT (2, 3) -> c.
+  - Key-hint bar 181910: layouts 1, 2, 3 -> size 0x140 x 0x1c, text offset (0x1a, 2),
+    text 5f22c0, slide (0x2d0, 0x158) -> (0x140, 0x158) for either seat. Layouts 4, 7 and
+    5, 6, 8, 9, 10 mirror by seat (seat 1 slides in from the left to x = 0). Layout 0
+    changes only the slide, with the visible position as its "retracted" end.
+    Layouts b, c, d (second bar): (0x2d0, 0x13c) -> (0x140, 0x13c), texts 5f22f8, 5f2328,
+    5f2318.
+  - 182600 draws, in order: backdrop; title bar: 17eed8(x, y, layer 700, 640, 48),
+    plate at (x+0x10, y+0xc) layer 800, optional text 17e428(mode 2) at (x+0x168,
+    y+0x24); message bar: 17eed8(x, y, layer 700, 640, 48), text 17e428(mode 1) at
+    (x+0x10, y+0xc); first and second key bar: 17eed8(x, y, layer 700, w, h), text
+    17e428(mode 1) at (x+dx, y+dy). Before each text the colour word is set to ffffffff.
+    Bars are drawn at their slide position whether open or not.
+
+5. List widget draw 0x20ef38 / 0x20f1c8 / 0x20f360
+--------------------------------------------------
+  As A.W (W.4) for the large-row style: window(style 1; slide x, y, width, height;
+  gutter 10 when visible rows < rows), rows at ((int)(x+14), (int)(y+14) + 21 r) through
+  17e228 mode 1 with 17db38(active, row == cursor), then the scroll bar box (x + width -
+  9, y + 3, 14, height - 6) through 17f090(.., 1).
+  20f360(W) = 20ef38(W) followed by a button icon per visible row whose item index is
+  below 5: icon 0x59cd58[item] = {1b, 1c, 19, 1a, 21} at layer 900, position
+  ((int)(x + 26), (int)(y + 14 + 1) + 21 r); for visible row 4 the icon is drawn at
+  x - 3 and y + 1 (the wider shoulder-button record). The icon loop does not test the
+  widget's visible flag: the icons are submitted (off screen) while the list is hidden.
+
+6. SPIRITS EDIT widgets
+-----------------------
+  20d2e8(panel, raise) (category panel raise = 0, option panel raise = 1):
+      nothing when +14 == 0. Window: style 1, (slide x, slide y, width + 12, height),
+      gutter 10 when visible rows < rows; scroll bar box (x + width + 3, y + 3, 14,
+      height - 6). hasValues = value pointer of row 0 != NULL; bright = hasValues ?
+      active : 1. For each visible row r, item i = scroll + r, X = (int)(x + 2 + 14),
+      Y = (int)(y + 2 + 9 + 21 r):
+        cursor = (i == list cursor) and (hasValues or active)
+        cost colour: cursor row: disabled ? (bright ? ff8080c0 : ff6060a0)
+                                          : (bright ? ffff0000 : ffa00000)
+                     other rows: disabled ? ff606080 : (bright ? ffffffff : ffb0b0b0)
+        cost text sprintf("%2d", cost) or, for a negative cost, sprintf("+%d", -cost),
+            17e228 mode 0 at (X + (nameChars + valueChars)*9 + (value ? 0x21 : 0xd), Y + 3)
+        17db38(bright, cursor); label 17e228 mode 1 at (X - 2, Y); value (when present)
+            17e228 mode 1 at (X + nameChars*10 + 8, Y)
+      The "disabled" colour therefore reaches only the cost digits; label and value are
+      redrawn in the ordinary row colour. The option panel has no value column, so it is
+      always drawn "bright" and marks its cursor row only while it is active.
+  20d9f8(E): 20d2e8(categories, 0); 20d2e8(options, 1); if the category panel is visible:
+      window style 1 at (x + width - 0xbc, y - 0x20, 200, 36) with 17c2d0(active), text
+      colour ffffffff, title "POINT = %2d" through 17e228 mode 0 at ((int)(boxX + 28),
+      (int)(boxY + 11)).
+  17eac8(x, y, slot): plate 4c9120 = {511, 164, 254, 214} of slot 5 at (x, y), layer 800.
+      Icon list of 152988 (group, icon), index n; every icon at layer 900:
+        group != 5: 17e038(33 + group; x + 12, Y0), Y0 = y + 34 n + 5 - (group == 0x21),
+                    then 17e038(33 + icon; x + 12, Y0 + 16)
+        group == 5: the heading 17e038(38; x + 135, y + 5) for the first group-5 entry
+                    only (later entries skip both the 17c228 step and the call), then
+                    17e038(33 + icon; x + 135, e + 21), e starting at y and advancing 17
+                    per group-5 entry
+      Icon 5d (33 + 2a, the "none" entry) draws nothing.
+
+7. COLOR EDIT widgets
+---------------------
+  20c038(P) part selector, nothing when hidden. Frame: active -> 17c2d0 colours with fill
+      80ffffff, or 80808080 when the highlighted row is part 4; inactive -> outer
+      ff404040, inner ffa0a0a0, fill c0000000. Window style 1 (slide x, y, 296, 300).
+      Tabs 20c1a0 for every row from the last to the first except the cursor row, then the
+      cursor row (so it is the nearest):
+        colours: inactive as above; active unselected outer ff000000, fill 80ffffff;
+                 active selected 17c2d0. inner = selected ? ffffffff : ff808080.
+        box (x + 56 index, y + 300, 72, part 4 ? 24 : 28) through 17ce58;
+        active and selected: 17c370 + 17d790 on the box grown to h + 8 at y - 4;
+        label icon 2e + part (part 3 of fighter 11 shows the part-2 label) at
+        (boxX + d, boxY - 3 + h/2 - 5) with d = 17 (part 0), 16 (1), 21 (2), 14 (3),
+        21 (4), layer 900.
+  20f680(R) swatch row: frame as 20c038 (fill 80ffffff when active), window style 1
+      (x, y, 294, 74). Fifteen diamonds 17cb50 style 1, 32 x 32, at (x + 12 + 17 i,
+      y + 12 + (i even ? 18 : 0)) with fill = swatch word i and the frame's border colours.
+      Cursor: 17c370(active) + 17d790 on a 29 x 29 box at (x + 13 + 17 c, y + 13 +
+      (c even ? 18 : 0)).
+  20fb58(S) sliders: frame as 20f680, window style 1 (x, y, 294, 96). For channel row
+      r = 0, 1, 2 (stored fields bits 10-14, 5-9, 0-4; drawn red, green, blue):
+        17d370 at (x + 36, y + 13 + 25 r), value = field*6;
+            outer = ff4040c0 (seat 0) / ffc04040 when active and r is the channel cursor,
+                    else ff404040;
+            +28 (value bar) = ffff0000 / ff00ff00 / ff0000ff when active and selected,
+                    else ff800000 / ff008000 / ff000080; +2c (track) = ff808080
+        selected row: 17dd88(flag 0) on a 16 x 12 box at (barX - 19, barY + 3), colours
+            outer ff000000 / inner ffffffff (active) or ff404040 / ffa0a0a0
+        number colour: selected ffff8080 / ff80ff80 / ff8080ff, else ffa06060 / ff60a060 /
+            ff6060a0; ffa0a0a0 while the widget is inactive. sprintf(" %d") below 10,
+            otherwise "%d"; 17e228 mode 0 at (x + 252, y + 15 + 25 r)
+      Then two 80 x 80 diamonds 17cb50 style 1 at y - 82: the clipboard colour (word +90
+      with alpha ff) at x + 128, or x + 40 while +94 != 0, and the current colour 40
+      pixels to its left. Their border colours are 17c2d0(focused) while +94 != 0,
+      otherwise the active/inactive pair of the arrow above.
+      While +94 != 0 (copy/paste menu open): 17dd88 on a 40 x 32 box, 24 below the
+      diamond row, at currentX + 48 with flag 0 for +94 == 1 (copy: current -> clipboard)
+      or currentX + 42 with flag 1 for +94 == 2 (paste).
+  2129d0(D) dialog, only while visible and active: rectangle (0, 160, 640, 108,
+      c0000000) at layer 900; 17e1f0 (text layer 1000); message 17e228 mode 2 at
+      (320 - strlen*22/4, 188); "はい" at (248, 228) and "いいえ" at (350, 228) with
+      17db38(1, selected); 17e210.
+
+8. COLOR EDIT preview objects and palette path
+----------------------------------------------
+  The three objects are battle objects (0x11e2e8 + 0x11d528) and are submitted through the
+  character draw path (docs/character-draws.txt), not through the menu queue.
+  Per visit (after 17c210, before the widget draws):
+    13bf00(obj1, portraitVisible, colour): hidden (flags +104 |= 2) unless the argument
+        and word 124a180 are both non-zero; when shown with a loaded resource (+c0 != 0)
+        and bit 0 of the previous flags clear: 11d908(obj1, 3, 1, 0). Always: flags |=
+        0x200, 11dff8(obj1, 17c228(base - 900)), +20 = colour, 11d6c8, 11d868, 11d730.
+        (Correction to mode-edit.txt 3.8: the tested flag is bit 0, value 1.)
+    13bfd0 / 13c4f8: position, action and flip as mode-edit.txt 3.8; both always end in
+        +20 = colour + 0x10000, flags |= 0x200, 11dff8(obj, 17c228(base - 900)), 11d6c8,
+        11d868, 11d730.
+  So the depths of the three objects are -900, -900.1 and -900.2 (EE rounding), in front
+  of the widget boxes (layer 800) and interleaved with their text layer (900).
+  colorEditPreview() returns the three requests (EditPreviewObject): hidden flag, flip,
+  fighter, action and zero-based start record, position (+40, +44), depth and the palette
+  word +20. The portrait's action is driven by the ObjectAction requests of the logic
+  module (11d908(obj1, 3 or 4, 1, 0)) and by the 11d908(3) above.
+  Palette: the draw path calls 115d40(key, bank). EditPaletteBank is that routine for
+  every key (owner bits 10000 / 20000, selectors 40000 / 80000; mode-edit.txt 3.2) over
+  identity 439a48 / reference 439aa8 / busy 439b08 and the CLUT store 43ab70:
+      lookup  first entry with busy == 0 and identity == tag -> reference = 1, return row
+      alloc   first entry with busy == 0 and identity == -1, else first with busy == 0 and
+              reference == 0, else -1; the first colour of the group is cleared in the
+              SOURCE table; 116478 copies the sixteen colours to store[row*16 ..] and
+              marks them 16-bit
+      rows    5dd5c8 = {16..31, 12..15, 8..11}
+      1159d0  identity = -1, reference = 0, busy = 0
+      113aa8  per-frame entry: reference = 0 (so an entry not requested during a frame is
+              evictable in the next)
+  13ca58 pokes the edited colour into store[row*16 + index + 1] of the row it resolved,
+  which is the row the sprite samples in the same frame.
+  Object stores read for this slice (static, callees not ported):
+    11d570(obj, 0xb, x, y, flags) -> 11fed0 -> 11fef8(obj, slot 1, action 0, x, y, flags):
+        +c = +10 = slot, +14 = resource id of the slot (word 46a9a0[slot], the fighter),
+        +1c = fighter*5, +24 = 0, +40/+44 = float(x), float(y), +38 = flags | 10000000,
+        +20 = +28 = 0, +30 = 0x100; then 11d570 sets +cc = 0xb.
+    11d668(obj, id, x, y, flags) -> 1202c0 -> 1202e8: +14 = id, +1c = id*5,
+        +24 = id*32, +40/+44, +38 = flags | 10000000, +20 = 0; then +cc = 8, +c4 = +24,
+        +c = 0. The portrait is therefore placed at (400, 0) with id = the fighter.
+    Action setter 120390 (INFERRED to be the body behind 11d908): +24 = action, except
+        that an object whose +cc is not 0xb receives +24 = (+14 << 5) + action while word
+        46a9a0[0] is 0x63, i.e. while resource 99 occupies slot 0: the portrait object
+        indexes a block of 32 actions per fighter in resource 99 (actions 3 and 4 of the
+        block are the two the task requests).
+  Key: the ported fighter draw path (src/character_draw.cpp, 1208b0) passes object word
+  +1c plus object word +20 as the palette key. The sprite objects therefore resolve
+  (fighter*5 + colour) | 0x10000, the key 13ca58 itself resolves, and the portrait
+  resolves the stock key fighter*5 + colour: the portrait shows the unedited colour of the
+  highlighted colour number.
+  UNVERIFIED / not ported: the object engine behind 11d668 / 11d570 / 11d908 / 11d6c8 /
+  11d868 / 11d730 for these three objects (resource of the kind-8 portrait object,
+  restart rules of 11d908, camera 13f8a8), i.e. the fighter pixels themselves.
+
+9. Resources
+------------
+  slot 1   obj0_16 (ASCII sheet, 1135e8)           slot 4  PS2_menu_bg00_00 (backdrop)
+  slot 2e  ps2_common_icon (button icons, title plates, part labels)
+  slot 5   ps2_gage_1_2_3_all.pvr / .pvp, loaded by 17eab0 -> 12f050 (or the "_e" pair when
+           177140() == 1), 1024 x 1024, 32-bit CLUT of 256 entries at palette bank 0x300.
+           Used by the summary plate and the spirit labels (icons 33..5d).
+  GOTH_20 / GOTH_24 / GOTH_H fonts through the menu canvas.
+
+10. Corrections and additions to docs/mode-edit.txt and docs/mode-gallery.txt (A.W)
+-----------------------------------------------------------------------------------
+  - mode-edit.txt 3.8: 13bf00 tests bit 0 (value 1) of the previous flags before its
+    11d908(3); all three object updates take their 17c228 step and set +20 and flag 0x200
+    on the hidden paths as well.
+  - mode-edit.txt 2.6: the group-5 heading icon (38) is drawn once, not per entry.
+  - mode-edit.txt 3.6 slider note: channel row 0 (bits 10-14) is the RED bar
+    (value bar ffff0000), row 1 green, row 2 blue; the colour words of the flat
+    primitives are AARRGGBB.
+  - A.W W.5 "17cb50 is a different (quad-based) frame renderer": it is the diamond box of
+    the swatches; 17ce58 is the tab, 17d370 the slider bar, 17d790 the cursor brackets,
+    17dd88 the arrow head (section 2).
+  - A.W W.4 "20f360 ... UNKNOWN": section 5.
+  - A.W W.1: the 0.1 cursor steps need EE rounding to reproduce the queue depths.
+  - Texture slot 5 of both scenes is ps2_gage_1_2_3_all (mode-edit.txt section 5).
+
+11. Validation
+--------------
+  work/ss6/validate_edit_art.py -> outputs/ss6-feasibility/edit_art_validation.json.
+  Per visit of the original tasks: identical ordered queue (exact float bits, glyph texel
+  blocks), renderer globals, depth cursor and text colour; pixel-identical 640x480 frames
+  on sampled visits (queue painted by the reference painter of validate_menu_canvas.py;
+  GS rasterisation is not executed); the three preview requests against the object words
+  13bf00 / 13bfd0 / 13c4f8 wrote; EditPaletteBank against whole 115d40 / 1159d0 / 113aa8.
+  Not exercised by the two scenes and therefore unverified in the native port: EditFrame
+  layouts other than 1, 2, 3 and second-bar layouts b, c, d; window and diamond styles 0
+  and 2; the medium-row list style (bit 15) and the small-font list 20f050 (not ported);
+  markup tokens other than Shift-JIS glyphs, the space and BP / BO / BT / BX / BS / SL;
+  option byte 7e == 0 ("MS", icon 2d); a frame title text (181e68).

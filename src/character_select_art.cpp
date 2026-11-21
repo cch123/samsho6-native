@@ -38,6 +38,15 @@ CharacterSelectArt::CharacterSelectArt(const std::filesystem::path& assets):asse
     if(!spirits.read(reinterpret_cast<char*>(labels.indices.data()),labels.indices.size())||spirits.peek()!=EOF)
         throw std::runtime_error("Invalid stage names");
     fixed_.emplace(63,std::move(labels));
+    if(std::ifstream modes{assets/"character_select_mode_art.bin",std::ios::binary}) {
+        if(read(modes,4)!=0x314d5343)throw std::runtime_error("Invalid mode selection layout");
+        const auto modeQuads=read(modes,4),modeLists=read(modes,4),modePages=read(modes,4);
+        const auto firstList=unsigned(lists_.size());
+        loadPages(modes,modeQuads,modeLists,modePages,modeFamily);
+        const auto stopped=read(modes,4);
+        if(stopped>=modeLists||modes.peek()!=EOF)throw std::runtime_error("Invalid mode selection data");
+        stoppedHeader_=int(firstList+stopped);
+    }
     fixed_.emplace(46,loadAtlas("ps2_common_icon",512,false));
     fixed_.emplace(6,loadAtlas("ps2_gage_1_2_3_all",1024,false));
     fixed_.emplace(2,loadAtlas("obj1_16",512,true));
@@ -168,6 +177,17 @@ void CharacterSelectArt::spiritSeat(const CharacterSelect& state,unsigned side,s
     }
 }
 
+const std::vector<unsigned>& CharacterSelectArt::countdown(const CharacterSelect& state) const {
+    // 128a68 shows digits only while the countdown can run. Submode 2 (VS menu) takes the
+    // same 128be8 branch as PRACTICE in the original; the two-seat lists and their
+    // validators were taken with submode 0, so only submode 3 selects the glyph pair here.
+    if(state.submode==3) {
+        if(stoppedHeader_<0)throw std::runtime_error("Missing mode selection layout");
+        return lists_[size_t(stoppedHeader_)];
+    }
+    return lists_.at(headers_.at(size_t(std::clamp(state.drawRemaining/60,0,30))));
+}
+
 void CharacterSelectArt::paint(const CharacterSelect& state,std::span<uint8_t> rgba) const {
     const bool spirits=state.spiritDirectorVisible;
     if(spirits)menu_.paintMenuBackground(unsigned(state.spiritDrawFrame),rgba);
@@ -178,21 +198,32 @@ void CharacterSelectArt::paint(const CharacterSelect& state,std::span<uint8_t> r
         // 112838 dispatches spirit P2/P1 before the director. The original
         // timer uses the same three texture rectangles at its own depth.
         spiritSeat(state,1,draws);spiritSeat(state,0,draws);
-        for(auto index:lists_.at(headers_.at(std::clamp(state.drawRemaining/60,0,30)))) {
+        for(auto index:countdown(state)) {
             auto q=quads_[index];q.depth+=10900+int(draws.size());draws.push_back({q,&fixed_.at(q.slot)});
         }
     }
     for(unsigned side=0;side<2;++side) {
         const auto& seat=state.seats[side];
         const unsigned phase=unsigned(seat.drawPhase);
-        if(!phase)continue;
+        if(!phase||!seat.present)continue;
         if(phase>=lastCount.size()||seat.cell<0||seat.cell>=CharacterSelect::cells)throw std::runtime_error("Invalid selection animation state");
         int tick=std::max(0,seat.drawCount);
         // In phase 2 the third ring starts on tick 20. Subsequent frames use
         // the 50-update rings from 12bfa0 indefinitely while awaiting input.
         if(phase==2&&tick>69)tick=20+(tick-20)%50;
         tick=std::min(tick,lastCount[phase]);
-        const auto page=pages_.at({side,unsigned(seat.cell%6),phase,unsigned(tick)});
+        // Mode-dependent 12a418 lists: single-seat ARCADE/SURVIVAL layouts with their hint or
+        // record frame, and PRACTICE's second-seat label.
+        unsigned family=side;
+        switch(state.mode) {
+        case 1:family=modeFamily;break;
+        case 2:family=modeFamily+1;break;
+        case 11:family=modeFamily+2;break;
+        case 12:family=modeFamily+3;break;
+        case 9:family=modeFamily+4+side;break;
+        case 10:family=modeFamily+6+side;break;
+        }
+        const auto page=pages_.at({family,unsigned(seat.cell%6),phase,unsigned(tick)});
         for(auto index:lists_.at(page)) {
             auto q=quads_[index];const Atlas* atlas=nullptr;
             if(q.substitution==1) {
@@ -215,7 +246,7 @@ void CharacterSelectArt::paint(const CharacterSelect& state,std::span<uint8_t> r
             draws.push_back({q,atlas});
         }
     }
-    if(!spirits||state.characterDirectorVisible)for(auto index:lists_.at(headers_.at(std::clamp(state.drawRemaining/60,0,30)))) {
+    if(!spirits||state.characterDirectorVisible)for(auto index:countdown(state)) {
         auto q=quads_[index];q.depth+=int(draws.size());draws.push_back({q,&fixed_.at(q.slot)});
     }
     std::stable_sort(draws.begin(),draws.end(),[](const Draw& a,const Draw& b){return a.quad.depth<b.quad.depth;});

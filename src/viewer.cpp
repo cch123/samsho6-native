@@ -7,6 +7,8 @@
 #include "contact_trial.hpp"
 #include "trial_script.hpp"
 #include "local_versus.hpp"
+#include "arcade_art.hpp"
+#include "arcade_presentation.hpp"
 #include "fighter_roster.hpp"
 #include "character_select_art.hpp"
 #include "console_title_art.hpp"
@@ -725,10 +727,10 @@ struct VersusControls {
         static constexpr Binding keys[]={
             {SDLK_W,0,ss6::PadUp},{SDLK_A,0,ss6::PadLeft},{SDLK_S,0,ss6::PadDown},{SDLK_D,0,ss6::PadRight},
             {SDLK_J,0,ss6::PadLight},{SDLK_U,0,ss6::PadMedium},{SDLK_L,0,ss6::PadHeavy},{SDLK_M,0,ss6::PadKick},
-            {SDLK_F,0,ss6::PadSystem},{SDLK_T,0,ss6::PadStart},
+            {SDLK_F,0,ss6::PadSystem},{SDLK_T,0,ss6::PadStart},{SDLK_TAB,0,ss6::PadSelect},
             {SDLK_UP,1,ss6::PadUp},{SDLK_LEFT,1,ss6::PadLeft},{SDLK_DOWN,1,ss6::PadDown},{SDLK_RIGHT,1,ss6::PadRight},
             {SDLK_O,1,ss6::PadLight},{SDLK_LEFTBRACKET,1,ss6::PadMedium},{SDLK_I,1,ss6::PadHeavy},{SDLK_RIGHTBRACKET,1,ss6::PadKick},
-            {SDLK_BACKSLASH,1,ss6::PadSystem},{SDLK_RETURN,1,ss6::PadStart}};
+            {SDLK_BACKSLASH,1,ss6::PadSystem},{SDLK_RETURN,1,ss6::PadStart},{SDLK_BACKSPACE,1,ss6::PadSelect}};
         if(key==SDLK_K||key==SDLK_P)guard[key==SDLK_P]=down;
         for(const auto& b:keys)if(b.key==key) {
             if(down)keyboard[b.player]|=b.mask;
@@ -794,8 +796,59 @@ class VersusScreen {
             check(SDL_SetRenderDrawBlendMode(r,SDL_BLENDMODE_NONE));
         }
         if(paused){color(r,242,237,218);text(r,272,120,"PAUSED");}
+        // Provisional notices for scenes whose original picture is not ported.
+        if(!overlay.empty()) {
+            color(r,25,24,27);SDL_FRect banner{0,480.f-22.f*overlay.size()-14,640,22.f*overlay.size()+14};check(SDL_RenderFillRect(r,&banner));
+            color(r,255,255,255);
+            for(size_t i=0;i<overlay.size();++i)text(r,20,480.f-22.f*(overlay.size()-i),overlay[i]);
+        }
         check(SDL_RenderPresent(r));
     }
+    std::vector<uint8_t> menuPixels_,overlayPixels_,windowPixels_,fadePixels_,scenePixels_=std::vector<uint8_t>(640*480*4);
+public:
+    static bool arcadeScene(const ss6::ArcadeSession* arcade) {
+        using S=ss6::ArcadeScene;
+        return arcade&&arcade->presentation&&(ss6::ArcadePresentation::presents(arcade->scene)||
+               ((arcade->scene==S::Continue||arcade->scene==S::GameOver)&&arcade->presentation->current==arcade->scene));
+    }
+    // The 640x480 picture of the running arcade scene (--dump).
+    const std::vector<uint8_t>& arcadePicture(const ss6::ArcadeSession& arcade) {
+        arcade.presentation->paint(arcade,scenePixels_);
+        return scenePixels_;
+    }
+private:
+    std::optional<ss6::MenuCanvas> overlayCanvas_;
+    std::optional<ss6::ArcadeArt> arcadeArt_;
+    std::optional<ss6::ArcadeTallyTables> overlayTables_;
+    ss6::MenuDrawList overlayList_;
+    ss6::FreeSeatPrompt freeSeatPrompt_;
+    void arcadeOverlay(const ss6::NativeMatch& match,const ss6::ArcadeSession& arcade,bool scene) {
+        if(!overlayCanvas_){overlayCanvas_.emplace(assets_);arcadeArt_.emplace(assets_);overlayTables_.emplace(assets_);}
+        auto& canvas=*overlayCanvas_;auto& list=overlayList_;
+        canvas.setBrightness(match.system().brightness());
+        overlayPixels_.assign(640*480*4,0);
+        for(size_t i=3;i<overlayPixels_.size();i+=4)overlayPixels_[i]=255;
+        list.beginFrame();
+        const auto& run=arcade.run;
+        if(scene) {
+            if(arcade.scene==ss6::ArcadeScene::Continue)
+                ss6::drawArcadeContinue(canvas,list,arcadeArt_->tables(),arcade.continueScene.draw);
+            else ss6::drawArcadeGameOver(canvas,list,arcadeArt_->tables(),arcade.gameOver.draw,run.game.levelEnding!=0);
+        } else {
+            std::copy_n(frame_.rgba.begin(),std::min(frame_.rgba.size(),overlayPixels_.size()),overlayPixels_.begin());
+            const auto& b=match.battle();
+            const bool latched=b.matchEnd.continue2c==1||(match.pauseMenu()&&match.pauseMenu()->active);
+            ss6::drawArcadeScore(canvas,list,*overlayTables_,arcadeArt_->tables(),b.gameMode,b.matchEnd.submodeA0,match.arcadeScore());
+            ss6::drawFreeSeatPrompt(canvas,list,*overlayTables_,freeSeatPrompt_,b.gameMode,b.matchEnd.submodeA0,true,latched);
+            if(match.arcadeTally().active())ss6::drawArcadeTally(canvas,list,*overlayTables_,match.arcadeTally().draw);
+        }
+        arcadeArt_->rasterise(canvas,list,overlayPixels_);
+        for(size_t i=3;i<overlayPixels_.size();i+=4)overlayPixels_[i]=255;
+    }
+public:
+    const ss6::LocalVersus* session=nullptr;
+    std::vector<std::string> overlay;
+private:
     static void paintJudgments(SDL_Renderer* r,const ss6::NativeMatch& match) {
         const auto& camera=match.battle().camera;
         for(unsigned side=0;side<2;++side) {
@@ -835,6 +888,10 @@ class VersusScreen {
 public:
     explicit VersusScreen(const fs::path& assets):textures_(assets),rage_(assets),identity_(assets),assets_(assets) {}
     const Frame& paint(const ss6::NativeMatch& match,const fs::path& stageDump={},bool includeHudPortraits=false) {
+        if(match.menuScene()!=ss6::NativeMatch::MenuScene::None) {
+            match.rasteriseMenu(result_.rgba);
+            return result_;
+        }
         if(match.title() || match.characterSelect()) {
             const auto& selection=match.characterSelect();
             if(const auto& title=match.title()) {
@@ -845,7 +902,7 @@ public:
                     prompt=match.battle().matchEnd.continue2c?ss6::ConsoleTitlePrompt::Wait:ss6::ConsoleTitlePrompt::Start;
                 const auto white=match.selectWhiteLevel();
                 const auto level=white?white:match.battle().consoleMenu.fadeAlpha;
-                titleArt_->paint(d.modeMenu,d.firstRow,d.scrollDirection,d.scrollTick,d.titleTick,d.idleTick,result_.rgba,prompt,level,white>0);
+                titleArt_->paint(d.modeMenu,d.firstRow,d.scrollDirection,d.scrollTick,d.titleTick,d.idleTick,result_.rgba,prompt,level,white>0,d.unlock);
                 return result_;
             } else if(const auto& preview=match.faceoff()) {
                 const auto picks=match.selectedLineup();
@@ -860,6 +917,11 @@ public:
             if(white)for(size_t n=0;n<result_.rgba.size();n+=4)
                 for(unsigned c=0;c<3;++c)result_.rgba[n+c]+=((255-result_.rgba[n+c])*white)>>8;
             paintCurtain(match.curtainFrame());
+            // ARCADE challenger: the shutter of the kind-4 scene switch opens over the select.
+            if(session&&session->arcade()&&session->arcade()->transitionActive()) {
+                const auto& t=session->arcade()->transitionTask();
+                if(t.request.kind==4)paintCurtain(t.frame.curtain);
+            }
             return result_;
         }
         // The stage packets use their priority-10 projection. Fighters and hit
@@ -884,6 +946,20 @@ public:
         const auto& battle=match.battle();
         const auto& result=battle.resultScreen;
         const auto& menu=battle.consoleMenu;
+        if(match.menuScene()!=ss6::NativeMatch::MenuScene::None) {
+            // The menu pages are 448-line frames. The video output shows them
+            // over the whole 4:3 picture; the scaling belongs to presentation
+            // and leaves the rasterised frame (--dump) untouched.
+            const auto& image=paint(match);
+            check(SDL_UpdateTexture(texture,nullptr,image.rgba.data(),image.width*4));
+            const SDL_FRect lines{0,0,640,448};
+            check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_LINEAR));
+            check(SDL_RenderTexture(r,texture,&lines,nullptr));
+            check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_NEAREST));
+            // The art modules already apply the scene fade to their colours.
+            present(r,{},paused);
+            return;
+        }
         if(match.title() || match.characterSelect()) {
             const auto& image=paint(match);
             check(SDL_UpdateTexture(texture,nullptr,image.rgba.data(),image.width*4));
@@ -928,6 +1004,24 @@ public:
             present(r,result,paused);
             return;
         }
+        const auto* arcade=session?session->arcade():nullptr;
+        if(arcadeScene(arcade)) {
+            // The ARCADE presentation scenes, CONTINUE and GAME OVER with their objects.
+            arcade->presentation->paint(*arcade,scenePixels_);
+            check(SDL_UpdateTexture(texture,nullptr,scenePixels_.data(),640*4));
+            check(SDL_RenderTexture(r,texture,nullptr,nullptr));
+            present(r,{},paused);
+            return;
+        }
+        if(arcade&&(arcade->scene==ss6::ArcadeScene::Continue||arcade->scene==ss6::ArcadeScene::GameOver)) {
+            // Task_Continue / Task_GameOver. The stage picture and the
+            // loser's fighter object behind the art are not drawn yet.
+            arcadeOverlay(match,*arcade,true);
+            check(SDL_UpdateTexture(texture,nullptr,overlayPixels_.data(),640*4));
+            check(SDL_RenderTexture(r,texture,nullptr,nullptr));
+            present(r,{},paused);
+            return;
+        }
         paint(match,{},true);
         if(match.mikiriWhiteFrame()) {
             color(r,255,255,255);check(SDL_RenderClear(r));check(SDL_RenderPresent(r));return;
@@ -947,7 +1041,36 @@ public:
             present(r,result,paused);return;
         }
         const SDL_Rect arenaPixels{0,0,frame_.width,frame_.height};
-        check(SDL_UpdateTexture(texture,&arenaPixels,frame_.rgba.data(),frame_.width*4));
+        {
+            const uint8_t* pixels=frame_.rgba.data();
+            if(arcade&&match.arcadeTables()&&frame_.width==640) {
+                // Score, the free seat's PRESS START legend and the round tally
+                // are composed over the finished arena and HUD.
+                arcadeOverlay(match,*arcade,false);
+                pixels=overlayPixels_.data();
+            }
+            if(arcade&&arcade->presentation&&frame_.width==640) {
+                // The fade of the arcade scene switch (1252f0) into or out of the fight.
+                const auto& f=arcade->presentation->fadeShown;
+                if(f.vertexFade()&&f.level>0) {
+                    fadePixels_.assign(pixels,pixels+size_t(frame_.width)*frame_.height*4);
+                    const int level=std::min(f.level,256);
+                    const std::array<int,3> target{int((f.colour>>16)&0xff),int((f.colour>>8)&0xff),int(f.colour&0xff)};
+                    for(size_t i=0;i<fadePixels_.size();i+=4)for(unsigned c=0;c<3;++c)
+                        fadePixels_[i+c]=uint8_t((fadePixels_[i+c]*(256-level)+target[c]*level)>>8);
+                    pixels=fadePixels_.data();
+                }
+            }
+            if(frame_.width==640) {
+                // Pause menu, its key-configuration / skill-list windows and the
+                // PRACTICE window are drawn last, over everything else. The
+                // overlay works on a 640x480 surface; only the arena rows are shown.
+                windowPixels_.assign(640*480*4,0);
+                std::copy_n(pixels,size_t(frame_.width)*frame_.height*4,windowPixels_.begin());
+                if(match.composeBattleOverlay(windowPixels_))pixels=windowPixels_.data();
+            }
+            check(SDL_UpdateTexture(texture,&arenaPixels,pixels,frame_.width*4));
+        }
         color(r,23,26,29);check(SDL_RenderClear(r));
         SDL_FRect stage{0,0,640,448};check(SDL_RenderTexture(r,texture,&stage,&stage));
         color(r,242,237,218);
@@ -958,14 +1081,49 @@ public:
         text(r,20,453,"P1 WASD  J/U/L/M  E:F  START:T     P2 ARROWS  O/[/I/]  E:\\  START:ENTER");
         text(r,20,468,"LIGHT / MEDIUM / HEAVY / KICK     SPACE PAUSE    H BOXES");
         }
-        present(r,result,paused,menu.fadeAlpha);
+        // 1806e4: the survival controller covers the arena with a black rectangle of alpha 12d4cc8.
+        present(r,result,paused,std::max(menu.fadeAlpha,match.survivalFade()));
     }
 };
+// Session-wide save data options (--save FILE, --unlock-modes yes).
+fs::path saveFile;
+bool unlockModes=false;
+
+// Text lines for session states that have no ported picture yet.
+std::vector<std::string> sessionOverlay(const ss6::LocalVersus& session) {
+    std::vector<std::string> lines;
+    const auto& match=session.match();
+    // The pause menu family and the PRACTICE window are drawn with the
+    // original art by NativeMatch::composeBattleOverlay.
+    // SURVIVAL MODE: the candidate window 211e18, the message window 182600, the panel 1810f8
+    // and the defeated count of the HUD header 1bb2c8 have no ported art.
+    for(auto& line:match.survivalOverlay())lines.push_back(std::move(line));
+    const auto* arcade=session.arcade();
+    if(!arcade)return lines;
+    if(!session.arcadeNotice().empty())lines.push_back(session.arcadeNotice());
+    if(!arcade->notice.empty())lines.push_back(arcade->notice);
+    if(arcade->presentation)for(const auto& line:arcade->presentation->notices)
+        if(std::find(lines.begin(),lines.end(),line)==lines.end())lines.push_back(line);
+    return lines;
+}
+
 int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snapshot,const fs::path& dump,
               const fs::path& stageDump,
               unsigned updates,unsigned smoke,bool boxes,int roundTime,ss6::VersusMode mode,const fs::path& audioOut={},std::array<unsigned,2> spirits={},ss6::VersusEntry entry=ss6::VersusEntry::Fight,
               std::array<bool,2> cpuSeats={},int stage=0,bool items=false) {
     ss6::LocalVersus session(assets,roundTime,mode,spirits,entry,cpuSeats);
+    if(!saveFile.empty()||unlockModes) {
+        auto& data=session.system();
+        // The native file replaces the memory card; a missing or corrupt
+        // file leaves the factory image, as a failed card read does.
+        data.file=saveFile;data.loadFile();
+        if(unlockModes) {
+            // Byte 43d0d6 lists SURVIVAL and SPIRITS EDIT; one seen ending lists GALLERY.
+            data.option(0x7e)=1;
+            if(!data.modeMenuUnlock()||!(data.modeMenuUnlock()&2))data.markEndingSeen(0);
+        }
+        session.restart(); // the title reads the unlock state at entry
+    }
     if(stage)session.fixedStage(stage);
     if(items)session.stageItems(true);
     auto screen=std::make_unique<VersusScreen>(assets);
@@ -998,6 +1156,21 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
             else playback.write(pcm);
         });
     }
+    if(mixer)session.onSceneSounds([&](const std::vector<ss6::ArcadeSceneSound>& sounds) {
+        // The arcade scenes' own music (1e7c00 ids 11..1b), the scene voice bank 31
+        // and their sound banks are not packaged; only the resident menu sounds
+        // (1e7b70 group -1) and the music stop reach the mixer.
+        for(const auto& e:sounds) {
+            if(e.kind==ss6::ArcadeSceneSound::MusicStop)mixer->stopMusic();
+            else if(e.kind==ss6::ArcadeSceneSound::Sound&&e.a==-1&&e.b>=0)mixer->play(-1,e.b);
+        }
+        // A scene frame does not tick the match, so the mixer advances here.
+        mixer->tick();
+        std::array<int16_t,2*800> pcm;
+        mixer->render(pcm);
+        if(recording)recording->write(pcm);
+        else playback.write(pcm);
+    });
     if(!replay.empty()) {
         std::ifstream in(replay);if(!in)throw std::runtime_error("Cannot open match replay");
         std::array<uint32_t,2> previous{};unsigned count;
@@ -1012,6 +1185,11 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
     }
     for(unsigned i=0;i<updates;++i)session.tick({});
     if(recording){recording->finish();if(snapshot.empty() && dump.empty() && stageDump.empty())return 0;}
+    if(!dump.empty() && VersusScreen::arcadeScene(session.arcade())) {
+        Frame frame;frame.width=640;frame.height=480;frame.rgba=screen->arcadePicture(*session.arcade());
+        writeRgba(dump,frame);
+        if(snapshot.empty())return 0;
+    }
     if(!dump.empty() || !stageDump.empty()) {
         const auto& frame=screen->paint(session.match(),stageDump);
         if(!dump.empty())writeRgba(dump,frame);
@@ -1040,6 +1218,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
     if(!texture)throw std::runtime_error(SDL_GetError());
     check(SDL_SetTextureScaleMode(texture.get(),SDL_SCALEMODE_NEAREST));
     if(canvas) {
+        screen->overlay=sessionOverlay(session);screen->session=&session;
         screen->show(renderer.get(),texture.get(),session.match(),false,boxes);
         check(SDL_SaveBMP(canvas.get(),snapshot.string().c_str()));return 0;
     }
@@ -1080,6 +1259,7 @@ int runVersus(const fs::path& assets,const fs::path& replay,const fs::path& snap
         // The original display advances at the battle cadence. Poll input
         // between ticks without rasterizing the same arena several times.
         if(running&&(redraw||smoke)){
+            screen->overlay=sessionOverlay(session);screen->session=&session;
             screen->show(renderer.get(),texture.get(),session.match(),paused,boxes);
             redraw=false;
             if(smoke&&++shown>=smoke)running=false;
@@ -1108,6 +1288,8 @@ int main(int argc, char** argv) {
             if (i + 1 >= argc) throw std::runtime_error("Expected option value");
             if (arg == "--assets") assets = argv[++i];
             else if (arg == "--cpu") cpuSeats=ss6::versusCpuSeats(argv[++i]);
+            else if (arg == "--save") saveFile=argv[++i];
+            else if (arg == "--unlock-modes") unlockModes=std::string(argv[++i])=="yes";
             else if (arg == "--dump") dump = argv[++i];
             else if (arg=="--p1-spirit" || arg=="--p2-spirit") {
                 if(i+1==argc)throw std::invalid_argument(arg+" requires a spirit name");
@@ -1145,9 +1327,10 @@ int main(int argc, char** argv) {
             else if (arg == "--smoke-updates") smokeUpdates = unsigned(std::stoul(argv[++i]));
             else if (arg == "--mode") {
                 std::string mode = argv[++i];
-                if (mode != "idle" && mode != "cells" && mode != "contacts" && mode != "trial" && mode!="knockout" && mode!="versus" && mode!="fixed-versus" && mode!="select" && mode!="title")
+                if (mode != "idle" && mode != "cells" && mode != "contacts" && mode != "trial" && mode!="knockout" && mode!="versus" && mode!="fixed-versus" && mode!="select" && mode!="title" && mode!="arcade")
                     throw std::runtime_error("Unknown mode (expected title, select, versus, fixed-versus, idle, cells, contacts, trial or knockout)");
-                entry=mode=="title"?ss6::VersusEntry::Title:mode=="select"?ss6::VersusEntry::CharacterSelect:ss6::VersusEntry::Fight;
+                entry=mode=="title"?ss6::VersusEntry::Title:mode=="select"?ss6::VersusEntry::CharacterSelect:
+                      mode=="arcade"?ss6::VersusEntry::Arcade:ss6::VersusEntry::Fight;
                 versus=entry!=ss6::VersusEntry::Fight||mode=="versus"||mode=="fixed-versus";
                 versusMode=mode=="fixed-versus"?ss6::VersusMode::FixedMatch:ss6::VersusMode::Console;
                 rawRequested = mode == "cells";

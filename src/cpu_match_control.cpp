@@ -1,5 +1,6 @@
 #include "native_match.hpp"
 #include "cpu_reactions.hpp"
+#include "practice_dummy.hpp"
 #include <bit>
 #include <stdexcept>
 
@@ -30,14 +31,31 @@ CpuCommand NativeMatch::runCpu(unsigned seat,PermissionContext& permission,const
     const auto command=[&]{return CpuCommand{actor.control88,std::bit_cast<int32_t>(actor.control8c)};};
     cpuTimerUp(actor,9);
     if(cpuTimerDown(actor,1))return command();
+    if(battle.practice()&&practice_) {
+        // 158990: 15aa18 decides between the posture controller and the ordinary pipeline.
+        PracticeDummyFrame dummy;
+        dummy.code=practiceSupportedBehaviour(practiceBehaviour());
+        dummy.ukemi=practice_->ukemi();dummy.system=fighter.config.system;
+        SelectionActor seen=enemy;
+        const auto& objects=battle.entry.tasks;
+        if(enemy.auxiliaryObject04) {
+            const auto& companion=objects.objects.at(enemy.auxiliaryObject04-1);
+            seen.auxiliaryState128=companion[0x128/4];seen.auxiliaryFlag134=companion[0x134/4];
+        }
+        dummy.threat=human_.opponentThreat(actor,seen,threat);
+        for(auto task:fighters_[1-seat].storage.objectTasks)
+            if(task&&objects.objects.at(objects.tasks.at(task-1)[7]-1)[0xcc/4]==2)dummy.opponentKind2=true;
+        if(practiceDummyVisit(actor,enemy,dummy,cpuLevels_[seat],tactics,battle.random))return command();
+    }
 
     // 15aa18 clears the training-controller flag for ordinary fight mode 35.
     actor.flags240&=~1u;
     CpuDecisionFrame frame;
     frame.level100=cpuLevels_[seat];
-    frame.difficulty=4; // Factory option 43d05c; independent of the fighter's AI level.
+    frame.difficulty=unsigned(battle.gameLevel43d05c); // Option 43d05c; independent of the fighter's AI level.
     frame.clockValue=battle.remainingSeconds();
-    frame.roundIndex=battle.match.roundIndex;
+    // 1418f8 hands the CPU the constant 0x31 in practice.
+    frame.roundIndex=battle.practice()?0x31:battle.match.roundIndex;
     frame.battleMode=battle.gameMode;
     frame.cameraLeft=battle.camera.left;
     frame.cameraRight=battle.camera.right;

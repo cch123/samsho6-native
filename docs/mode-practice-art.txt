@@ -1,0 +1,217 @@
+PRACTICE MODE - drawing of the in-battle window and displays (SLPS-25559)
+========================================================================
+
+Scope: the draw side of the practice window 0x17f790 (dim plane, help frame, menu 0x2109b0
+with the gauge sub-window 0x2118a0, confirm dialog 0x2129d0), of the data display 0x13a280
+(command history and damage counters) and of the REC / PLAY clock 0x141dd0. The logic side
+is docs/mode-practice.txt and docs/mode-practice-integration.txt; the window library
+(depth cursor, boxes, text layer, screen frame) is docs/mode-edit-art.txt sections 1-4.
+Everything below was read from the instructions and then confirmed by
+work/ss6/validate_practice_art.py, which runs the original routines and compares the
+submission queue 0x68c3c0 of every frame with src/practice_art.cpp. Statements not covered
+by that comparison are tagged UNVERIFIED. Addresses are hexadecimal; coordinates are
+integer pixels of the 640x448 frame; colour words are the 32-bit AARRGGBB values the
+routines pass.
+
+Native module: src/practice_art.hpp / .cpp. Tables: work/ss6/extract_practice_art.py ->
+practice_art.bin (14 float constants, the icon table 0x4ca210). Strings come from
+practice_mode.bin (PracticeTables) and edit_art.bin (YES / NO).
+
+0. Draw order inside one outer battle frame
+-------------------------------------------
+
+  battle thread 138f48, one iteration
+  -----------------------------------
+  138f90  17c210            depth cursor 12d3850 = 0, base 4ee54c = 0
+  1390d0  140120            battle draw; its tail call (14020c) is
+            141dd0          REC / PLAY clock                              (section 5)
+  1391d8  140270            battle frame (skipped while paused)
+  139190  13a030            command history sample (logic)
+  1391a8  13a280            data display, only while 2111d8() (A'[6] != 0) (section 4)
+  1391b0  17f790            window: logic, then the draw tail 17f92c..17fa08:
+            dim plane       1145c0, layer 700                              (section 1)
+            182600          help frame, skipped while lastState == 2       (section 2)
+            2109b0          menu (+ 2118a0), skipped while lastState == 2  (section 3)
+            212478          key-configuration window    -+
+            20ef38          skill list                   | other slices; not drawn by
+            20ef38          skill sub-list               | src/practice_art.cpp
+            210298          skill detail window         -+
+            2129d0          confirm dialog                                 (section 3.3)
+
+  The submission order is not the paint order: every primitive carries a depth taken from
+  the depth cursor (17c228: z = base - layer - cursor, cursor += 0.1 with EE rounding;
+  queue depth = 10000000 - 100 z + counter). A larger layer is nearer the viewer. Layers
+  used here:
+      300  history plates (base 200, layer 500)   320  history icons (base 200, layer 520)
+      500  damage box                             520  clock and damage text (17e200)
+      700  dim plane, bar shades of the help frame
+      800  menu window borders and fill, arrows, title plate
+      900  menu text, legend icons, dialog shade
+     1000  gauge sub-window box (base -200, layer 800), dialog text (17e1f0)
+     1100  gauge sub-window text (base -200, layer 900)
+  The only 17c210 of the battle scene is the one at 138f90, and inside 140120 only 141dd0
+  uses the depth cursor (the other callers of 17c228 / 17e228 / 17e428 / 17e038 belong to
+  the widget library, to 13a280 and to the message routine 13a978 of other battle types).
+  The cursor a window primitive sees therefore depends on how many steps the clock and the
+  data display took earlier in the same frame; the native functions must be called in the
+  same order on one MenuDrawList (MenuDrawList::resetCursor first).
+  The data display reads the committed setting A'[6] before 17f790 commits anything in
+  that frame, and the damage counters and history ring as 140270 / 13a030 left them.
+
+1. Dim plane (17f92c..17f9a0)
+-----------------------------
+  12d3864 += 8 while lastState == 8 (skill detail), else -= 8, clamped to 0..0xa0 (logic:
+  PracticeWindow::dim). While > 0: 1145c0(0, 0, 640, 448, alpha << 24) at layer 700
+  (5f20b0), i.e. behind the menu boxes and in front of the damage box. It is the first
+  window primitive of the frame. The main menu itself has no backdrop: see section 2.
+
+2. Help frame 12d3870 = screen frame 1822a0 (EditFrame)
+-------------------------------------------------------
+  17f5a0 runs 1822a0 on it at every battle scene entry. 1822a0 calls 17ea48(); the menu
+  background 1ce478 is entered only when that is non-zero. 17ea48() = 0 for the mode words
+  1, 2, 3, 6, 7, 8, 9, 10, 11, 12 (a battle scene is behind the frame), else 1.
+  Requests of the window state machine (PracticeHelp, src/practice_mode.hpp):
+      Text  182268(frame+0x60, id, arg)   message = table 4ee870 row (id, arg)
+      List  1827c0(frame, id, arg)        the same on the frame object
+      Skill 1820f8(frame+0x60, pointer)   message = skill name, or 664e18 when the record is
+                                          missing; a NULL name pointer clears the message
+      Page  182318(frame, layout)         4 menu, 0 key configuration, 5 skill list
+      Open 182648, Close 1826b0           all bars slide in / out
+      Snap  182700                        all four bars jump to their retracted end, open
+                                          words cleared (window hidden and then closed)
+  1825b8 (slide step of the four bars) is the first call of 17f790, before any request.
+  Layout 4 (menu): backdrop kind -1; title plate 6 of 4c7660 (slot 2e), slide (0, -0x90)
+  -> (0, 0x10); message bar (0, 0x1f6) -> (0, 0x156), 640 x 48; key bar 0x140 x 0x1c with
+  text 5f22c0, (0x2d0, 0x192) -> (0x140, 0x192) for seat 0 and (-0x190, 0x192) ->
+  (0, 0x192) for seat 1 (seat = 178f90()).
+  Backdrop 1817f0: kind -1 draws nothing. For any other kind with 17ea48() == 0 it calls
+  109de8() and returns: no primitive, no depth step; 109de8 sets bit 0x10 of the renderer
+  word 3451c8 (copied to 3451cc and cleared at 10725c, tested at 1072f0; effect on the
+  frame UNVERIFIED, not ported). Layouts 0 (key configuration, kind 1) and 5 (skill list,
+  kind 0) take this path in practice; drawPracticeWindow reports it as battleDim.
+  182600 then draws title bar, message bar and both key bars as in mode-edit-art.txt 4.
+  While the window is hidden (state 2, WINDOW OFF) neither 182600 nor 2109b0 is called;
+  the sub-windows and the dialog still are.
+
+3. Menu 2109b0 (object M = 12d39d8)
+-----------------------------------
+  Nothing while M.active (+0x14) == 0. X = slide x (+0x1c), Y = slide y (+0x20); the slide
+  runs (-0x26c, 0x4c) / (0x294, 0x4c) -> (0x14, 0x4c) in 16 steps (logic).
+  gauge = 211878(M) = (level != 0 && cursor row == 4); lit = M.focused && !gauge.
+  Window: 17c260, 17c2d0(lit), style 1, (X, Y), 600.0 x 264.0 (664dac, 664db0), 17c718
+  gutter 0: three borders (outer 5, inner 2, outer 2) and the fill, all layer 800.
+      lit:   fill c0101010, inner ffffffff, outer ff000080 (seat 0) / ff800000 (seat 1)
+      unlit: fill c0000000, inner ffa0a0a0, outer ff000060 / ff600000
+  Legend: 17db28(ffffffff); 17e428(664d88 "SLEX", mode 1, plain 0) at (X+0x1e4, Y+0xe4):
+  icon 1d (SELECT button, offset (3, 4)) and the text "EXIT".
+  Rows i = 0..11, y = Y + 17 i + (i < 2 ? 0xe : i < 9 ? 0x1f : 0x30):
+    label 59cd70[i] through 17e228 mode 0 (half-width font 1135e8) at (X+0x1c, y);
+        colour: !lit -> 17db38(0, i == cursor) = ffa00000 / ffb0b0b0;
+                lit  -> ffff0000 for the cursor row while level == 0, else ffffffff
+    first value (jump table 664dbc; rows 0, 1 and 7..11 have none) at (X+0x100, y):
+        row 2 59cda0[A[2]]   row 3 59cec8[A[3]]   row 5 59cf00[A[5]]   row 6 59ced8[A[6]]
+        row 4 sprintf(664d90 "%s%3d%%%3d%%:%s%3d%%%3d%%", 59cef0[B[6]], B[8], B[10]+1,
+                      59cef0[B[7]], B[9], B[11]+1)
+        arrows first, when i == cursor && level == 1 && !gauge && (M.counter & 0x3f) >= 0x19:
+            box 12.0 x 16.0 (664db4, 664db8) with outer = inner = fill = ffffffff;
+            17dd88(box, 1) at (X+0xec, y-1), then box.x += 14 strlen(value) + 27 and
+            17dd88(box, 0). Each arrow is two triangles at layer 800.
+        colour: !lit -> ffb0b0b0; i == cursor && level == 1 -> ffff0000; else ffffffff
+    second value at (X+0x174, y): slot = 2117a0(i, A[i]); only slots 0..5 (CPU TYPE)
+        draw (jump table 664dd8): 0 -> 59cdc8[B[0]] (entry 9 is the pointer 211550 patched),
+        1 -> 59cdf0[B[1]], 2..4 -> 59ce18[B[slot]], 5 -> 59ce30[B[5]] ("SPECIAL nn")
+        arrows when i == cursor && level == 2 && blink: left at (X+0x160, y-1)
+        colour as above with level == 2
+    All values are read from the WORKING arrays A / B (13738a0 / 1373900), so an edit shows
+    before it is committed and a cancelled edit disappears with the restore.
+  M.counter (+0x6c) is the frame counter of 210630; the arrows show 39 of every 64 frames.
+  If gauge: 2118a0(M).
+
+3.2 Gauge sub-window 2118a0
+  x = X+0xae, y = Y+0x76. 17c250(-200.0) (664ef0) lifts the whole sub-window 200 depth
+  units above the menu; 17c250(0) at the end. Window: 17c2d0(M.focused), style 1, 400.0 x
+  128.0 (664ef4, 664ef8). Rows r = 0..5, ry = y + 17 r + 0xe:
+      label 59ceb0[r] at (X+0xba, ry); ffff0000 when level == 1 && A[4] == r, else ffffffff
+      value at (x+0x104, ry) (jump table 664f04): r 0, 1 -> 59cee0[B[6 + r]];
+          r 2, 3 -> sprintf(664ee8 "%3d%%", B[6 + r]); r 4, 5 -> the same with B[6 + r] + 1
+      arrows when A[4] == r && level == 2 && blink: left at (x+0xf0, ry-1), 12.0 x 16.0
+          (664efc, 664f00), right 14 strlen + 27 further
+      value colour ffff0000 when A[4] == r && level == 2, else ffffffff
+  The menu behind it is drawn unlit and its own row-4 arrows are suppressed.
+
+3.3 Confirm dialog 2129d0 (object 12d4c48)
+  Only while +0x14 and +0x18 are both set (PracticeConfirm::active, focused). Shade
+  1145c0(0, 160, 640, 108, c0000000) at layer 900 (665268); 17e1f0 (text layer 1000);
+  prompt (+0x6c, or 665240 when NULL) through 17e228 mode 2 (24-dot font) at
+  (320 - strlen*22/4, 188) in ffffffff; 665258 "YES" text at (248, 228) and 665260 "NO"
+  text at (350, 228) with 17db38(1, selected); 17e210. Prompts: 5f2070 (kind 7, CHARACTER
+  SELECT), 5f2098 (kind 8, RETURN TO TITLE). The dialog does not slide; it is in front of
+  everything else.
+
+4. Data display 13a280 (arguments unused)
+-----------------------------------------
+  [3db900] = ffffffff; 17e200 (text layer 520); 17db28(ffffffff); 17c250(200.0) (5e1aac).
+  History: 24 columns, newest first. i = [123a104]; x = 600. For each of 24 entries
+  e = ringB[i] (123a138, PracticeKeyHistory::shown), then i = (i > 0) ? i - 1 : 23:
+      wide = e & 0x4000; width = wide ? 0x2c : 0x18; x -= width
+      e == 0:    no icon, rows = 1 (an empty column still gets its plate)
+      e == 0x10: one icon 4ca210[4] at (x, 87.0) (5e1ab4), rows = 1
+      otherwise: for bit = 0..14 set in e, bit 4 skipped: icon 4ca210[bit] at
+                 (bit == 14 ? x + 2 : x + (wide ? 10 : 0), (bit == 14 ? 0x5b : 0x57) + 24 n)
+                 where n counts the icons already drawn in this column; rows = icon count
+      every icon: 17e038 at 17c228(base - 520.0) (5e1ab0)
+      plate: 1145c0(x, 0x55, width, 24 rows + 4, colour) at 17c228(base - 500.0) (5e1ab8),
+             colour c0000040 for seat 0 and c0400000 for seat 1 (178f90())
+  4ca210 = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, a, b, c, d, 1e}: bits 0..8 are the nine lever
+  icons I1..I9 (bit 4 = neutral), bits 9..13 the icons 9..d (IA..IE), bit 14 icon 1e (ST).
+  So simultaneous inputs stack downwards in one column, and a column with bit 14 is 44
+  pixels wide with that icon at its left edge. With base 200 the history is BEHIND the
+  damage box and every window element.
+  17c250(0). Then, only when the battle type byte 123a0c0 == 1:
+      1145c0(0x138, 0x74, 0xf0, 0x42, plate colour) at layer 500
+      17db28([123a0f0] ? ff808080 : ffffffff)
+      "DAMAGE       %3d" [123a0fc] at (0x140, 0x78), "TOTAL DAMAGE %3d" [123a0f8] at
+      (0x140, 0x8c) (same colour), then 17db28(total == max && total != 0 ? ffff8080 :
+      ffffffff) and "MAX   DAMAGE %3d" [123a0f4] at (0x140, 0xa4); all 17e228 mode 0.
+  17e210.
+
+5. REC / PLAY clock 141dd0
+--------------------------
+  17e200; if 1393b8() (replay): n = [[4d3d08] + 0x11ec] (actor 1 + 0x2c0), format 5e9bc0
+  "PLAY %02d:%03d"; else if 1393e0() (recording): n = [[4d3d08] + 0x2c0] (actor 0), format
+  5e9bd0 "REC %02d:%03d"; else nothing. left = 600 - n; a = max(0, left / 60);
+  b = max(0, (left % 60) * 1000 / 60) (truncating division); 17db28(ffff8080);
+  17e228(text, 0x70, 0x78, mode 0); 17e210 (also on the path that draws nothing).
+
+6. Resources
+------------
+  slot 1   obj0_16 (half-width font sheet of 1135e8)
+  slot 2e  ps2_common_icon (lever and button icons 4ee6b8, title plates 4c7660)
+  GOTH_20 / GOTH_24 through the menu canvas (help message, key hints, dialog)
+  No practice-specific texture is loaded. EditArt additionally opens ps2_gage_1_2_3_all
+  (slot 5), which these routines never sample.
+
+7. Corrections and additions to docs/mode-practice.txt
+------------------------------------------------------
+  - 4.4: the legend "SLEX" is the markup of 17e428: SL = icon 1d, EX = the text "EXIT".
+  - 4.4: text is mode 0 of 17e228, the half-width sheet; the 14 pixels per character of
+    the arrow placement are a constant of 2109b0, not a glyph metric.
+  - 4.4: the row labels are drawn in the unfocused pair of 17db38 (not ffb0b0b0) while the
+    window is unfocused or the gauge sub-window is open; only the values use ffb0b0b0.
+  - 4.4: the level-1 arrows are suppressed while the gauge sub-window is open; the gauge
+    sub-window draws its own arrows only at level 2.
+  - 4.5: the dim overlay is a library primitive at layer 700, height 448.
+  - 4.5: "17f9b0 stops drawing it" - in state 2 both 182600 and 2109b0 are skipped; the
+    menu has no dim backdrop in any state (layout 4 has backdrop kind -1), and the key
+    configuration and skill list pages request 109de8 instead of a backdrop primitive.
+  - 5.8: layout of 13a280 as section 4 (every one of the 24 columns has a plate, also
+    the empty ones; icons stack vertically; bit 14 widens the column).
+  - 5.9: 17e210 runs on every path of 141dd0; the text is on the middle layer (520).
+
+8. Validation
+-------------
+  work/ss6/validate_practice_art.py -> outputs/ss6-feasibility/practice_art_validation.json.
+  See its "scope" string. Private re-implementations in src/practice_art.cpp that
+  duplicate library code and can be folded later: layer() (EditArt::layer for a constant
+  that is not in edit_art.bin) and drawPracticeConfirm (EditArt::dialog for a
+  PracticeConfirm instead of a ColorEdit::Panel).

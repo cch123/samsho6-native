@@ -18,6 +18,7 @@
 #include "console_option.hpp"
 #include "spirits_edit.hpp"
 #include "arcade_tally.hpp"
+#include "menu_canvas.hpp"
 
 namespace ss6 {
 // World directions at the normalized software-pad boundary (118128).
@@ -80,6 +81,10 @@ public:
     // OPTION MODE scenes (1cfa10 and its sub-pages) and their white fade.
     const std::optional<ConsoleOption>& option() const {return option_;}
     const SceneFade& sceneFade() const {return sceneFade_;}
+    // The menu page submissions of this tick (1ce570, 1ce660 and the page
+    // routines); the viewer rasterises them with menuCanvas().
+    const MenuCanvas* menuCanvas() const {return menuCanvas_.get();}
+    const MenuDrawList& menuDrawList() const {return menuList_;}
     // SPIRITS EDIT MODE (13ad40); the page is driven by one seat.
     const std::optional<SpiritsEdit>& spiritsEdit() const {return spiritsEdit_;}
     // Arcade: GameData+90 and the state-9 tally task (1c7f08).
@@ -129,6 +134,10 @@ private:
     MenuPadRepeat menuRepeat_;
     SceneFade sceneFade_;
     int menuRow_=-1;
+    std::unique_ptr<MenuCanvas> menuCanvas_;
+    MenuBackdrop menuBackdrop_;
+    MenuDrawList menuList_;
+    void drawOption();
     std::unique_ptr<SpiritsEditAssets> spiritsAssets_;
     std::unique_ptr<EditWidgetAssets> editWidgets_;
     std::optional<SpiritsEdit> spiritsEdit_;

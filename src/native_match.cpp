@@ -1159,11 +1159,31 @@ void NativeMatch::enterTitleAudio() {
 void NativeMatch::enterOption(OptionScene scene) {
     // 1ce478 seeds the animated background from the C library generator:
     // 1800 draws in 1e1620, the variant draw, then one in 1e2358/1e23a0.
-    auto& random=battle_.random;
-    for(unsigned i=0;i<1800;++i)random.nextLibrary();
-    const int variant=int(random.nextLibrary());
-    random.nextLibrary();
-    option_->enter(scene,variant);
+    if(!menuCanvas_)menuCanvas_=std::make_unique<MenuCanvas>(assets_);
+    option_->enter(scene,menuBackdrop_.enter(battle_.random));
+}
+void NativeMatch::drawOption() {
+    // Page composition in the order of the original page routines. Only the
+    // primitives and the text submissions are compared with the original.
+    const auto& d=option_->draw;
+    auto& canvas=*menuCanvas_;auto& list=menuList_;
+    canvas.setBrightness(system_->brightness());
+    canvas.setFade(sceneFade_.active(),sceneFade_.level(),0xffffffffu);
+    list.beginFrame();
+    MenuChrome chrome=option_->chrome;
+    chrome.band=d.band;chrome.legend=d.legend;
+    canvas.background(list,menuBackdrop_,battle_.random,chrome);
+    if(d.whiteScreen)canvas.rectangle(list,0,0,0x280,0x1c0,0xffffffffu,-400.f);
+    if(d.frameDrawn)canvas.frame(list,chrome,d.showPage,d.page,d.pageTotal);
+    canvas.banner(list,canvas.banners()[unsigned(d.banner)],d.alpha);
+    for(const auto& t:d.texts) {
+        if(t.highlight)canvas.marker(list,t.text,t.x,t.y,d.frame);
+        canvas.ascii(list,t.text,t.x,t.y,t.argb);
+    }
+    if(d.help)for(int copy=0;copy<d.helpCopies;++copy)if(d.helpVisible[unsigned(copy)]) {
+        MenuChrome still=chrome;still.helpX[0]=d.helpX[unsigned(copy)];
+        canvas.helpText(list,still,*d.help,false,d.alpha);
+    }
 }
 void NativeMatch::tickOption(const std::array<NormalizedPadSample,2>& pads) {
     if(titleFadeTick_ && ++titleFadeTick_>=27)titleFadeTick_=0;
@@ -1171,6 +1191,7 @@ void NativeMatch::tickOption(const std::array<NormalizedPadSample,2>& pads) {
                                            {resultPad(pads[0].pressed),resultPad(pads[1].pressed)});
     const auto result=option_->tick(menuPads);
     for(int id:result.sounds)sounds_.sample(-1,id);
+    drawOption();
     if(result.request!=OptionScene::None && !sceneFade_.active()) {
         pendingOption_=result.request;sceneFade_.begin(true);
     }

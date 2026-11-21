@@ -801,6 +801,7 @@ class VersusScreen {
         }
         check(SDL_RenderPresent(r));
     }
+    std::vector<uint8_t> menuPixels_;
 public:
     std::vector<std::string> overlay;
 private:
@@ -895,13 +896,15 @@ public:
             // The page frame, fonts and background are not ported yet: list
             // the original text submissions with the debug font.
             color(r,18,20,34);check(SDL_RenderClear(r));
-            if(const auto& option=match.option()) {
-                for(const auto& t:option->draw.texts) {
-                    const bool selected=(t.argb&0xffffff)==0xff0000;
-                    if(selected)color(r,255,80,80);else color(r,235,235,235);
-                    text(r,float(t.x),float(t.y),t.text);
-                }
-                color(r,160,160,160);text(r,20,440,"OPTION MODE (PROVISIONAL TEXT VIEW) / MEDIUM: CONFIRM  LIGHT: CANCEL");
+            if(match.option()&&match.menuCanvas()) {
+                menuPixels_.assign(640*480*4,0);
+                match.menuCanvas()->rasterise(match.menuDrawList(),menuPixels_);
+                for(size_t i=3;i<menuPixels_.size();i+=4)menuPixels_[i]=255;
+                check(SDL_UpdateTexture(texture,nullptr,menuPixels_.data(),640*4));
+                check(SDL_RenderTexture(r,texture,nullptr,nullptr));
+                // The canvas already applies the scene fade to its colours.
+                present(r,{},paused);
+                return;
             } else {
                 color(r,235,235,235);text(r,20,220,"SPIRITS EDIT MODE: SCREEN IN DEVELOPMENT");
                 text(r,20,242,"LIGHT: CANCEL / RETURN TO TITLE");

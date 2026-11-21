@@ -51,7 +51,7 @@ struct MenuDrawList {
     int depth=100;              // 3db8f4, tie breaker added by 114d88
     int glyphs=0;               // 345180, cache cursor of 10a710/10a1c0
     int textDepth=0;            // 348a8c
-    float asciiDepth=0;         // 3d3aac, read by 113690 through 114e40
+    float asciiDepth=-200.f;    // 3d3aac (initial and 113838 value -200), read by 113690 through 114e40
     float cursor=0;             // 12d3850, depth cursor of 17c228
     float cursorBase=0;         // 4ee54c
     // 114e80 and the per-frame reset of the glyph cache cursor.

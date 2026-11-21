@@ -43,7 +43,8 @@ struct MenuChrome {
     int variant=1;   // 582b44: background animation 1 or 2
     std::array<int,2> helpX{0x10,0};
     int helpDelay=0;
-    // 1ce478 draws the C library generator once; pass its 15-bit result.
+    // 1ce478 makes 1802 C library draws per page entry: 1800 in 1e1620, this
+    // variant draw, then one in 1e2358/1e23a0. Pass the 1801st result.
     void enter(int libraryRandom);
     void advance();                       // tail of 1ce660
     bool inputReady() const {return content>=15&&legend>=5;}   // 1cf750

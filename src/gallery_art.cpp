@@ -463,8 +463,8 @@ void GalleryArt::drawSoundTest(MenuDrawList& list,MenuBackdrop& backdrop,GameRan
 
 void GalleryArt::drawEndingSelect(MenuDrawList& list,MenuBackdrop& backdrop,GameRandom& random,const MenuChrome& chrome,
                                   const EndingViewer& e) {
+    list.resetCursor();   // 17c210 opens every visit, also the one that returns the choice
     if(e.chosen)return;
-    list.resetCursor();
     drawGuide(list,e.guide,backdrop,random,chrome);
     drawList(list,e.list);
 }

@@ -776,6 +776,23 @@ class VersusScreen {
         if(arena!=renderedStage_){stage_.emplace(assets_,arena);renderedStage_=arena;}
         return *stage_;
     }
+    // Vertical linear resampling of a 640x448 frame onto a 640x480 canvas,
+    // using pixel-centre mapping like SDL_SCALEMODE_LINEAR.
+    static void stretchArena(const Bytes& src,Bytes& dst) {
+        constexpr int w=640,srcH=448,dstH=480;
+        for(int y=0;y<dstH;++y) {
+            const float s=std::clamp((y+0.5f)*srcH/dstH-0.5f,0.f,float(srcH-1));
+            const int y0=int(s),y1=std::min(y0+1,srcH-1);
+            const int f=int((s-y0)*256.f+0.5f);
+            const uint8_t* a=&src[size_t(y0)*w*4];
+            const uint8_t* b=&src[size_t(y1)*w*4];
+            uint8_t* o=&dst[size_t(y)*w*4];
+            for(int i=0;i<w*4;i+=4) {
+                for(int c=0;c<3;++c)o[i+c]=uint8_t((a[i+c]*(256-f)+b[i+c]*f)>>8);
+                o[i+3]=255;
+            }
+        }
+    }
     void paintCurtain(int frame) {
         if(frame<0)return;
         if(!curtain_)curtain_.emplace(assets_);
@@ -1035,9 +1052,10 @@ public:
         if(const int curtain=match.curtainFrame();curtain>=0) {
             // The PS2 draws sliding panels above the complete new arena and
             // HUD.
-            std::fill(result_.rgba.begin(),result_.rgba.end(),0);
-            for(size_t i=3;i<result_.rgba.size();i+=4)result_.rgba[i]=255;
-            std::copy(frame_.rgba.begin(),frame_.rgba.end(),result_.rgba.begin());
+            // The arena is stretched from 448 to 480 lines before the panels are
+            // drawn, so it has the same scale as the full-window arena that
+            // follows; the panel geometry stays on its native 480-line canvas.
+            stretchArena(frame_.rgba,result_.rgba);
             paintCurtain(curtain);
             check(SDL_UpdateTexture(texture,nullptr,result_.rgba.data(),result_.width*4));
             check(SDL_RenderTexture(r,texture,nullptr,nullptr));

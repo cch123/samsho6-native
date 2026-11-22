@@ -28,7 +28,7 @@ void resetActorControl(StateEntryActor& a,GameRandom& random) {
 void RoundInitialization::begin(GroundStateRuntime& ground,PlayerObject& body,StateEntryActor& a,
         ActorCommandInput& input,const InputSystemConfig& config,StateEntryContext& context,
         const GroundStateFrame& frame,RoundActorStorage& storage,bool first) {
-    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8)||context.player>=2||
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=7&&config.system!=8)||context.player>=2||
        !frame.random||body.resourceSlot0c>=3||((a.flags23c&0x400000)&&a.character!=11)||a.rageState120<0||a.rageState120>3)
         throw std::runtime_error("Round initialization requires a supported fighter, spirit, default options and a random context");
     const unsigned c=a.character;

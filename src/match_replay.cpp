@@ -190,7 +190,10 @@ int main(int argc,char** argv) {
                 // Columns from 23: the arcade session, its transition task, the run words and
                 // the presentation picture (checksum of its draw lists, record / object counts).
                 const auto* a=session.arcade();
-                if(!a)std::cout<<" -1";
+                // Without a session: the title's mode word and which menu scene owns the screen.
+                if(!a)std::cout<<" -1 "<<match.battle().gameMode<<' '<<bool(match.title())<<' '<<bool(match.characterSelect())
+                              <<' '<<(match.title()?match.title()->draw.modeMenu:-1)<<' '<<(match.title()?match.title()->draw.firstRow:-1)
+                              <<' '<<(match.title()?match.title()->draw.titleTick:-1);
                 else {
                     const auto& r=a->run;const auto& g=r.game;const auto& t=a->transitionTask();
                     const auto& p=r.players[r.humanSeat()];

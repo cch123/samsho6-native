@@ -215,6 +215,7 @@ private:
     std::unique_ptr<MenuCanvas> menuCanvas_;
     MenuBackdrop menuBackdrop_;
     MenuDrawList menuList_;
+    void paintColorEditPreview(std::span<uint8_t> rgba) const;
     void drawOption();
     std::unique_ptr<SpiritsEditAssets> spiritsAssets_;
     std::unique_ptr<EditWidgetAssets> editWidgets_;

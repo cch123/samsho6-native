@@ -17,7 +17,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from validate_selected_combat import BUILD, ROOT, prefix
+from validate_selected_combat import BUILD, ROOT, prefix, substitute_env
 from validate_mina_specials import Original as MinaOriginal
 from validate_weapon_handling import setup
 from probe_fighter_gaps import pads as move_pads, PLAYABLE, MOTIONS, slot_pads, slot_selection
@@ -167,7 +167,8 @@ def run(job):
     else:
         seq=prefix((fighter,0) if side==0 else (0,fighter))+[[0,0]]*330;cpu=[]
         for x in move_pads(side,move):seq.append([x,0] if side==0 else [0,x])
-    r=subprocess.run([exe,RES,'1',*cpu],input=''.join(f'{a} {b}\n' for a,b in seq),text=True,capture_output=True)
+    r=subprocess.run([exe,RES,'1',*cpu],input=''.join(f'{a} {b}\n' for a,b in seq),text=True,capture_output=True,
+                     env=substitute_env((fighter,0) if side==0 else (0,fighter)))
     if r.returncode:raise RuntimeError((side,move,r.stderr[-300:]))
     src=Original(side,fighter);wrong=[];visits=0;specials=set()
     for line in r.stdout.splitlines():

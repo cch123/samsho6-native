@@ -33,7 +33,7 @@ void BattleRoundInitialization::begin(GroundStateRuntime& ground,const std::arra
        battle.survival()!=(battle.gameMode==0xb||battle.gameMode==0xc))
         throw std::runtime_error("Battle round initialization does not support this game mode");
     for(const auto& p:players)if(!playableFighter(p.actor.character)||p.actor.controlKindA20>1||
-        (p.actor.controlKindA20==1&&p.actor.controlModeC8!=35&&!battle.practice())||p.config.character!=p.actor.character||(p.config.system>5&&p.config.system!=8))
+        (p.actor.controlKindA20==1&&p.actor.controlModeC8!=35&&!battle.practice())||p.config.character!=p.actor.character||(p.config.system>5&&p.config.system!=7&&p.config.system!=8))
         throw std::runtime_error("Battle round initialization requires supported fighters, controllers and spirits");
     // 13fddc: survival restarts the round count and both win counters on every 13fd80.
     if(battle.survival()){battle.match.roundIndex=0;for(auto& p:battle.match.players)p.wins=0;}

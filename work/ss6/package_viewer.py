@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Install the built viewer with a fresh inode for macOS executable caching."""
-from fighter_roster import PLAYABLE, SELECTABLE, GRID
+from fighter_roster import PLAYABLE, SELECTABLE, GRID, PACKAGED, FIGHTERS
 import os,shutil,tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
@@ -20,13 +20,13 @@ for resource in ['input_commands.bin','input_normal.bin','input_special.bin','in
                  'ougi1.tex','ougi2.tex','sakura.tex','versus_quotes_00.bin','versus_result_layout.bin',
                  'menu_bg00_00.tex','win_00.tex','win_00.pal','font_otherscene16.tex','obj0.pal',
                  'console_ranking_art.bin','cpu_air_attack_timing.bin','cpu_guard_heights.bin','projectile_descriptor_flags.bin','projectile_hitstop.bin','cpu_technique_slots.bin','cpu_technique_steps.bin','cpu_technique_definitions.bin','cpu_attack_situations.bin','cpu_matchup_ranges.bin','sqDataCm.bin',*[f'sqData{i:02X}.bin' for i in range(51)],
-                 'bg_title00.tex','bg_title00.pal','obj0_16.tex','font_coin.tex','vs_curtain.bin','change_base16.tex',*[f'collision_{c:02}.bin' for c in PLAYABLE if c],'vs_faceoff_layout.bin','vs_back.tex','vs_back.pal','vs_obj.tex','vs_obj.pal','character_select_art.bin','spirit_select_art.bin',
+                 'bg_title00.tex','bg_title00.pal','obj0_16.tex','font_coin.tex','vs_curtain.bin','change_base16.tex',*[f'collision_{c:02}.bin' for c in sorted({*PLAYABLE,*FIGHTERS}) if c],'vs_faceoff_layout.bin','vs_back.tex','vs_back.pal','vs_obj.tex','vs_obj.pal','character_select_art.bin','spirit_select_art.bin',
                  'ps2_gage_1_2_3_all.tex','ps2_gage_1_2_3_all.pal','ps2_common_icon.tex','ps2_common_icon.pal',
                  'char_face_1024.tex','char_face_1024.pal',
-                 *[f'{stem}_{id:02}.bin' for id in (c for c in SELECTABLE if c) for stem in ('aid','act','jdg','pil','idx','map','chr')],
+                 *[f'{stem}_{id:02}.bin' for id in (c for c in PACKAGED if c) for stem in ('aid','act','jdg','pil','idx','map','chr')],
                  *[f'bup_{i:02}.{ext}' for i in sorted({*GRID,48}-{53}) for ext in ('tex','pal')],
-                 *[f'vs_voice_{i:02}.bin' for i in (*range(1,43),*range(44,49))],
-                 *[f'vs_sounds_{i:02}.bin' for i in (*(c for c in SELECTABLE if c),49,51,52)],
+                 *[f'vs_voice_{i:02}.bin' for i in range(1,49)],
+                 *[f'vs_sounds_{i:02}.bin' for i in (*(c for c in PACKAGED if c),49,51,52)],
                  'save_default.bin','console_option.bin','spirits_edit.bin','edit_widgets.bin','arcade_tally.bin','arcade_run.bin','arcade_map.bin','practice_art.bin','arcade_art.bin','pause_menu.bin','practice_mode.bin','skill_list.bin','menu_canvas.bin','PS2_menu_bg00_00.tex','PS2_menu_bg00_00.pal','character_select_mode_art.bin','menu_widgets.bin','console_gallery.bin','survival_run.bin','color_edit.bin','console_versus_art.bin','combat_stage.bin','combat_stage_01.bin',
                  # Menu scenes: edit and gallery art tables, the 55 gallery pictures and the arena
                  # streams the sound test can request. pause_art.bin exists once its extractor has run.

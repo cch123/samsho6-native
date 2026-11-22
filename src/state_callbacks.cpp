@@ -81,7 +81,7 @@ void CallbackContext::setFirstAttackCommand(uint32_t value) {
 }
 uint32_t StateCallbacks::registerOrdinaryDamage(StateEntryActor& a,const InputSystemConfig& config) const {
     const int index=a.stateIndex();
-    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8)||a.stateTable()!=2||uint32_t(index)>111)
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=7&&config.system!=8)||a.stateTable()!=2||uint32_t(index)>111)
         throw std::runtime_error("Ordinary damage registration requires a supported fighter, spirit and common damage state");
     //15/16 retain the facing toggle for downed-body orientation. Other
     //entries clear it as well as the motion/clock gates4/8.

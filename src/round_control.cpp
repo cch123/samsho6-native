@@ -127,7 +127,7 @@ void RoundControl::enterEnding(BattleRoundState& b,const std::array<RoundPlayerR
     // 123a168 is the network result reporter (sub-mode 6).
     if(b.matchEnd.profileActive123a168)
         throw std::runtime_error("Round end does not support network reporting");
-    for(const auto& p:players)if(!playableFighter(p.actor.character)||(p.config.system>5&&p.config.system!=8))
+    for(const auto& p:players)if(!playableFighter(p.actor.character)||(p.config.system>5&&p.config.system!=7&&p.config.system!=8))
         throw std::runtime_error("Round end requires a supported fighter and spirit");
     BattleGauges::stop(b,players);
     const std::array<int32_t,2> life{players[0].actor.fieldA30,players[1].actor.fieldA30};

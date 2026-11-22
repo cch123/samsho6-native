@@ -827,7 +827,7 @@ void GroundStateRuntime::callback(PlayerObject& o,StateEntryActor& a,const Groun
 DownedEvents GroundStateRuntime::visit(PlayerObject& o,StateEntryActor& a,ActorCommandInput& input,
         const InputSystemConfig& config,StateEntryContext& context,const GroundStateFrame& frame) {
     DownedEvents events;
-    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8))
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=7&&config.system!=8))
         throw std::runtime_error("Invalid ground fighter or spirit");
     if(unsupportedForm(a))throw std::runtime_error("Transformed ground callbacks require their own dispatcher");
     // 1493c0 runs 14d788 on every queued ACT: a form (Amakusa's 23c 0x400000)

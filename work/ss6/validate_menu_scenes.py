@@ -26,7 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT/'outputs/ss6-feasibility/native-viewer/assets'
 REPORT = ROOT/'outputs/ss6-feasibility/menu_scenes_validation.json'
-ENV = {'SDL_VIDEO_DRIVER': 'dummy', 'SDL_RENDER_DRIVER': 'software', 'SDL_AUDIO_DRIVER': 'dummy', 'PATH': '/usr/bin:/bin'}
+# SS6_MENU_NO_PREVIEW: the viewer leaves out the COLOR EDIT fighter sprites (drawn by the battle object
+# path, not by the menu modules the driver composes), so the menu raster is compared exactly.
+ENV = {'SDL_VIDEO_DRIVER': 'dummy', 'SDL_RENDER_DRIVER': 'software', 'SDL_AUDIO_DRIVER': 'dummy', 'PATH': '/usr/bin:/bin',
+       'SS6_MENU_NO_PREVIEW': '1'}
 
 # Logical pad bits (src/native_match.hpp BattleButton).
 UP, DOWN, LEFT, RIGHT, START = 0x10, 0x20, 0x40, 0x80, 8
@@ -556,7 +559,8 @@ def main():
                   scope='Scene wiring only: mode-menu entry, pad routing, fades, save image and file, return row, '
                         'and frame equality with an independent driver of the validated logic/art modules. '
                         'No original instructions are executed here. Not covered: audio routing, the COLOR EDIT '
-                        'preview objects (not drawn), ending playback 182a98 (not ported).')
+                        'preview objects (the fighter sprites are drawn through the battle object path and switched off here; the '
+                        'kind-8 portrait is not drawn), ending playback 182a98 (not ported).')
     REPORT.write_text(json.dumps(report, indent=1)+'\n')
     print(f"PASS menu scenes: {s.ticks} session ticks, {counters['frames']} identical frames, "
           f"{counters['submissions']} submissions")

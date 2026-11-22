@@ -19,6 +19,10 @@ public:
     // that same destination at their position in the original queue.
     void paint(const NativeMatch&,std::span<uint8_t> rgba,const EffectPainter&,unsigned nextDepth=100,
                const ObjectDrawQueue* presentation=nullptr);
+    // Owner-bit palette keys (10000 / 20000): the edit block of the save image (115d40).
+    void bindEdited(const ColorEditTables* tables,SystemData* data) {tiles_.palettes.bindEdited(tables,data,{});}
+    // Forget the resident CLUT rows, so a colour edited since the last frame is read again.
+    void resetPalettes() {cache_={};cache_[0].fill(0xffffffff);}
     void paint(const ObjectDrawQueue&,const CharacterDrawContext&,const EffectPalettes&,
                std::span<const uint16_t,1024> tones,std::span<uint8_t> rgba,const EffectPainter&,uint32_t backdrop=0,
                std::span<const StageItemNoticeQuad> notices={},unsigned nextDepth=100);

@@ -63,8 +63,9 @@ int fighterActionRecord(unsigned resource,unsigned action,int start,unsigned cou
     // Amakusa's 1f4588 effect requests the zero-length ACT 0x2d9 the same way, as does an unarmed
     // victim of Rasetsu Galford's row 5 (victim ACT 0x54c is empty in every bank); the weaponless
     // banks 45..47 leave every unarmed victim ACT (0x500 + odd) empty, and 11d908 does not check.
-    // Their ordinary ACTs also end by jumping into the empty ACTs 49 / 51 / 701 / 770.
-    const bool sparse=((resource==3&&action==693)||(resource==11&&action==0x2d9)||(resource==32&&action==0x22c)||(resource==33&&action==0x300)||(action>=0x500&&action<0x600)||
+    // Their ordinary ACTs also end by jumping into the empty ACTs 49 / 51 / 701 / 770. Makai Gaoh's
+    // boss bank (43) leaves 1,592 ACTs empty (count 0, start > 0); its ordinary moves request them.
+    const bool sparse=((resource==43)||(resource==3&&action==693)||(resource==11&&action==0x2d9)||(resource==32&&action==0x22c)||(resource==33&&action==0x300)||(action>=0x500&&action<0x600)||
         (resource>=45&&resource<=47&&(action==49||action==51||action==701||action==770)))&&!count&&start>0&&(step==0||step==-1);
     if(start<0||(!sparse&&(step<0||uint32_t(step)>=count)))
         throw std::runtime_error("Invalid ACT record "+std::to_string(action)+" in fighter bank "+std::to_string(resource));

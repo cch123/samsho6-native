@@ -17,7 +17,7 @@ int alphaMode(int32_t action) {
 void updateActorColor(StateEntryActor& a,const InputSystemConfig& config,uint32_t* kind4Flags38) {
     //Character33 also mutates registered objects/visibility (14b240). Do not
     //silently omit that branch when admitting it.
-    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=8))
+    if(!playableFighter(a.character)||a.character!=config.character||(config.system>5&&config.system!=7&&config.system!=8))
         throw std::runtime_error("Invalid fighter or spirit for actor color");
     ActorTimers timers{a.timerDelta,a.timers};
     a.bodyFlags38&=~0x40810000u;

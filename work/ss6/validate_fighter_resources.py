@@ -17,7 +17,7 @@ from inspect_iso import Iso
 from round_entry_oracle import fixture as round_fixture
 from validate_nakoruru_resources import ASSETS, DRIVER, ISO, ROOT, verify_slot
 from validate_rimururu_resources import SOURCE, SOURCE_HASH, sounds, ending_cues, sha
-from fighter_roster import FIGHTERS as FIGHTERS_ROSTER, LOGIC
+from fighter_roster import FIGHTERS as FIGHTERS_ROSTER, LOGIC, SELECTABLE
 import validate_rimururu_resources as rimururu
 
 def spec_for(n):
@@ -136,7 +136,9 @@ def main():
         for slots,seat in spec['lineups']:
             verify_slot(fixture(slots),slots,seat,exe,rom,stats,images,ids,frames)
             idle=[r['hash'] for r in images if 0 in r['actions'] and 'costume' in r and f'seat-{seat}-' in r['case']]
-            assert len(set(idle))==5
+            # Five costume colors per selectable fighter; the arcade boss Makai Gaoh (43, no grid cell) draws one
+            # (the per-image comparison against the original above already passed for all five).
+            assert len(set(idle))==(5 if n in SELECTABLE else 1),(len(set(idle)),len(idle))
         routing=collision_and_depth(tmp,aid,LOGIC.get(n,n),spec['depth_rules'])  # the profile is the logic resource (11d5b0)
         audio=sounds(iso,tmp,n)
         audio['intro_victory_act_cues']=ending_cues(tmp,aid,rom['act',n],n)

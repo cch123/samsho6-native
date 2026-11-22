@@ -1034,7 +1034,7 @@ public:
         paintHud(match,boxes);
         if(const int curtain=match.curtainFrame();curtain>=0) {
             // The PS2 draws sliding panels above the complete new arena and
-            // HUD. The native controls footer resumes after the panels open.
+            // HUD.
             std::fill(result_.rgba.begin(),result_.rgba.end(),0);
             for(size_t i=3;i<result_.rgba.size();i+=4)result_.rgba[i]=255;
             std::copy(frame_.rgba.begin(),frame_.rgba.end(),result_.rgba.begin());
@@ -1074,16 +1074,12 @@ public:
             }
             check(SDL_UpdateTexture(texture,&arenaPixels,pixels,frame_.width*4));
         }
-        color(r,23,26,29);check(SDL_RenderClear(r));
-        SDL_FRect stage{0,0,640,448};check(SDL_RenderTexture(r,texture,&stage,&stage));
-        color(r,242,237,218);
-        if(menu.active) {
-            text(r,20,453,"MOVE  D-PAD / ARROWS / WASD      CONFIRM  CIRCLE / TRIANGLE / START");
-            text(r,20,468,"P1 CONFIRM L  CANCEL M           P2 CONFIRM I  CANCEL ]");
-        } else {
-        text(r,20,453,"P1 WASD  J/U/L/M  E:F  START:T     P2 ARROWS  O/[/I/]  E:\\  START:ENTER");
-        text(r,20,468,"LIGHT / MEDIUM / HEAVY / KICK     SPACE PAUSE    H BOXES");
-        }
+        // Like the menu pages, the 448-line arena is shown over the whole 4:3
+        // picture; the rasterised frame (--dump) keeps its 448 lines.
+        const SDL_FRect stage{0,0,640,448};
+        check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_LINEAR));
+        check(SDL_RenderTexture(r,texture,&stage,nullptr));
+        check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_NEAREST));
         // 1806e4: the survival controller covers the arena with a black rectangle of alpha 12d4cc8.
         present(r,result,paused,std::max(menu.fadeAlpha,match.survivalFade()));
     }

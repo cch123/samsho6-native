@@ -776,22 +776,19 @@ class VersusScreen {
         if(arena!=renderedStage_){stage_.emplace(assets_,arena);renderedStage_=arena;}
         return *stage_;
     }
-    // Vertical linear resampling of a 640x448 frame onto a 640x480 canvas,
-    // using pixel-centre mapping like SDL_SCALEMODE_LINEAR.
-    static void stretchArena(const Bytes& src,Bytes& dst) {
-        constexpr int w=640,srcH=448,dstH=480;
-        for(int y=0;y<dstH;++y) {
-            const float s=std::clamp((y+0.5f)*srcH/dstH-0.5f,0.f,float(srcH-1));
-            const int y0=int(s),y1=std::min(y0+1,srcH-1);
-            const int f=int((s-y0)*256.f+0.5f);
-            const uint8_t* a=&src[size_t(y0)*w*4];
-            const uint8_t* b=&src[size_t(y1)*w*4];
-            uint8_t* o=&dst[size_t(y)*w*4];
-            for(int i=0;i<w*4;i+=4) {
-                for(int c=0;c<3;++c)o[i+c]=uint8_t((a[i+c]*(256-f)+b[i+c]*f)>>8);
-                o[i+3]=255;
-            }
-        }
+    // A 448-line frame keeps its square pixels inside the 640x480 picture:
+    // it is centred with 16 black lines above and below, as the 448-line GS
+    // display sits inside the 480 active NTSC lines. Scaling it to 480 lines
+    // would stretch every sprite vertically by 480/448.
+    static constexpr float frameTop=(480-448)/2.f;
+    static constexpr SDL_FRect frameLines{0,0,640,448};
+    static constexpr SDL_FRect frameRect{0,frameTop,640,448};
+    // Places a 640x448 frame on a black 640x480 canvas at frameRect.
+    static void centreFrame(const Bytes& src,Bytes& dst) {
+        constexpr size_t row=640*4,top=size_t(frameTop);
+        std::fill(dst.begin(),dst.end(),0);
+        for(size_t i=3;i<dst.size();i+=4)dst[i]=255;
+        std::copy(src.begin(),src.begin()+row*448,dst.begin()+row*top);
     }
     void paintCurtain(int frame) {
         if(frame<0)return;
@@ -965,15 +962,12 @@ public:
         const auto& result=battle.resultScreen;
         const auto& menu=battle.consoleMenu;
         if(match.menuScene()!=ss6::NativeMatch::MenuScene::None) {
-            // The menu pages are 448-line frames. The video output shows them
-            // over the whole 4:3 picture; the scaling belongs to presentation
-            // and leaves the rasterised frame (--dump) untouched.
+            // The menu pages are 448-line frames, centred unscaled in the 4:3
+            // picture (see frameRect); the rasterised frame (--dump) is untouched.
             const auto& image=paint(match);
             check(SDL_UpdateTexture(texture,nullptr,image.rgba.data(),image.width*4));
-            const SDL_FRect lines{0,0,640,448};
-            check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_LINEAR));
-            check(SDL_RenderTexture(r,texture,&lines,nullptr));
-            check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_NEAREST));
+            color(r,0,0,0);check(SDL_RenderClear(r));
+            check(SDL_RenderTexture(r,texture,&frameLines,&frameRect));
             // The art modules already apply the scene fade to their colours.
             present(r,{},paused);
             return;
@@ -1052,10 +1046,10 @@ public:
         if(const int curtain=match.curtainFrame();curtain>=0) {
             // The PS2 draws sliding panels above the complete new arena and
             // HUD.
-            // The arena is stretched from 448 to 480 lines before the panels are
-            // drawn, so it has the same scale as the full-window arena that
-            // follows; the panel geometry stays on its native 480-line canvas.
-            stretchArena(frame_.rgba,result_.rgba);
+            // The arena is centred on the 480-line canvas before the panels are
+            // drawn, at the same place as the arena that follows; the panel
+            // geometry stays on its native 480-line canvas.
+            centreFrame(frame_.rgba,result_.rgba);
             paintCurtain(curtain);
             check(SDL_UpdateTexture(texture,nullptr,result_.rgba.data(),result_.width*4));
             check(SDL_RenderTexture(r,texture,nullptr,nullptr));
@@ -1092,12 +1086,10 @@ public:
             }
             check(SDL_UpdateTexture(texture,&arenaPixels,pixels,frame_.width*4));
         }
-        // Like the menu pages, the 448-line arena is shown over the whole 4:3
-        // picture; the rasterised frame (--dump) keeps its 448 lines.
-        const SDL_FRect stage{0,0,640,448};
-        check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_LINEAR));
-        check(SDL_RenderTexture(r,texture,&stage,nullptr));
-        check(SDL_SetTextureScaleMode(texture,SDL_SCALEMODE_NEAREST));
+        // Like the menu pages, the 448-line arena is centred unscaled in the
+        // 4:3 picture; the rasterised frame (--dump) keeps its 448 lines.
+        color(r,0,0,0);check(SDL_RenderClear(r));
+        check(SDL_RenderTexture(r,texture,&frameLines,&frameRect));
         // 1806e4: the survival controller covers the arena with a black rectangle of alpha 12d4cc8.
         present(r,result,paused,std::max(menu.fadeAlpha,match.survivalFade()));
     }

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "action_selection.hpp"
 #include <fstream>
 #include <stdexcept>
@@ -5,7 +6,7 @@
 namespace ss6 {
 namespace {
 template<size_t N>void read(const std::filesystem::path& file,std::array<uint8_t,N>& data) {
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     if(!in.read(reinterpret_cast<char*>(data.data()),N)||in.peek()!=EOF)throw std::runtime_error("Invalid action selection table: "+file.string());
 }
 int lowHalf(uint32_t v){return int16_t(v&0xffff);}

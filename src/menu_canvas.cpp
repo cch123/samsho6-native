@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "menu_canvas.hpp"
 #include "scalar_float.hpp"
 
@@ -22,7 +23,7 @@ enum Constant:unsigned {
 enum Text:unsigned { Confirm,Cancel,PageFeed,Number,Slash,NeoGeoLand,Reselect,Title,Yes,No,TextCount };
 
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size=0) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||(size&&in.tellg()!=static_cast<std::streamoff>(size)))
         throw std::runtime_error("Invalid menu resource: "+file.string());
     std::vector<uint8_t> bytes(static_cast<size_t>(in.tellg()));

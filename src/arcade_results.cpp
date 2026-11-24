@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "arcade_results.hpp"
 #include "scalar_float.hpp"
 #include "system_data.hpp"
@@ -18,7 +19,7 @@ constexpr int boardSlot=4,faceSlot=5,portraitSlot=8,digitSlot=0x0c,coinSlot=0x28
 constexpr uint32_t white=0xffffffffu;
 
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||(size&&in.tellg()!=static_cast<std::streamoff>(size)))
         throw std::runtime_error("Invalid arcade result resource: "+file.string());
     std::vector<uint8_t> bytes(size_t(in.tellg()));

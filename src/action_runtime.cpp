@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "action_runtime.hpp"
 #include "fighter_resource_path.hpp"
 #include "fighter_roster.hpp"
@@ -14,7 +15,7 @@ namespace ss6 {
 namespace {
 using Bytes = std::vector<uint8_t>;
 Bytes read(const std::filesystem::path& path) {
-    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    std::ifstream stream(resolveAsset(path), std::ios::binary | std::ios::ate);
     if (!stream) throw std::runtime_error("Cannot read " + path.string());
     auto size = stream.tellg();
     if (size < 0 || size > 16*1024*1024) throw std::runtime_error("Invalid action resource size");

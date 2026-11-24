@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "arcade_ending.hpp"
 #include "motion.hpp"
 #include "system_data.hpp"
@@ -19,7 +20,7 @@ constexpr int width=640,height=480;
 constexpr uint32_t hidden=0x400000;
 
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size=0) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||(size&&in.tellg()!=static_cast<std::streamoff>(size)))
         throw std::runtime_error("Invalid ending resource: "+file.string());
     std::vector<uint8_t> bytes(static_cast<size_t>(in.tellg()));

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "vs_curtain.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -20,7 +21,7 @@ int signed16(std::istream& input) {
 }
 
 VsCurtain::VsCurtain(const std::filesystem::path& assets) {
-    std::ifstream layout(assets/"vs_curtain.bin",std::ios::binary);
+    std::ifstream layout(resolveAsset(assets/"vs_curtain.bin"),std::ios::binary);
     std::array<char,4> header;
     read(layout,header.data(),header.size());
     if(header!=std::array<char,4>{'C','V','D','1'})throw std::runtime_error("Invalid VS curtain layout");
@@ -37,7 +38,7 @@ VsCurtain::VsCurtain(const std::filesystem::path& assets) {
         }
     }
     if(layout.peek()!=std::char_traits<char>::eof())throw std::runtime_error("Unexpected VS curtain layout data");
-    std::ifstream texture(assets/"change_base16.tex",std::ios::binary);
+    std::ifstream texture(resolveAsset(assets/"change_base16.tex"),std::ios::binary);
     std::vector<uint8_t> indices(atlasWidth*atlasWidth);
     std::array<std::array<uint8_t,4>,256> palette;
     read(texture,indices.data(),indices.size());read(texture,palette.data(),sizeof(palette));

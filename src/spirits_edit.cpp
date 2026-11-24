@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "spirits_edit.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -8,7 +9,7 @@
 namespace ss6 {
 SpiritsEditAssets::SpiritsEditAssets(const std::filesystem::path& assets) {
     const auto file=assets/"spirits_edit.bin";
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     if(!in)throw std::runtime_error("Missing asset: "+file.string());
     const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in),{}};
     if(data.size()<4+2*options.size()||!std::equal(data.begin(),data.begin()+4,"SPED"))

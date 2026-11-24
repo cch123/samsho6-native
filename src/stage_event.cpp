@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "stage_event.hpp"
 #include "auxiliary_objects.hpp"
 #include "motion.hpp"
@@ -8,7 +9,7 @@
 
 namespace ss6 {
 StageEventRules::StageEventRules(const std::filesystem::path& assets):items(assets) {
-    std::ifstream in(assets/"stage_event.bin",std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(assets/"stage_event.bin"),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=68)throw std::runtime_error("Invalid stage event tables");
     std::array<uint8_t,68> data{};in.seekg(0);
     if(!in.read(reinterpret_cast<char*>(data.data()),data.size()))throw std::runtime_error("Truncated stage event tables");

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "stage_item_schedule.hpp"
 #include "battle_round.hpp"
 #include "survival_run.hpp"
@@ -9,7 +10,7 @@
 
 namespace ss6 {
 StageItemSchedule::StageItemSchedule(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"stage_item_schedule.bin",std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(assets/"stage_item_schedule.bin"),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=std::streamoff(table_.size()))throw std::runtime_error("Invalid stage item schedule");
     in.seekg(0);
     if(!in.read(reinterpret_cast<char*>(table_.data()),table_.size()))throw std::runtime_error("Truncated stage item schedule");

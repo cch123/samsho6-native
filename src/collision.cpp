@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "collision.hpp"
 #include "fighter_resource_path.hpp"
 #include "fighter_roster.hpp"
@@ -11,11 +12,11 @@ JudgmentFields decodeJudgment(uint32_t word) {
     return {word>>26,quotient>>2,quotient&3,field%6,(word>>18)&1,(word>>7)&2047,word&127};
 }
 CollisionTables::CollisionTables(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"collision_00.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"collision_00.bin"),std::ios::binary);
     if (!in.read(reinterpret_cast<char*>(bytes_.data()),bytes_.size()) || in.peek()!=EOF)
         throw std::runtime_error("Missing or invalid resource-00 collision tables");
     auto readProjectileTable=[&](const char* name,auto& bytes) {
-        std::ifstream f(assets/name,std::ios::binary);
+        std::ifstream f(resolveAsset(assets/name),std::ios::binary);
         if(!f.read(reinterpret_cast<char*>(bytes.data()),bytes.size()) || f.peek()!=EOF)
             throw std::runtime_error("Missing or invalid projectile table: "+std::string(name));
     };
@@ -25,7 +26,7 @@ CollisionTables::CollisionTables(const std::filesystem::path& assets) {
         if(!id)continue;
         auto& table=characterClasses_.at(id);loaded_[id]=true;
         const auto path=fighterResourcePath(assets,"collision",id);
-        std::ifstream f(path,std::ios::binary);
+        std::ifstream f(resolveAsset(path),std::ios::binary);
         if(!f.read(reinterpret_cast<char*>(table.data()),table.size())||f.peek()!=EOF)
             throw std::runtime_error("Invalid fighter collision table: "+path.string());
     }

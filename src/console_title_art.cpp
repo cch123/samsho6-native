@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "console_title_art.hpp"
 
 #include <algorithm>
@@ -15,7 +16,7 @@ constexpr std::array<std::string_view,9> names={
 };
 
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=static_cast<std::streamoff>(size))
         throw std::runtime_error("Invalid title resource: "+file.string());
     std::vector<uint8_t> bytes(size);

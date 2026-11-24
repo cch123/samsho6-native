@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include "victim_script.hpp"
@@ -23,7 +24,7 @@
 namespace ss6 {
 namespace {
 std::vector<uint8_t> readAll(const std::filesystem::path& p) {
-    std::ifstream f(p,std::ios::binary);
+    std::ifstream f(resolveAsset(p),std::ios::binary);
     if(!f)throw std::runtime_error("Missing "+p.string());
     return {std::istreambuf_iterator<char>(f),{}};
 }

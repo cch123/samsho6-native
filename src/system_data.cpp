@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "system_data.hpp"
 #include <algorithm>
 #include <fstream>
@@ -6,7 +7,7 @@
 namespace ss6 {
 SystemData::SystemData(const std::filesystem::path& assets) {
     const auto file=assets/"save_default.bin";
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=std::streamoff(imageSize))throw std::runtime_error("Invalid factory save image: "+file.string());
     in.seekg(0);
     if(!in.read(reinterpret_cast<char*>(factory_.data()),imageSize))

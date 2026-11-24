@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "color_edit.hpp"
 #include <cstring>
 #include <fstream>
@@ -40,7 +41,7 @@ uint32_t swatchWord(uint16_t v) {
 }
 
 ColorEditTables::ColorEditTables(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"color_edit.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"color_edit.bin"),std::ios::binary);
     const std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
     if(raw.size()!=2364||std::memcmp(raw.data(),"CEDT\1\0\0\0",8))throw std::runtime_error("Unexpected color_edit.bin");
     const auto word=[&](size_t at){uint32_t v;std::memcpy(&v,raw.data()+at,4);return v;};

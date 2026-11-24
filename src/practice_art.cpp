@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "practice_art.hpp"
 #include "scalar_float.hpp"
 #include <algorithm>
@@ -63,7 +64,7 @@ void gaugeWindow(const EditArt& art,const PracticeArtTables& t,Context& c,const 
 }
 
 PracticeArtTables::PracticeArtTables(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"practice_art.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"practice_art.bin"),std::ios::binary);
     std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
     if(raw.size()<8||std::memcmp(raw.data(),"PAR1",4))throw std::runtime_error("practice_art.bin is missing or foreign");
     uint32_t count;std::memcpy(&count,raw.data()+4,4);

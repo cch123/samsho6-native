@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "console_option.hpp"
 #include "scalar_float.hpp"
 #include <algorithm>
@@ -68,7 +69,7 @@ unsigned soundInput(const MenuPad& p) {           // 1dcbd8
 
 ConsoleOptionTables::ConsoleOptionTables(const std::filesystem::path& assets) {
     const auto file=assets/"console_option.bin";
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
     size_t at=0;
     auto need=[&](size_t n){if(at+n>raw.size())throw std::runtime_error("Truncated option tables: "+file.string());};

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "fighter_tables.hpp"
 #include "state_callbacks.hpp"
 #include "fighter_roster.hpp"
@@ -9,7 +10,7 @@
 namespace ss6 {
 namespace {
 template<size_t N>std::array<uint8_t,N> read(const std::filesystem::path& file,size_t extendedSize=N) {
-    std::array<uint8_t,N> data;std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::array<uint8_t,N> data;std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     const auto size=in.tellg();
     if((size!=std::streamoff(N)&&size!=std::streamoff(extendedSize)) ||
        !in.seekg(0).read(reinterpret_cast<char*>(data.data()),N))

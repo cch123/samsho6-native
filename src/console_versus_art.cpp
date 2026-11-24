@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "console_versus_art.hpp"
 #include <bit>
 #include <fstream>
@@ -21,7 +22,7 @@ int gsAlpha(int raw){return (raw+1)/2;}
 }
 
 ConsoleVersusArt::ConsoleVersusArt(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"console_versus_art.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"console_versus_art.bin"),std::ios::binary);
     if(!in)throw std::runtime_error("Cannot load original console versus menu art");
     auto half=[&]() -> uint16_t {
         const int lo=in.get(),hi=in.get();

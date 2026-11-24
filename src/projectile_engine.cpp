@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "projectile_engine.hpp"
 #include "soft_double.hpp"
 #include "state_callbacks.hpp"
@@ -25,7 +26,7 @@ bool reachedEdge(const StageCamera& cam,int32_t x,int32_t inset,bool towardRight
 }
 }
 ProjectileTable::ProjectileTable(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"projectile_descriptors.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"projectile_descriptors.bin"),std::ios::binary);
     std::array<uint8_t,190*12> raw{};
     if(!in.read(reinterpret_cast<char*>(raw.data()),raw.size())||in.peek()!=EOF)
         throw std::runtime_error("Invalid projectile_descriptors.bin");

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "arcade_session.hpp"
 #include <algorithm>
 #include "arcade_presentation.hpp"
@@ -13,7 +14,7 @@ namespace ss6 {
 namespace {
 std::unique_ptr<ArcadeTables> loadTables(const std::filesystem::path& assets) {
     const auto file=assets/"arcade_run.bin";
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=std::streamoff(ArcadeTables::byteSize))throw std::runtime_error("Invalid arcade tables: "+file.string());
     std::vector<uint8_t> bytes(ArcadeTables::byteSize);
     in.seekg(0);

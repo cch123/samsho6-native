@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "gallery_art.hpp"
 #include "scalar_float.hpp"
 
@@ -14,7 +15,7 @@ namespace ss6 {
 namespace {
 constexpr int width=640,height=480;
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size=0) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||(size&&in.tellg()!=static_cast<std::streamoff>(size)))
         throw std::runtime_error("Invalid gallery resource: "+file.string());
     std::vector<uint8_t> bytes(static_cast<size_t>(in.tellg()));

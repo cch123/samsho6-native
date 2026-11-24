@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "damage.hpp"
 #include "state_entry.hpp"
 #include <algorithm>
@@ -9,7 +10,7 @@
 
 namespace ss6 {
 DamageTables::DamageTables(const std::filesystem::path& assets) {
-    std::ifstream stream(assets/"damage_00.bin",std::ios::binary);
+    std::ifstream stream(resolveAsset(assets/"damage_00.bin"),std::ios::binary);
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(stream)),{});
     if (bytes.size()!=352) throw std::runtime_error("Expected 352-byte damage_00.bin");
     size_t offset=0;
@@ -26,12 +27,12 @@ DamageTables::DamageTables(const std::filesystem::path& assets) {
     for (auto& value:constants_) value.bits=word();
     // 1a3c18 indexes attack power by the source, 1a3f90 indexes defense
     // by the target. Each character can therefore be on either controller.
-    std::ifstream characterTable(assets/"callback_character_parameters.bin",std::ios::binary);
+    std::ifstream characterTable(resolveAsset(assets/"callback_character_parameters.bin"),std::ios::binary);
     bytes.assign(std::istreambuf_iterator<char>(characterTable),{});
     if(bytes.size()!=51*28)throw std::runtime_error("Invalid character damage table");
     offset=0;
     for(auto& character:characters_)for(auto& value:character)value=std::bit_cast<int32_t>(word());
-    std::ifstream spiritTable(assets/"permission_systems.bin",std::ios::binary);
+    std::ifstream spiritTable(resolveAsset(assets/"permission_systems.bin"),std::ios::binary);
     bytes.assign(std::istreambuf_iterator<char>(spiritTable),{});
     if(bytes.size()!=9*40) throw std::runtime_error("Expected 360-byte permission_systems.bin");
     offset=0;

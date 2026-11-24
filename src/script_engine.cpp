@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include "script_engine.hpp"
@@ -15,7 +16,7 @@
 namespace ss6 {
 namespace {
 std::vector<uint8_t> readAll(const std::filesystem::path& path) {
-    std::ifstream in(path,std::ios::binary);
+    std::ifstream in(resolveAsset(path),std::ios::binary);
     if(!in)throw std::runtime_error("Missing script asset: "+path.string());
     return {std::istreambuf_iterator<char>(in),{}};
 }

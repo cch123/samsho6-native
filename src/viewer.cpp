@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "audio_routing.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -40,7 +41,7 @@ using Bytes = std::vector<uint8_t>;
 namespace fs = std::filesystem;
 
 Bytes readFile(const fs::path& path) {
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    std::ifstream in(ss6::resolveAsset(path), std::ios::binary | std::ios::ate);
     if (!in) throw std::runtime_error("Cannot open " + path.string());
     auto size = in.tellg();
     if (size < 0 || size > 64 * 1024 * 1024) throw std::runtime_error("Invalid asset size");
@@ -1277,6 +1278,12 @@ int main(int argc, char** argv) {
             std::string arg = argv[i];
             if (i + 1 >= argc) throw std::runtime_error("Expected option value");
             if (arg == "--assets") assets = argv[++i];
+            else if (arg == "--mod") {
+                // Repeatable; earlier directories win. Extends any SS6_MODS roots.
+                auto roots=ss6::assetOverrides();
+                roots.emplace_back(argv[++i]);
+                ss6::setAssetOverrides(std::move(roots));
+            }
             else if (arg == "--cpu") cpuSeats=ss6::versusCpuSeats(argv[++i]);
             else if (arg == "--save") saveFile=argv[++i];
             else if (arg == "--unlock-modes") unlockModes=std::string(argv[++i])=="yes";

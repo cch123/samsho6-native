@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "input_permissions.hpp"
 #include "actor_state.hpp"
 #include <bit>
@@ -8,7 +9,7 @@
 namespace ss6 {
 namespace {
 std::vector<uint8_t> read(const std::filesystem::path& path,size_t count) {
-    std::ifstream in(path,std::ios::binary);std::vector<uint8_t> data(count);
+    std::ifstream in(resolveAsset(path),std::ios::binary);std::vector<uint8_t> data(count);
     if(!in.read(reinterpret_cast<char*>(data.data()),count)||in.peek()!=EOF)throw std::runtime_error("Invalid input permission table: "+path.string());
     return data;
 }

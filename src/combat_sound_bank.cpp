@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "combat_sound_bank.hpp"
 
 #include <algorithm>
@@ -89,7 +90,7 @@ std::array<int16_t,28> decodeSpuAdpcmBlock(std::span<const uint8_t,16> block,Spu
 }
 
 CombatSoundBank::CombatSoundBank(const std::filesystem::path& directory):directory_(directory) {
-    std::ifstream file(directory / "combat_sound_bank.bin", std::ios::binary | std::ios::ate);
+    std::ifstream file(resolveAsset(directory / "combat_sound_bank.bin"), std::ios::binary | std::ios::ate);
     if (!file || file.tellg() < 8 || file.tellg() > 4 * 1024 * 1024)
         throw std::runtime_error("Invalid combat sound bank");
     std::vector<uint8_t> bytes(static_cast<size_t>(file.tellg()));
@@ -131,7 +132,7 @@ const std::vector<CombatSoundSample>& CombatSoundBank::characterGroup(unsigned i
     const auto key=std::make_pair(id,voice);
     if(auto it=extra_.find(key);it!=extra_.end())return it->second;
     const auto stem=std::string(voice?"vs_voice_":"vs_sounds_")+(id<10?"0":"")+std::to_string(id);
-    std::ifstream in(directory_/(stem+".bin"),std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(directory_/(stem+".bin")),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()<0||in.tellg()>2*1024*1024)throw std::runtime_error("Missing character sound group: "+stem);
     const unsigned stride=voice?0x110:0x250;
     std::vector<uint8_t> raw(static_cast<size_t>(in.tellg()));in.seekg(0);

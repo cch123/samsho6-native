@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "combat_decision.hpp"
 #include <bit>
 #include <algorithm>
@@ -102,7 +103,7 @@ bool ContactRegistry::add(uint32_t identity,uint32_t character,uint32_t action,C
     return true;
 }
 CombatTables::CombatTables(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"combat_consumption.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"combat_consumption.bin"),std::ios::binary);
     for (auto& v:indices_) {
         uint32_t bits=0;
         for (unsigned shift=0;shift<32;shift+=8) {

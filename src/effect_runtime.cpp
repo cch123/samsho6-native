@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "effect_runtime.hpp"
 #include <algorithm>
 #include <bit>
@@ -30,7 +31,7 @@ const std::vector<EffectRecord>& EffectBank::action(unsigned bank,unsigned actio
         throw std::runtime_error("Effect action outside the original banks "+std::to_string(bank)+"/"+std::to_string(actionId));
     constexpr const char* files[]={"","01HitFlash.bin","02Guard.bin","03etc.bin","04tenso.bin","Display.bin","Display2.bin","Display3.bin"};
     const auto path=assets_/files[bank];
-    std::ifstream in(path,std::ios::binary);
+    std::ifstream in(resolveAsset(path),std::ios::binary);
     if(!in)throw std::runtime_error("Cannot open "+path.string());
     std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)),{});
     if(bytes.size()!=0x3da0)throw std::runtime_error("Invalid effect bank size");

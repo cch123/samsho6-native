@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "judgment.hpp"
 #include "fighter_resource_path.hpp"
 #include <algorithm>
@@ -8,7 +9,7 @@
 
 namespace ss6 {
 JudgmentData::JudgmentData(const std::filesystem::path& assets,unsigned resource) {
-    std::ifstream in(fighterResourcePath(assets,"jdg",resource),std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(fighterResourcePath(assets,"jdg",resource)),std::ios::binary|std::ios::ate);
     if (!in) throw std::runtime_error("Cannot open JDG resource");
     const auto length=in.tellg();
     if (length<=0 || length%16 || length>16*1024*1024) throw std::runtime_error("Invalid JDG size");

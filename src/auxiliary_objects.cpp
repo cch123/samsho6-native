@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "auxiliary_objects.hpp"
 #include <algorithm>
 #include <bit>
@@ -9,7 +10,7 @@
 namespace ss6 {
 namespace {
 std::vector<uint8_t> read(const std::filesystem::path& file) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in)throw std::runtime_error("Missing auxiliary object resource: "+file.string());
     const auto size=in.tellg();if(size<0||size>16*1024*1024)throw std::runtime_error("Invalid auxiliary resource size");
     std::vector<uint8_t> bytes(static_cast<size_t>(size));in.seekg(0);

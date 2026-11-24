@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "edit_widgets.hpp"
 #include <algorithm>
 #include <fstream>
@@ -134,7 +135,7 @@ int EditListCursor::update(const MenuPad& pad,std::vector<int>& sounds) {
 }
 
 static std::vector<uint8_t> readAll(const std::filesystem::path& file) {
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     if(!in)throw std::runtime_error("Missing asset: "+file.string());
     return {std::istreambuf_iterator<char>(in),{}};
 }

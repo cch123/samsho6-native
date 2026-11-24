@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "edit_art.hpp"
 #include "scalar_float.hpp"
 #include <algorithm>
@@ -10,7 +11,7 @@
 namespace ss6 {
 namespace {
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t expected=0) {
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
     if(!in.good()&&!in.eof())throw std::runtime_error("Unable to read "+file.string());
     if(data.empty()||(expected&&data.size()!=expected))throw std::runtime_error("Unexpected size of "+file.string());

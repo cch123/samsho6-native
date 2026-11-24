@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "fighter_tables.hpp"
 #include "fighter_roster.hpp"
 #include <algorithm>
@@ -7,7 +8,7 @@
 namespace ss6 {
 namespace {
 std::vector<uint8_t> readAll(const std::filesystem::path& p) {
-    std::ifstream f(p,std::ios::binary);
+    std::ifstream f(resolveAsset(p),std::ios::binary);
     if(!f)throw std::runtime_error("Missing "+p.string());
     return {std::istreambuf_iterator<char>(f),{}};
 }

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "versus_result_text.hpp"
 #include <fstream>
 #include <stdexcept>
@@ -11,7 +12,7 @@ int VersusResultText::glyphCount(int quoteIndex) {
 }
 
 VersusResultText::VersusResultText(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"versus_quotes_00.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"versus_quotes_00.bin"),std::ios::binary);
     if(!in)throw std::runtime_error("Cannot open original Haohmaru victory text");
     auto byte=[&] {
         const int n=in.get();

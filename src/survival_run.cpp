@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "survival_run.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -8,7 +9,7 @@
 
 namespace ss6 {
 SurvivalAssets::SurvivalAssets(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"survival_run.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"survival_run.bin"),std::ios::binary);
     if(!in)throw std::runtime_error("Missing asset: survival_run.bin");
     const std::vector<uint8_t> data{std::istreambuf_iterator<char>(in),{}};
     size_t at=0;

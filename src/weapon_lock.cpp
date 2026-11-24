@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "weapon_lock.hpp"
 #include "sound_selection.hpp"
 #include <bit>
@@ -6,7 +7,7 @@
 
 namespace ss6 {
 WeaponLock::WeaponLock(const std::filesystem::path& assets):objects_(assets,{0,0,51}) {
-    std::ifstream in(assets/"weapon_lock.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"weapon_lock.bin"),std::ios::binary);
     std::array<uint8_t,20> raw{};
     if(!in.read(reinterpret_cast<char*>(raw.data()),raw.size())||in.peek()!=EOF)
         throw std::runtime_error("Invalid weapon-lock tables");

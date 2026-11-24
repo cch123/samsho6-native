@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "versus_draw_art.hpp"
 #include "player_object.hpp"
 #include <algorithm>
@@ -7,7 +8,7 @@
 namespace ss6 {
 namespace {
 std::vector<uint8_t> load(const std::filesystem::path& path,size_t size) {
-    std::ifstream in(path,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(path),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=std::streamoff(size))throw std::runtime_error("Missing or invalid Game Over resource: "+path.string());
     std::vector<uint8_t> bytes(size);
     in.seekg(0);

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "reaction.hpp"
 #include "knockdown.hpp"
 #include <bit>
@@ -22,7 +23,7 @@ bool applyCapturedHit(ReactionTarget& t,unsigned rawType) {
     return true;
 }
 ReactionTables::ReactionTables(const std::filesystem::path& assets) {
-    std::ifstream file(assets/"reaction_common.bin",std::ios::binary|std::ios::ate);
+    std::ifstream file(resolveAsset(assets/"reaction_common.bin"),std::ios::binary|std::ios::ate);
     if (!file || file.tellg()!=2048) throw std::runtime_error("Expected 2048-byte reaction_common.bin");
     file.seekg(0);
     if (!file.read(reinterpret_cast<char*>(data_.data()),data_.size())) throw std::runtime_error("Truncated reaction tables");

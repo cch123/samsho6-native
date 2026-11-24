@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "ordinary_rules.hpp"
 #include <algorithm>
 #include <bit>
@@ -6,14 +7,14 @@
 #include <stdexcept>
 namespace ss6 {
 OrdinaryRules::OrdinaryRules(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"ordinary_00.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"ordinary_00.bin"),std::ios::binary);
     std::array<uint8_t,18> data{};
     if (!in.read(reinterpret_cast<char*>(data.data()),data.size())||in.peek()!=EOF)
         throw std::runtime_error("Expected 18-byte ordinary_00.bin");
-    std::ifstream movement(assets/"selection_character_flags.bin",std::ios::binary);
+    std::ifstream movement(resolveAsset(assets/"selection_character_flags.bin"),std::ios::binary);
     if(!movement.read(reinterpret_cast<char*>(movementFlags_.data()),movementFlags_.size())||movement.peek()!=EOF)
         throw std::runtime_error("Invalid original fighter movement flag table");
-    std::ifstream ranges(assets/"permission_target_ranges.bin",std::ios::binary);
+    std::ifstream ranges(resolveAsset(assets/"permission_target_ranges.bin"),std::ios::binary);
     for(auto& character:ranges_)for(auto& value:character) {
         std::array<uint8_t,2> bytes{};
         if(!ranges.read(reinterpret_cast<char*>(bytes.data()),2))throw std::runtime_error("Truncated near/far ranges");
@@ -21,7 +22,7 @@ OrdinaryRules::OrdinaryRules(const std::filesystem::path& assets) {
     }
     if(ranges.peek()!=EOF)throw std::runtime_error("Unexpected near/far range table");
     flags_={data[8],data[13]};
-    std::ifstream attacks(assets/"entry_attack.bin",std::ios::binary);
+    std::ifstream attacks(resolveAsset(assets/"entry_attack.bin"),std::ios::binary);
     for(unsigned variant:{0u,2u}) {
         //Resource00's standing heavy is attack state8. Preserve its actual
         //descriptor flags: these also select sword cost and clash strength.

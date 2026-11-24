@@ -6,6 +6,23 @@
 !/README.txt
 !/AGENTS.md
 !/CMakeLists.txt
+!/CMakePresets.json
+!/.clang-format
+!/.editorconfig
+!/.github/
+!/.github/workflows/
+!/.github/workflows/*.yml
+!/cmake/
+!/cmake/*.cmake
+!/tests/
+!/tests/CMakeLists.txt
+!/tests/*.cpp
+!/tests/*.py
+!/tools/
+!/tools/assets/
+!/tools/assets/*.py
+!/mods/
+!/mods/README.md
 !/*.command
 
 !/src/

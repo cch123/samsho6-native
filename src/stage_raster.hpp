@@ -1,4 +1,5 @@
 #pragma once
+#include "asset_files.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -15,7 +16,7 @@
 namespace ss6 {
 struct StageVertex {float x,y,u,v;};
 inline std::vector<uint8_t> readStageFile(const std::filesystem::path& path,size_t maximum) {
-    std::ifstream f(path,std::ios::binary|std::ios::ate);
+    std::ifstream f(resolveAsset(path),std::ios::binary|std::ios::ate);
     if(!f||f.tellg()<=0||size_t(f.tellg())>maximum) throw std::runtime_error("Invalid combat stage asset: "+path.string());
     std::vector<uint8_t> bytes(size_t(f.tellg()));
     f.seekg(0);

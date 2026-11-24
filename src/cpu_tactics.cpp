@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "cpu_tactics.hpp"
 #include <algorithm>
 #include <bit>
@@ -10,7 +11,7 @@
 namespace ss6 {
 namespace {
 void readTable(const std::filesystem::path& path,std::span<uint8_t> bytes) {
-    std::ifstream in(path,std::ios::binary);
+    std::ifstream in(resolveAsset(path),std::ios::binary);
     if(!in.read(reinterpret_cast<char*>(bytes.data()),bytes.size()) || in.peek()!=EOF)
         throw std::runtime_error("Invalid CPU table: "+path.string());
 }

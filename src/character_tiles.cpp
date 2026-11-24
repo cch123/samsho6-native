@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "character_tiles.hpp"
 #include "edit_art.hpp"
 #include <algorithm>
@@ -10,7 +11,7 @@ namespace ss6 {
 namespace {
 using F=ScalarFloat;
 std::vector<uint8_t> read(const std::filesystem::path& path) {
-    std::ifstream f(path,std::ios::binary|std::ios::ate);if(!f)throw std::runtime_error("Missing tile resource: "+path.string());
+    std::ifstream f(resolveAsset(path),std::ios::binary|std::ios::ate);if(!f)throw std::runtime_error("Missing tile resource: "+path.string());
     const auto n=f.tellg();if(n<0||n>32*1024*1024)throw std::runtime_error("Invalid tile resource size");
     std::vector<uint8_t> bytes(static_cast<size_t>(n));f.seekg(0);if(!f.read(reinterpret_cast<char*>(bytes.data()),n))throw std::runtime_error("Truncated tile resource");return bytes;
 }

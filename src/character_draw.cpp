@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "character_draw.hpp"
 #include "action_runtime.hpp"
 #include <algorithm>
@@ -10,7 +11,7 @@ namespace ss6 {
 namespace {
 using F=ScalarFloat;
 std::vector<uint8_t> read(const std::filesystem::path& path) {
-    std::ifstream in(path,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(path),std::ios::binary|std::ios::ate);
     if(!in)throw std::runtime_error("Missing character draw resource: "+path.string());
     const auto n=in.tellg();if(n<0||n>32*1024*1024)throw std::runtime_error("Invalid character draw resource size");
     std::vector<uint8_t> out(static_cast<size_t>(n));in.seekg(0);

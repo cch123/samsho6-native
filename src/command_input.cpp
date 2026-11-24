@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "command_input.hpp"
 #include "input_features.hpp"
 #include <fstream>
@@ -13,7 +14,7 @@ uint32_t feature(const InputFeatures& f,unsigned index,bool alternate) {
 }
 }
 CommandInput::CommandInput(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"input_commands.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"input_commands.bin"),std::ios::binary);
     for(auto& d:definitions_) {
         std::array<uint8_t,17> raw{};
         if(!in.read(reinterpret_cast<char*>(raw.data()),raw.size()))throw std::runtime_error("Truncated original input command table");

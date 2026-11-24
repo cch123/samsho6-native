@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "kazuki_fire.hpp"
 #include "companion_motion.hpp"
 #include "state_entry.hpp"
@@ -35,7 +36,7 @@ bool steer(AuxiliaryObject& o,F x,F y,CompanionSteering s) {
 }
 }
 AngleTrig::AngleTrig(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"angle_trig.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"angle_trig.bin"),std::ios::binary);
     table_.resize(2*0x10000);
     if(!in.read(reinterpret_cast<char*>(table_.data()),std::streamsize(table_.size()*4)))
         throw std::runtime_error("Missing angle_trig.bin");

@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "console_ranking_art.hpp"
 #include <algorithm>
 #include <bit>
@@ -8,7 +9,7 @@ namespace ss6 {
 namespace {
 struct Reader {
     std::ifstream input;
-    explicit Reader(const std::filesystem::path& path):input(path,std::ios::binary) {
+    explicit Reader(const std::filesystem::path& path):input(resolveAsset(path),std::ios::binary) {
         if(!input)throw std::runtime_error("Missing ranking artwork: "+path.string());
     }
     unsigned take(unsigned size) {

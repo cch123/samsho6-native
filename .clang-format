@@ -1,0 +1,11 @@
+# Applies to new and substantially rewritten files. Existing sources are not
+# reformatted wholesale: the oracle reports in outputs/ pin source hashes.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+NamespaceIndentation: None
+PointerAlignment: Left
+SortIncludes: CaseSensitive

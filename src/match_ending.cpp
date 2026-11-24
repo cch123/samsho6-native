@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "match_ending.hpp"
 #include "battle_round.hpp"
 #include <bit>
@@ -6,7 +7,7 @@
 
 namespace ss6 {
 MatchEndingRules::MatchEndingRules(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"ending_choices.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"ending_choices.bin"),std::ios::binary);
     for(auto& row:choices_)for(auto& word:row) {
         word=0;
         for(unsigned b=0;b<4;++b){const int c=in.get();if(c==EOF)throw std::runtime_error("Truncated ending choices");word|=uint32_t(c)<<(b*8);}

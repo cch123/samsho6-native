@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "combat_music.hpp"
 #include <algorithm>
 #include <fstream>
@@ -13,7 +14,7 @@ constexpr unsigned pitch=0x761;
 constexpr int fadeStep=0x222;
 
 std::vector<uint8_t> readFile(const std::filesystem::path& path,size_t limit) {
-    std::ifstream in(path,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(path),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()<0||size_t(in.tellg())>limit)throw std::runtime_error("Missing music asset: "+path.string());
     std::vector<uint8_t> bytes(size_t(in.tellg()));
     in.seekg(0);

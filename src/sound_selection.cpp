@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "sound_selection.hpp"
 #include <bit>
 #include <fstream>
@@ -11,7 +12,7 @@ bool acceptsRecord(int16_t command,const ActionClock& clock) {
 }
 }
 SoundSelection::SoundSelection(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"sound_selection.bin",std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(assets/"sound_selection.bin"),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=176)throw std::runtime_error("Invalid sound selection tables");
     std::array<uint8_t,176> bytes{};in.seekg(0);
     if(!in.read(reinterpret_cast<char*>(bytes.data()),bytes.size()))throw std::runtime_error("Truncated sound selection tables");

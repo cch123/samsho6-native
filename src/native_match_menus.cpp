@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "audio_routing.hpp"
 #include "practice_art.hpp"
 #include "native_match.hpp"
@@ -336,7 +337,7 @@ void NativeMatch::enterColorEdit(unsigned seat) {
     if(!m.editArt)m.editArt=std::make_unique<EditArt>(assets_,*menuCanvas_);
     if(!m.colorTables) {
         m.colorTables=std::make_unique<ColorEditTables>(assets_);
-        std::ifstream file(assets_/"pal_all.bin",std::ios::binary);
+        std::ifstream file(resolveAsset(assets_/"pal_all.bin"),std::ios::binary);
         m.palAll.assign(std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>());
     }
     menuEntrySeed_=battle_.random.librarySeed;

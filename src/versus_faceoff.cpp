@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "versus_faceoff.hpp"
 #include <algorithm>
 #include <bit>
@@ -8,7 +9,7 @@ namespace ss6 {
 namespace {
 using Bytes=std::vector<uint8_t>;
 Bytes read(const std::filesystem::path& path) {
-    std::ifstream stream(path,std::ios::binary|std::ios::ate);
+    std::ifstream stream(resolveAsset(path),std::ios::binary|std::ios::ate);
     if(!stream||stream.tellg()<0||stream.tellg()>2*1024*1024)throw std::runtime_error("Invalid versus asset: "+path.string());
     Bytes result(static_cast<size_t>(stream.tellg()));
     stream.seekg(0);

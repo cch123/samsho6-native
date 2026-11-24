@@ -1,4 +1,5 @@
 #pragma once
+#include "asset_files.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
@@ -10,7 +11,7 @@
 namespace ss6::hud {
 inline constexpr int screenWidth=640,screenHeight=448,atlasSize=512;
 inline std::vector<uint8_t> loadAtlas(const std::filesystem::path& path) {
-    std::ifstream stream(path,std::ios::binary|std::ios::ate);
+    std::ifstream stream(resolveAsset(path),std::ios::binary|std::ios::ate);
     if(!stream || stream.tellg()!=atlasSize*atlasSize+1024)
         throw std::runtime_error("Missing or invalid HUD texture: "+path.string());
     std::vector<uint8_t> bytes(static_cast<size_t>(stream.tellg()));

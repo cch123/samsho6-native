@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "pause_art.hpp"
 #include "scalar_float.hpp"
 
@@ -21,7 +22,7 @@ int floorDivide(int a,int b) {const int q=a/b;return (a%b!=0&&((a<0)!=(b<0)))?q-
 
 PauseArtTables::PauseArtTables(const std::filesystem::path& assets) {
     const auto file=assets/"pause_art.bin";
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     char head[8];
     if(!in.read(head,8)||std::memcmp(head,"PAR1",4))throw std::runtime_error("Invalid pause art resource: "+file.string());
     uint32_t count;std::memcpy(&count,head+4,4);

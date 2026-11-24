@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "practice_mode.hpp"
 #include <algorithm>
 #include <cstring>
@@ -28,7 +29,7 @@ bool PracticeSystem::hasSpiritGauge() const {
 bool PracticeSystem::hasTimeGauge() const {const auto* d=descriptor();return (d&&d[2]==9)||id==5;}
 
 PracticeTables::PracticeTables(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"practice_mode.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"practice_mode.bin"),std::ios::binary);
     std::vector<uint8_t> raw((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
     size_t at=0;
     auto need=[&](size_t n){if(at+n>raw.size())throw std::runtime_error("practice_mode.bin is truncated");};

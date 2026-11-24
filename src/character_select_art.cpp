@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "character_select_art.hpp"
 #include <algorithm>
 #include <bit>
@@ -20,7 +21,7 @@ constexpr std::array<int,12> lastCount{0,59,69,9,9,14,9,5,14,14,0,14};
 }
 
 CharacterSelectArt::CharacterSelectArt(const std::filesystem::path& assets):assets_(assets),menu_(assets) {
-    std::ifstream in(assets/"character_select_art.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"character_select_art.bin"),std::ios::binary);
     if(read(in,4)!=0x31305343)throw std::runtime_error("Invalid character selection layout");
     const unsigned count=read(in,4),lists=read(in,4),frames=read(in,4);
     for(auto& xy:faces_)for(auto& v:xy)v=int(read(in,2));
@@ -28,7 +29,7 @@ CharacterSelectArt::CharacterSelectArt(const std::filesystem::path& assets):asse
     loadPages(in,count,lists,frames,0);
     for(auto& value:headers_)value=read(in,4);
     if(in.peek()!=EOF)throw std::runtime_error("Trailing character selection data");
-    std::ifstream spirits(assets/"spirit_select_art.bin",std::ios::binary);
+    std::ifstream spirits(resolveAsset(assets/"spirit_select_art.bin"),std::ios::binary);
     if(read(spirits,4)!=0x31305353)throw std::runtime_error("Invalid spirit selection layout");
     const auto spiritQuads=read(spirits,4),spiritLists=read(spirits,4),spiritPages=read(spirits,4);
     loadPages(spirits,spiritQuads,spiritLists,spiritPages,2);
@@ -38,7 +39,7 @@ CharacterSelectArt::CharacterSelectArt(const std::filesystem::path& assets):asse
     if(!spirits.read(reinterpret_cast<char*>(labels.indices.data()),labels.indices.size())||spirits.peek()!=EOF)
         throw std::runtime_error("Invalid stage names");
     fixed_.emplace(63,std::move(labels));
-    if(std::ifstream modes{assets/"character_select_mode_art.bin",std::ios::binary}) {
+    if(std::ifstream modes{resolveAsset(assets/"character_select_mode_art.bin"),std::ios::binary}) {
         if(read(modes,4)!=0x314d5343)throw std::runtime_error("Invalid mode selection layout");
         const auto modeQuads=read(modes,4),modeLists=read(modes,4),modePages=read(modes,4);
         const auto firstList=unsigned(lists_.size());
@@ -88,11 +89,11 @@ void CharacterSelectArt::loadPages(std::istream& in,unsigned count,unsigned list
 CharacterSelectArt::Atlas CharacterSelectArt::loadAtlas(const std::string& name,int width,bool embedded) const {
     const int count=width*width;
     Atlas out{width,std::vector<uint8_t>(count),{}};
-    std::ifstream tex(assets_/(name+".tex"),std::ios::binary);
+    std::ifstream tex(resolveAsset(assets_/(name+".tex")),std::ios::binary);
     if(!tex.read(reinterpret_cast<char*>(out.indices.data()),count))
         throw std::runtime_error("Missing selection texture "+name);
     std::ifstream pal;
-    if(!embedded)pal.open(assets_/(name+".pal"),std::ios::binary);
+    if(!embedded)pal.open(resolveAsset(assets_/(name+".pal")),std::ios::binary);
     auto& input=embedded?tex:pal;
     for(unsigned i=0;i<256;++i) {
         // Embedded CLUTs use a single 16x16 upload. Separate 32-bit palettes

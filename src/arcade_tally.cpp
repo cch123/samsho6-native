@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "arcade_tally.hpp"
 #include <cstring>
 #include <fstream>
@@ -14,7 +15,7 @@ int32_t share(int32_t whole,int32_t n) {return sub(product(whole,n)/30,product(w
 }
 
 ArcadeTallyTables::ArcadeTallyTables(const std::filesystem::path& assets) {
-    std::ifstream in(assets/"arcade_tally.bin",std::ios::binary);
+    std::ifstream in(resolveAsset(assets/"arcade_tally.bin"),std::ios::binary);
     std::vector<char> raw((std::istreambuf_iterator<char>(in)),{});
     if(raw.size()!=932||std::memcmp(raw.data(),"ATLY\1\0\0\0",8))throw std::runtime_error("Missing or mismatched arcade_tally.bin");
     size_t at=8;

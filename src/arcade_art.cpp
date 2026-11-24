@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "arcade_art.hpp"
 #include "scalar_float.hpp"
 
@@ -16,7 +17,7 @@ constexpr int width=640,height=480;
 constexpr int hudSlot=0x0a,sceneSlot=0x0c,coinSlot=0x28;
 
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=static_cast<std::streamoff>(size))
         throw std::runtime_error("Invalid arcade art resource: "+file.string());
     std::vector<uint8_t> bytes(size);

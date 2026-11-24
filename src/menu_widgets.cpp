@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "menu_widgets.hpp"
 #include <algorithm>
 #include <cstring>
@@ -16,7 +17,7 @@ template<class T,size_t N> void copyBytes(std::span<const uint8_t> from,size_t a
 }
 }
 AssetSections::AssetSections(const std::filesystem::path& file):file_(file) {
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     bytes_.assign(std::istreambuf_iterator<char>(in),std::istreambuf_iterator<char>());
     if(!in||bytes_.size()<4)throw std::runtime_error("Missing menu table: "+file.string());
 }

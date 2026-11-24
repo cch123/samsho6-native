@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "versus_result_art.hpp"
 #include <algorithm>
 #include <bit>
@@ -10,7 +11,7 @@ namespace ss6 {
 namespace {
 constexpr int width=640;
 std::vector<uint8_t> load(const std::filesystem::path& path,size_t size) {
-    std::ifstream input(path,std::ios::binary|std::ios::ate);
+    std::ifstream input(resolveAsset(path),std::ios::binary|std::ios::ate);
     if(!input || input.tellg()!=static_cast<std::streamoff>(size))
         throw std::runtime_error("Missing or invalid result resource: "+path.string());
     std::vector<uint8_t> bytes(size);

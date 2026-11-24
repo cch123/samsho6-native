@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "arcade_map.hpp"
 #include "scalar_float.hpp"
 #include "soft_double.hpp"
@@ -20,7 +21,7 @@ constexpr int nameSlotA=0x1e,nameSlotB=0x2b,balloonSlotA=0x1f,balloonSlotB=0x20,
 constexpr uint32_t magic=0x50414d41u; // 'AMAP'
 
 std::vector<uint8_t> load(const std::filesystem::path& file,size_t size) {
-    std::ifstream in(file,std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(file),std::ios::binary|std::ios::ate);
     if(!in||(size&&in.tellg()!=static_cast<std::streamoff>(size)))
         throw std::runtime_error("Invalid arcade map resource: "+file.string());
     std::vector<uint8_t> bytes(static_cast<size_t>(in.tellg()));

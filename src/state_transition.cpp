@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "state_entry.hpp"
 #include <algorithm>
 #include <bit>
@@ -7,7 +8,7 @@
 namespace ss6 {
 namespace {
 template<size_t N>void read(const std::filesystem::path& file,std::array<uint8_t,N>& out) {
-    std::ifstream in(file,std::ios::binary);
+    std::ifstream in(resolveAsset(file),std::ios::binary);
     if(!in.read(reinterpret_cast<char*>(out.data()),N)||in.peek()!=EOF)throw std::runtime_error("Invalid state-entry table: "+file.string());
 }
 uint32_t word(const uint8_t* p){return p[0]|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24;}

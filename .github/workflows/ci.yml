@@ -1,0 +1,21 @@
+# Builds the runtime and tools and runs the tests that need no game data.
+# Comparisons against the original executable need the user's own disc image
+# and run locally (work/ss6/validate_*.py).
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset ci
+      - name: Build
+        run: cmake --build --preset ci -j 4
+      - name: Test
+        run: ctest --preset ci

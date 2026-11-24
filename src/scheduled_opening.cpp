@@ -1,3 +1,4 @@
+#include "asset_files.hpp"
 #include "scheduled_opening.hpp"
 #include "effect_snapshot.hpp"
 #include "sound_selection.hpp"
@@ -32,7 +33,7 @@ void capacity(const TaggedTaskPools& pools,unsigned objects,unsigned tasks) {
 }
 ScheduledOpening::ScheduledOpening(const std::filesystem::path& assets,SoundSelection* sound):bank_(assets),sound_(sound) {
     constexpr unsigned size=15*108+4;
-    std::ifstream in(assets/"opening_tasks.bin",std::ios::binary|std::ios::ate);
+    std::ifstream in(resolveAsset(assets/"opening_tasks.bin"),std::ios::binary|std::ios::ate);
     if(!in||in.tellg()!=size)throw std::runtime_error("Invalid opening task tables");
     std::array<uint8_t,size> data{};in.seekg(0);
     if(!in.read(reinterpret_cast<char*>(data.data()),size))throw std::runtime_error("Truncated opening task tables");
@@ -46,7 +47,7 @@ ScheduledOpening::ScheduledOpening(const std::filesystem::path& assets,SoundSele
         if(d[26]!=callback||std::bit_cast<int32_t>(d[13])>=0||!actionCount(d))
             throw std::runtime_error("Opening descriptor outside admitted callbacks/actions");
     }
-    std::ifstream ending(assets/"ending_tasks.bin",std::ios::binary|std::ios::ate);
+    std::ifstream ending(resolveAsset(assets/"ending_tasks.bin"),std::ios::binary|std::ios::ate);
     if(!ending||ending.tellg()!=5*108)throw std::runtime_error("Invalid ending task tables");
     std::array<uint8_t,5*108> tail{};ending.seekg(0);
     if(!ending.read(reinterpret_cast<char*>(tail.data()),tail.size()))throw std::runtime_error("Truncated ending task tables");
@@ -59,7 +60,7 @@ ScheduledOpening::ScheduledOpening(const std::filesystem::path& assets,SoundSele
     // 124430 (world) and 1242c0 (contact) index the same table at 4a2b30;
     // effect_descriptors.bin holds all 67 entries. An entry is usable when
     // it has actions; only 1 and 4 carry completion callbacks (11ef90/11f1c8).
-    std::ifstream effects(assets/"effect_descriptors.bin",std::ios::binary|std::ios::ate);
+    std::ifstream effects(resolveAsset(assets/"effect_descriptors.bin"),std::ios::binary|std::ios::ate);
     constexpr auto effectSize=std::tuple_size_v<decltype(effectDescriptors_)>*108;
     if(!effects||effects.tellg()!=effectSize)throw std::runtime_error("Invalid effect descriptor table");
     std::vector<uint8_t> bytes(effectSize);effects.seekg(0);

@@ -1,5 +1,11 @@
 # Project instructions
 
+## Project layout and asset overrides
+
+Read docs/architecture.md for the directory roles and module groups, and docs/modding.md for asset replacement. Configure with `cmake --preset release`; it builds into work/ss6/build-native, which the validators expect. Add a new runtime source to its group in cmake/ss6_sources.cmake, not to CMakeLists.txt. Keep src/ flat: the validators compile drivers with `-I src` and name files as src/<file>.cpp.
+
+Open every asset through ss6::resolveAsset (src/asset_files.hpp) so `--mod` and SS6_MODS can replace it. Do not route player save data through it. Leave SS6_MODS unset when running validate_*.py. After touching tools/assets/ss6tex.py, run `ctest --preset release` and `ss6tex.py verify` on the packaged assets; every texture must round-trip to identical bytes.
+
 ## Current playable combat
 
 Resource 03 is Hattori Hanzo. Test both input seats with validate_hanzo_normals.py, validate_hanzo_specials.py and validate_hanzo_session.py --package. The victim owns the paired throw sequence. Compare its callbacks and the other body in validate_hanzo_capture.py. Use validate_select_window_input.py --package --hanzo for the keyboard command throw and the second controller’s fire projectile.

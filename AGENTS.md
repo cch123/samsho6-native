@@ -4,7 +4,7 @@
 
 Read docs/architecture.md for the directory roles and module groups, and docs/modding.md for asset replacement. Configure with `cmake --preset release`; it builds into work/ss6/build-native, which the validators expect. Add a new runtime source to its group in cmake/ss6_sources.cmake, not to CMakeLists.txt. Keep src/ flat: the validators compile drivers with `-I src` and name files as src/<file>.cpp.
 
-Open every asset through ss6::resolveAsset (src/asset_files.hpp) so `--mod` and SS6_MODS can replace it. Do not route player save data through it. Leave SS6_MODS unset when running validate_*.py. After touching tools/assets/ss6tex.py, run `ctest --preset release` and `ss6tex.py verify` on the packaged assets; every texture must round-trip to identical bytes.
+Open every asset through ss6::resolveAsset (src/asset_files.hpp) so `--mod` and SS6_MODS can replace it. Do not route player save data through it. Leave SS6_MODS unset when running validate_*.py. tools/assets/ss6sprite.py exports and imports fighter sprite images (idx/map/chr and pal_all.bin groups); an import must leave unedited images byte-identical and only append. After touching tools/assets/ss6tex.py or ss6sprite.py, run `ctest --preset release` and `ss6tex.py verify` on the packaged assets; every texture must round-trip to identical bytes.
 
 ## Current playable combat
 

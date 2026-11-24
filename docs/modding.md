@@ -48,12 +48,44 @@ python3 tools/assets/ss6tex.py encode art/bg_title00.png -o mods/my-mod
 - 没有同名 `.pal` 且无内嵌调色板的贴图（如 `sakura.tex`）的调色板来自别处（由使用它的加载器决定），解码结果用灰阶预览，编码时只写回索引。
 - 少数贴图页是每字节两个 4 位像素，或宽高不是工具推断的默认值；这类需要用 `--width` 指定，4 位页目前不支持。
 
+## 角色精灵
+
+每个角色资源 NN 的图像由三个文件组成：`idx_NN.bin`（图像号到记录的索引，含调色板库号）、`map_NN.bin`（每张图的 8 像素图块排列）、`chr_NN.bin`（4 位图块）。颜色来自所有角色共用的 `pal_all.bin`，每组 16 色，组号为 `调色板键 * 32 + 库号`，默认键为 `资源号 * 5 + 配色号`。
+
+```sh
+A=outputs/ss6-feasibility/native-viewer/assets
+python3 tools/assets/ss6sprite.py export --assets $A --resource 0 -o art/haohmaru
+# 修改 art/haohmaru/NNNN.png
+python3 tools/assets/ss6sprite.py import art/haohmaru --assets $A -o mods/my-mod
+./battle.command --mod mods/my-mod
+```
+
+导入时的行为：
+
+```
+逐张比较 PNG 与原图
+   ├─ 像素相同 ──▶ 该图的 idx/map/chr 数据原样保留
+   └─ 像素不同 ──▶ 新图块追加到 chr 末尾（已有的相同图块复用）
+                   新记录追加到 map 末尾，idx 指向新记录
+调色板与原组不同 ──▶ 只改写 pal_all.bin 中对应的 16 色组
+```
+
+约束：
+
+- 每张图最多 16 色，索引 0 是透明色；颜色精度为每通道 5 位。
+- 宽高必须是 16 像素的整数倍。工具接受改变尺寸，但部件的摆放位置由 `pil_NN.bin` 和动作数据决定；改尺寸后的显示效果尚未在游戏中验证，建议保持原尺寸。
+- 同一库号的所有图共用一个调色板；两张图给出不同的调色板会报错。
+- 调色板修改只作用于导出时选择的那一个配色（`--colour`，默认 0）。其余配色各有自己的键，需要分别导出修改。
+- `pal_all.bin` 是全体角色共用的单个文件；多次导入到同一个 mod 目录时会在已有文件上累加。
+- 个别图像记录的尺寸不是偶数图块（原版运行时同样不支持），导出时跳过并列在 `sprites.json` 的 `skipped` 里。
+
 ## 目前可以替换什么
 
 | 素材 | 文件 | 可编辑格式 | 状态 |
 |---|---|---|---|
 | 界面、背景、立绘、场景贴图 | `*.tex` / `*.pal` | 索引 PNG | 可用，往返无损 |
-| 角色精灵 | `chr/pil/idx/map_NN.bin` | 无 | 只能整文件替换，尚无转换工具 |
+| 角色精灵图像与配色 | `chr/idx/map_NN.bin`、`pal_all.bin` | 索引 PNG（每张图一个） | 可用，见下节 |
+| 精灵部件布局 | `pil_NN.bin` | 无 | 只能整文件替换 |
 | 动作与判定框 | `aid/act/jdg_NN.bin` | 无 | 同上，格式见 action-format.txt |
 | 音乐、音效 | `*.vb`、`vs_sounds_NN.bin` | 无 | 同上 |
 | 数值表 | 其余 `*.bin` | 无 | 同上，字段含义见对应专题文档 |

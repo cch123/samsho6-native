@@ -9,4 +9,6 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
   add_test(NAME texture_codec
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ss6tex.py)
+  add_test(NAME sprite_codec
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_ss6sprite.py)
 endif()

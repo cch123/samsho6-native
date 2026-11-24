@@ -38,4 +38,4 @@ python3 tools/assets/ss6tex.py encode art/bg_title00.png -o mods/my-mod
 ./title.command --mod mods/my-mod
 ```
 
-规则、限制和各类素材的支持状态见 [素材替换](docs/modding.md)。
+角色精灵用 `tools/assets/ss6sprite.py` 导出为每张图一个 PNG，修改后再导入。规则、限制和各类素材的支持状态见 [素材替换](docs/modding.md)。

@@ -33,6 +33,10 @@ struct CharacterTileQuad {
     //Four original108910 vertices: x,y,z,u,v,color. The rotated layout
     //uses a different vertex order; preserving it matters for UV sampling.
     std::array<uint32_t,24> vertices{};
+    // Optional 2x artwork for this 16x16 group. The image table owns the
+    // samples for the lifetime of CharacterTiles, including the paint pass.
+    const uint8_t* inkGroup=nullptr;
+    bool inkFlipX=false,inkFlipY=false;
     uint32_t paletteArgument=0,blendMode=0,additive=0;
 };
 struct CharacterTileState {
@@ -43,8 +47,7 @@ struct CharacterTileState {
 };
 class CharacterTiles {
 public:
-    CharacterTiles(std::filesystem::path assets,std::array<unsigned,3> slots)
-        :palettes(assets),assets_(std::move(assets)),slots_(slots) {}
+    CharacterTiles(std::filesystem::path assets,std::array<unsigned,3> slots);
     CharacterPaletteBank palettes;
     void submit(const CharacterSprite&,EffectPalettes&,CharacterTileState&,std::vector<CharacterTileQuad>&);
     void submitObject(CharacterDraws&,CharacterDrawState&,const ObjectDrawQueue::Record&,
@@ -53,6 +56,9 @@ private:
     struct Resource {std::vector<uint8_t> idx,map,chr;};
     std::filesystem::path assets_;
     std::array<unsigned,3> slots_;
+    struct InkImage {unsigned width=0,height=0;std::vector<size_t> offsets;};
+    std::map<unsigned,InkImage> inkImages_;
+    std::vector<uint8_t> inkData_;
     std::map<unsigned,Resource> resources_;
     const Resource& resource(unsigned slot);
 };

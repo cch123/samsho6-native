@@ -10,9 +10,9 @@
 namespace ss6 {
 namespace {
 using F=ScalarFloat;
-std::vector<uint8_t> read(const std::filesystem::path& path) {
+std::vector<uint8_t> read(const std::filesystem::path& path,size_t limit=32*1024*1024) {
     std::ifstream f(resolveAsset(path),std::ios::binary|std::ios::ate);if(!f)throw std::runtime_error("Missing tile resource: "+path.string());
-    const auto n=f.tellg();if(n<0||n>32*1024*1024)throw std::runtime_error("Invalid tile resource size");
+    const auto n=f.tellg();if(n<0||n>std::streamoff(limit))throw std::runtime_error("Invalid tile resource size");
     std::vector<uint8_t> bytes(static_cast<size_t>(n));f.seekg(0);if(!f.read(reinterpret_cast<char*>(bytes.data()),n))throw std::runtime_error("Truncated tile resource");return bytes;
 }
 uint32_t word(const std::vector<uint8_t>& b,size_t at,unsigned n) {uint32_t v=0;for(unsigned i=0;i<n;++i)v|=uint32_t(b.at(at+i))<<(i*8);return v;}
@@ -75,6 +75,45 @@ void CharacterPaletteBank::colorize(uint32_t flags,uint32_t fadeColor,uint32_t a
         rgba[i]=(format[i]&&!mode)?color:((format[i]?color&0xff000000:0x80000000)|(b<<19)|(g<<11)|(r<<3));
     }
 }
+CharacterTiles::CharacterTiles(std::filesystem::path assets,std::array<unsigned,3> slots)
+    :palettes(assets),assets_(std::move(assets)),slots_(slots) {
+    if(std::find(slots.begin(),slots.end(),0)==slots.end())return;
+    const auto path=assets_/"haohmaru_actions.ink";
+    if(!std::filesystem::exists(resolveAsset(path)))return;
+    inkData_=read(path,128*1024*1024);
+    if(word(inkData_,0,4)!=0x314b4e49)throw std::runtime_error("Invalid action artwork header");
+    const unsigned count=word(inkData_,4,4);
+    if(count>2048)throw std::runtime_error("Too many action artwork images");
+    size_t pos=8;
+    for(unsigned i=0;i<count;++i) {
+        const unsigned image=word(inkData_,pos,2);
+        if(image>=2048)throw std::runtime_error("Invalid action artwork image number");
+        auto [it,inserted]=inkImages_.try_emplace(image);
+        if(!inserted)throw std::runtime_error("Duplicate action artwork image");
+        auto& art=it->second;
+        art.width=word(inkData_,pos+2,1);art.height=word(inkData_,pos+3,1);pos+=4;
+        if(!art.width || !art.height)throw std::runtime_error("Empty action artwork dimensions");
+        art.offsets.reserve(art.width*art.height);
+        for(unsigned j=0;j<art.width*art.height;++j) {
+            const auto present=inkData_.at(pos++);
+            if(present>1)throw std::runtime_error("Invalid action artwork group");
+            art.offsets.push_back(present?pos:0);
+            if(present)pos+=32*32*2;
+        }
+    }
+    if(pos!=inkData_.size())throw std::runtime_error("Invalid action artwork size");
+    // Match the ink idle's blue sash in a mirror match. Keep alternate
+    // costumes and edited owner palettes addressable through their own CLUTs.
+    auto& colors=palettes.mutableSource();
+    constexpr unsigned secondCostume=32*16*2;
+    for(unsigned index=1;index<16;++index) {
+        unsigned color=word(colors,index*2,2);
+        if(index==6 || index==13 || index==14)
+            color=(color&0x83e0)|((color&31)<<10)|((color>>10)&31);
+        colors.at(secondCostume+index*2)=uint8_t(color);
+        colors.at(secondCostume+index*2+1)=uint8_t(color>>8);
+    }
+}
 const CharacterTiles::Resource& CharacterTiles::resource(unsigned slot) {
     const auto id=slots_.at(slot);auto found=resources_.find(id);
     if(found==resources_.end()) {
@@ -127,11 +166,20 @@ void CharacterTiles::submit(const CharacterSprite& s,EffectPalettes& cache,Chara
     const auto palette=palettes.resolve(s.palette,bank,cache);if(palette<0)return;
     const auto z=F{0x4b189680}.sub(s.z.add(s.depthOffset).mul(F{0x42c80000})).add(F::integer(std::bit_cast<int32_t>(state.depthCounter++)));
     const bool fx=flags&0x8000,fy=flags&0x4000;
+    const InkImage* ink=nullptr;
+    if(id==0 && !inkImages_.empty()) {
+        const auto it=inkImages_.find(s.image);
+        if(it!=inkImages_.end()) {
+            ink=&it->second;
+            if(ink->width!=width/2||ink->height!=height/2)throw std::runtime_error("Action artwork dimensions do not match the sprite");
+        }
+    }
     for(unsigned group=0;group<width*height/4;++group) {
         if(state.groups>=1024)return; //Original stops before reading the next tile.
         std::array<uint32_t,4> tiles;bool nonempty=false;
         for(unsigned j=0;j<4;++j){tiles[j]=word(r.map,at+2+(group*4+j)*3,3)&0xfffff;nonempty|=tiles[j]!=0;}
-        if(!nonempty)continue;
+        const size_t inkOffset=ink?ink->offsets[group]:0;
+        if(ink ? !inkOffset : !nonempty)continue;
         const auto col=group%(width/2),row=group/(width/2);
         auto gx=x.add(F::integer(int32_t(rotated?(fy?height/2-row:row):(fx?width/2-col:col))).mul(sx));
         auto gy=y.add(F::integer(int32_t(rotated?(fx?width/2-col:col):(fy?height/2-row:row))).mul(sy));
@@ -153,6 +201,10 @@ void CharacterTiles::submit(const CharacterSprite& s,EffectPalettes& cache,Chara
             if(x1.less(F{0})||F{0x44200000}.less(x0)||y1.less(F{0})||F{0x43e00000}.less(y0))continue;
         }
         CharacterTileQuad q;q.paletteArgument=uint32_t(palette)|(fixedAlpha<<8);q.blendMode=state.blendMode;q.additive=s.additive;
+        if(inkOffset) {
+            q.inkGroup=inkData_.data()+inkOffset;
+            q.inkFlipX=!rotated&&fx;q.inkFlipY=!rotated&&fy;
+        }
         auto vertex=[&](unsigned i,F xx,F yy,F uu,F vv){const std::array<uint32_t,6> w={xx.bits,yy.bits,z.bits,uu.bits,vv.bits,color};std::copy(w.begin(),w.end(),q.vertices.begin()+i*6);};
         vertex(0,x0,y0,u0,v0);
         if(rotated){vertex(1,x1,y0,u0,v1);vertex(2,x0,y1,u1,v0);}else{vertex(1,x0,y1,u0,v1);vertex(2,x1,y0,u1,v0);}

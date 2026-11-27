@@ -93,7 +93,24 @@ void paintQuad(const CharacterTileQuad& q,const CharacterTileState& state,const 
             const int u=std::clamp(int((u0+tx*ux+ty*uy)*512),0,511);
             const int v=std::clamp(int((v0+tx*vx+ty*vy)*512),0,511);
             const auto index=(state.atlas[v*256+u/2]>>((u%2)*4))&15;
-            const auto& texel=texels[index];
+            Texel texel=texels[index];
+            if(q.inkGroup) {
+                // Reuse the original GS UV orientation, palette residency, per-seat
+                // recolours and blend state. Only the intra-tile sampling is denser.
+                int hx=std::clamp(int((u0+tx*ux+ty*uy)*1024),0,1023)%32;
+                int hy=std::clamp(int((v0+tx*vx+ty*vy)*1024),0,1023)%32;
+                if(q.inkFlipX)hx=31-hx;
+                if(q.inkFlipY)hy=31-hy;
+                const uint8_t* sample=q.inkGroup+2*(hy*32+hx);
+                const auto& a=texels[sample[0]&15];
+                const auto& b=texels[sample[0]>>4];
+                const int mix=sample[1]&15,coverage=sample[1]>>4;
+                texel.alpha=((15-mix)*a.alpha+mix*b.alpha)*coverage/225;
+                for(int c=0;c<3;++c) {
+                    const int color=((15-mix)*a.rgb[c]+mix*b.rgb[c]+7)/15;
+                    texel.rgb[c]=q.additive?color*coverage/15:color;
+                }
+            }
             if(!texel.alpha)continue;
             auto pixel=rgba.subspan((y*NativeScene::width+x)*4,3);
             for(unsigned c=0;c<3;++c) {

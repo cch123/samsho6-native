@@ -18,7 +18,7 @@ struct Texel {std::array<int,3> rgb{};int alpha=0;};
 
 // The sheet has a common foot anchor at (128,236). Its 256 texels cover
 // 128 original world units at the native two screen pixels per world unit.
-void paintInkIdle(const std::vector<uint8_t>& atlas,unsigned pose,unsigned palette,
+void paintInkIdle(const std::vector<uint8_t>& atlas,unsigned pose,unsigned palette,uint32_t tint,
                   const CharacterPlacement& p,std::span<uint8_t> rgba) {
     const float scale=std::bit_cast<float>(p.scale.bits);
     if(scale<=0)return;
@@ -39,7 +39,10 @@ void paintInkIdle(const std::vector<uint8_t>& atlas,unsigned pose,unsigned palet
             // Give alternate costumes a blue sash while retaining skin and steel.
             if(palette && color[0]>2*color[1] && color[0]>3*color[2])
                 std::swap(color[0],color[2]);
-            for(int c=0;c<3;++c)dest[c]=uint8_t(std::min(255u,color[c]+dest[c]*(255-texel[3])/255));
+            for(int c=0;c<3;++c) {
+                const unsigned channel=(tint>>(8*c))&255;
+                dest[c]=uint8_t(std::min(255u,color[c]*channel/128+dest[c]*(255-texel[3])/255));
+            }
         }
     }
 }
@@ -171,7 +174,7 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
     // Caption allocation reuses character CLUT memory. A key must be
     // invalidated even when the same character needs its colors next frame.
     for(unsigned i=0;i<cache_[2].size();++i)if(cache_[2][i])cache_[0][i]=0xffffffff;
-    struct IdleDraw {size_t row,firstBody;CharacterPlacement placement;unsigned pose,palette;};
+    struct IdleDraw {size_t row,firstBody;CharacterPlacement placement;unsigned pose,palette;uint32_t tint;};
     std::vector<IdleDraw> idleDraws;
     size_t row=0;
     for(const auto handle:queue.sorted()) {
@@ -189,8 +192,13 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
             for(const auto& sprite:sprites) {
                 if(first && !sprite.shadow) {
                     first=false;
-                    if(sprite.mode==1 && sprite.color==0xff808080 && sprite.palette<=4)
-                        idleDraws.push_back({row,quads_.size(),placement,pose,sprite.palette});
+                    // Full rage cycles through neutral modulation once per pulse.
+                    // Keep the same silhouette across the cycle and tint its RGB.
+                    const bool rageModulation=(sprite.contextFlags&0x40010000u)==0x40010000u &&
+                        (sprite.color>>24)==255 && (sprite.color&255)<=128 &&
+                        ((sprite.color>>8)&255)<=128 && ((sprite.color>>16)&255)<=128;
+                    if(sprite.mode==1 && (sprite.color==0xff808080 || rageModulation) && sprite.palette<=4)
+                        idleDraws.push_back({row,quads_.size(),placement,pose,sprite.palette,sprite.color});
                 }
                 tiles_.submit(sprite,cache_,tileState_,quads_);
             }
@@ -222,7 +230,7 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
                firstQuad>idleDraws[idleIndex].firstBody) {
                 const auto& idle=idleDraws[idleIndex];
                 if(firstQuad==idle.firstBody+1 && (!backdrop || std::bit_cast<float>(quad.vertices[2])>=backdropDepth))
-                    paintInkIdle(inkIdle_,idle.pose,idle.palette,idle.placement,rgba);
+                    paintInkIdle(inkIdle_,idle.pose,idle.palette,idle.tint,idle.placement,rgba);
                 continue;
             }
             paintQuad(quad,tileState_,tiles_.palettes,rgba,alternateCount,backdrop!=0);

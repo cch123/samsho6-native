@@ -180,8 +180,10 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
     for(const auto handle:queue.sorted()) {
         const auto& object=queue.slots.at(handle-1);
         const auto slot=object[0xc/4],action=object[0x24/4],pose=object[0x28/4];
+        // In resource 00 the nine armed idle bodies are images 0,2,...,16.
+        // Their layered replacements take precedence over the early whole-pose preview.
         if(!inkIdle_.empty() && object[0x144/4]==0 && slot<2 && resources_[slot]==0 &&
-           (action==0 || action==2) && pose<9 && !(object[0x104/4]&2)) {
+           (action==0 || action==2) && pose<9 && !tiles_.hasInkImage(pose*2) && !(object[0x104/4]&2)) {
             // Preserve the original shadow, CLUT allocation and depth visits. Substitute
             // the illustration once where the first visible body tile would be painted.
             drawState_.primitiveColor=tileState_.primitiveColor;

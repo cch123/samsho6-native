@@ -48,6 +48,7 @@ struct CharacterTileState {
 class CharacterTiles {
 public:
     CharacterTiles(std::filesystem::path assets,std::array<unsigned,3> slots);
+    bool hasInkImage(unsigned image) const {return inkImages_.contains(image);}
     CharacterPaletteBank palettes;
     void submit(const CharacterSprite&,EffectPalettes&,CharacterTileState&,std::vector<CharacterTileQuad>&);
     void submitObject(CharacterDraws&,CharacterDrawState&,const ObjectDrawQueue::Record&,

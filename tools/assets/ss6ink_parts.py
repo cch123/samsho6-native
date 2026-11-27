@@ -117,10 +117,24 @@ def assemble(assets, art, output):
     if pack[:4] != b'INK1':
         raise ValueError(f'Unexpected ink body pack: {art}')
     count, = struct.unpack_from('<I', pack, 4)
+    # A pose can supply a matched hand and weapon. Generating the stock
+    # weapon again would duplicate its image ID and break the shared grip.
+    authored = set()
+    pos = 8
+    for _ in range(count):
+        image, columns, rows = struct.unpack_from('<HBB', pack, pos)
+        authored.add(image)
+        pos += 4
+        for _ in range(columns * rows):
+            pos += 1 + pack[pos] * 2048
+    if pos != len(pack) or len(authored) != count:
+        raise ValueError(f'Invalid ink image table: {art}')
     sheet = Sheet(assets, 0)
     for number, bank, offset in sheet.images():
         # These bank-zero records are scattered particles and gourd fragments.
         # Their negative space is part of the effect, so keep the source silhouette.
+        if number in authored:
+            continue
         if bank == 0 and number not in (533, 534, 535, 744, 745, 746, 747):
             continue
         width, height, pixels = sheet.pixels(offset)

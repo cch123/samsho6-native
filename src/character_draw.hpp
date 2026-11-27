@@ -40,12 +40,16 @@ struct CharacterDrawContext {
     std::array<uint32_t,2> clockFlags{};
     int32_t focus=-2,stage=0;
 };
+struct CharacterPlacement {
+    ScalarFloat x{}, y{}, scale{};
+    bool mirrored=false;
+};
 class CharacterDraws {
 public:
     CharacterDraws(std::filesystem::path assets,std::array<unsigned,3> resources)
         :assets_(std::move(assets)),slots_(resources) {}
     void submit(const ObjectDrawQueue::Record&,const CharacterDrawContext&,
-                CharacterDrawState&,std::vector<CharacterSprite>&);
+                CharacterDrawState&,std::vector<CharacterSprite>&,CharacterPlacement* placement=nullptr);
 private:
     struct Resource {std::vector<uint8_t> aid,act,pil;};
     std::filesystem::path assets_;

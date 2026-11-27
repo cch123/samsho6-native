@@ -27,6 +27,8 @@ public:
                std::span<const uint16_t,1024> tones,std::span<uint8_t> rgba,const EffectPainter&,uint32_t backdrop=0,
                std::span<const StageItemNoticeQuad> notices={},unsigned nextDepth=100);
 private:
+    std::array<unsigned,3> resources_;
+    std::vector<uint8_t> inkIdle_;
     CharacterDraws draws_;
     CharacterTiles tiles_;
     EffectBank effects_;

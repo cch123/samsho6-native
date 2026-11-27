@@ -46,7 +46,7 @@ const CharacterDraws::Resource& CharacterDraws::resource(unsigned slot) {
     return found->second;
 }
 void CharacterDraws::submit(const ObjectDrawQueue::Record& o,const CharacterDrawContext& c,
-                           CharacterDrawState& state,std::vector<CharacterSprite>& out) {
+                           CharacterDrawState& state,std::vector<CharacterSprite>& out,CharacterPlacement* placement) {
     if(o[0x144/4])throw std::runtime_error("Character draw requires queue kind0");
     const auto slot=o[0xc/4],action=o[0x24/4],step=o[0x28/4];const auto& r=resource(slot);
     if(action>=2048)throw std::runtime_error("Invalid queued character action");
@@ -121,6 +121,7 @@ void CharacterDraws::submit(const ObjectDrawQueue::Record& o,const CharacterDraw
         displayScale=quantize(displayScale.mul(one.sub(fourHundred.div(z.add(fourHundred))).add(one)));
     }
     const bool black=((flags&0x1000)&&!(state.color&0xffffff))||((flags&0x10000)&&(c.stage==15||c.stage==16));
+    if(placement)*placement={screenX,screenY,displayScale,bool(flags&0x80000)};
     emitParts(screenX,screenY,z,displayScale,displayScale,flags,false,black);
     //121734 tail-calls1142c8 even when the last part was additive or no
     //part survived filtering. Otherwise blending leaks into the next draw.

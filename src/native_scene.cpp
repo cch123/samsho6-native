@@ -1,4 +1,6 @@
 #include "native_scene.hpp"
+#include "asset_files.hpp"
+#include <fstream>
 #include <limits>
 #include "native_match.hpp"
 #include <algorithm>
@@ -14,6 +16,33 @@ namespace {
 constexpr float backdropDepth=9995756.0f;
 struct Texel {std::array<int,3> rgb{};int alpha=0;};
 
+// The sheet has a common foot anchor at (128,236). Its 256 texels cover
+// 128 original world units at the native two screen pixels per world unit.
+void paintInkIdle(const std::vector<uint8_t>& atlas,unsigned pose,unsigned palette,
+                  const CharacterPlacement& p,std::span<uint8_t> rgba) {
+    const float scale=std::bit_cast<float>(p.scale.bits);
+    if(scale<=0)return;
+    const float left=std::bit_cast<float>(p.x.bits)-128*scale;
+    const float top=std::bit_cast<float>(p.y.bits)-236*scale;
+    const int rows=int(rgba.size()/(NativeScene::width*4));
+    for(int y=std::max(0,int(std::floor(top)));y<std::min(rows,int(std::ceil(top+256*scale)));++y) {
+        const int v=int(std::floor((y+0.5f-top)/scale));
+        if(v<0||v>=256)continue;
+        for(int x=std::max(0,int(std::floor(left)));x<std::min(NativeScene::width,int(std::ceil(left+256*scale)));++x) {
+            int u=int(std::floor((x+0.5f-left)/scale));
+            if(u<0||u>=256)continue;
+            if(p.mirrored)u=255-u;
+            const auto* texel=&atlas[((pose*256+v)*256+u)*4];
+            if(!texel[3])continue;
+            auto* dest=&rgba[(y*NativeScene::width+x)*4];
+            std::array<unsigned,3> color={texel[0],texel[1],texel[2]};
+            // Give alternate costumes a blue sash while retaining skin and steel.
+            if(palette && color[0]>2*color[1] && color[0]>3*color[2])
+                std::swap(color[0],color[2]);
+            for(int c=0;c<3;++c)dest[c]=uint8_t(std::min(255u,color[c]+dest[c]*(255-texel[3])/255));
+        }
+    }
+}
 void paintQuad(const CharacterTileQuad& q,const CharacterTileState& state,const CharacterPaletteBank& palettes,
                std::span<uint8_t> rgba,unsigned& alternativeCount,bool backdrop) {
     const bool highlight=q.blendMode==3;
@@ -78,7 +107,16 @@ void paintQuad(const CharacterTileQuad& q,const CharacterTileState& state,const 
 }
 
 NativeScene::NativeScene(const std::filesystem::path& assets,std::array<unsigned,3> resources)
-    :draws_(assets,resources),tiles_(assets,resources),effects_(assets),noticeArt_(assets) {
+    :resources_(resources),draws_(assets,resources),tiles_(assets,resources),effects_(assets),noticeArt_(assets) {
+    const auto path=resolveAsset(assets/"haohmaru_idle.rgba");
+    if(std::filesystem::exists(path)) {
+        std::ifstream input(path,std::ios::binary|std::ios::ate);
+        constexpr size_t bytes=9*256*256*4;
+        if(input.tellg()!=std::streamoff(bytes))throw std::runtime_error("Invalid ink idle atlas size");
+        inkIdle_.resize(bytes);
+        input.seekg(0);
+        if(!input.read(reinterpret_cast<char*>(inkIdle_.data()),bytes))throw std::runtime_error("Truncated ink idle atlas");
+    }
     cache_[0].fill(0xffffffff);
 }
 void NativeScene::paint(const NativeMatch& match,std::span<uint8_t> rgba,const EffectPainter& paintEffect,unsigned nextDepth,
@@ -116,10 +154,31 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
     // Caption allocation reuses character CLUT memory. A key must be
     // invalidated even when the same character needs its colors next frame.
     for(unsigned i=0;i<cache_[2].size();++i)if(cache_[2][i])cache_[0][i]=0xffffffff;
+    struct IdleDraw {size_t row,firstBody;CharacterPlacement placement;unsigned pose,palette;};
+    std::vector<IdleDraw> idleDraws;
     size_t row=0;
     for(const auto handle:queue.sorted()) {
         const auto& object=queue.slots.at(handle-1);
-        if(object[0x144/4]==0)tiles_.submitObject(draws_,drawState_,object,context,cache_,tileState_,quads_);
+        const auto slot=object[0xc/4],action=object[0x24/4],pose=object[0x28/4];
+        if(!inkIdle_.empty() && object[0x144/4]==0 && slot<2 && resources_[slot]==0 &&
+           (action==0 || action==2) && pose<9 && !(object[0x104/4]&2)) {
+            // Preserve the original shadow, CLUT allocation and depth visits. Substitute
+            // the illustration once where the first visible body tile would be painted.
+            drawState_.primitiveColor=tileState_.primitiveColor;
+            std::vector<CharacterSprite> sprites;
+            CharacterPlacement placement;
+            draws_.submit(object,context,drawState_,sprites,&placement);
+            bool first=true;
+            for(const auto& sprite:sprites) {
+                if(first && !sprite.shadow) {
+                    first=false;
+                    if(sprite.mode==1 && sprite.color==0xff808080 && sprite.palette<=4)
+                        idleDraws.push_back({row,quads_.size(),placement,pose,sprite.palette});
+                }
+                tiles_.submit(sprite,cache_,tileState_,quads_);
+            }
+            tileState_.primitiveColor=drawState_.primitiveColor;
+        } else if(object[0x144/4]==0)tiles_.submitObject(draws_,drawState_,object,context,cache_,tileState_,quads_);
         else if(object[0x144/4]!=1)throw std::runtime_error("Unexpected battle draw kind");
         ends_.at(row++)=quads_.size();
     }
@@ -135,13 +194,20 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
             noticeArt_.paint(notices[notice++],rgba);
     };
     unsigned alternateCount=0;
-    size_t firstQuad=0;
+    size_t firstQuad=0,idleIndex=0;
     row=0;
     for(const auto handle:queue.sorted()) {
         const auto& object=queue.slots.at(handle-1);
         while(firstQuad<ends_[row]) {
             const auto& quad=quads_[firstQuad++];
             paintNoticesThrough(std::bit_cast<float>(quad.vertices[2]));
+            if(idleIndex<idleDraws.size() && idleDraws[idleIndex].row==row &&
+               firstQuad>idleDraws[idleIndex].firstBody) {
+                const auto& idle=idleDraws[idleIndex];
+                if(firstQuad==idle.firstBody+1 && (!backdrop || std::bit_cast<float>(quad.vertices[2])>=backdropDepth))
+                    paintInkIdle(inkIdle_,idle.pose,idle.palette,idle.placement,rgba);
+                continue;
+            }
             paintQuad(quad,tileState_,tiles_.palettes,rgba,alternateCount,backdrop!=0);
         }
         if(object[0x144/4]==1) {
@@ -151,6 +217,7 @@ void NativeScene::paint(const ObjectDrawQueue& queue,const CharacterDrawContext&
             paintNoticesThrough(depth);
             if(!backdrop||depth>=backdropDepth)paintEffect(draw);
         }
+        if(idleIndex<idleDraws.size() && idleDraws[idleIndex].row==row)++idleIndex;
         ++row;
     }
     while(notice<notices.size())noticeArt_.paint(notices[notice++],rgba);
